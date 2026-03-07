@@ -222,6 +222,7 @@ class DocsParser:
             db_object = db()
             sync_time = now_in_zurich_str()
             logger.info("Starting full docs sync at %s", sync_time)
+            scanned_doc_titles: set[str] = set()
 
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
@@ -240,6 +241,7 @@ class DocsParser:
                     "noncompliance_reason": noncompliance_reason,
                     "manual_compliant_override": "false",
                 }
+                scanned_doc_titles.add(append_dict.get("title", "N/A"))
 
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
@@ -249,6 +251,13 @@ class DocsParser:
                     db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"))
                 else:
                     db_object.create_new_docs_entry(append_dict)
+
+            for existing_doc in db_object.get_all_docs().values():
+                existing_title = existing_doc.get("title", "N/A")
+                existing_id = existing_doc.get("id")
+                if existing_title not in scanned_doc_titles and isinstance(existing_id, int):
+                    db_object.delete_docs_by_id(existing_id)
+                    logger.info("Deleted stale docs entry id=%s title=%s", existing_id, existing_title)
 
             db_object.update_last_sync_time(sync_time)
             db_object.trim_old_change_versions(10)
