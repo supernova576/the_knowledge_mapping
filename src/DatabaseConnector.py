@@ -14,7 +14,9 @@ class db:
             with open(f"{path}", "r") as f:
                 j = json.loads(f.read())
 
-                self.db_path: str = Path(__file__).resolve().parent.parent / j["db"]["db_path"]
+                self.db_path: Path = Path(__file__).resolve().parent.parent / j["db"]["db_path"]
+
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
             # connect and initialize DB
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -83,6 +85,9 @@ class db:
                 (id,),
             )
             row = self.cursor.fetchall()
+            if len(row) == 0:
+                return {}
+
             result = {}
 
             row_dict = dict(row[0])
@@ -91,6 +96,39 @@ class db:
             return result
         except Exception:
             print("sqlite_handler/get_docs_by_id: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def get_docs_by_name(self, file_name: str) -> dict:
+        try:
+            self.cursor.execute(
+                "SELECT * FROM docs WHERE title = ?",
+                (file_name,),
+            )
+            rows = self.cursor.fetchall()
+            result = {}
+
+            for row in rows:
+                row_dict = dict(row)
+                result[row_dict.get("id")] = row_dict
+
+            return result
+        except Exception:
+            print("sqlite_handler/get_docs_by_name: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def get_all_docs(self) -> dict:
+        try:
+            self.cursor.execute("SELECT * FROM docs")
+            rows = self.cursor.fetchall()
+            result = {}
+
+            for row in rows:
+                row_dict = dict(row)
+                result[row_dict.get("id")] = row_dict
+
+            return result
+        except Exception:
+            print("sqlite_handler/get_all_docs: {0}".format(traceback.format_exc()))
             adieu(1)
 
     def update_docs_by_id(self, udd: dict, id: int) -> None:
@@ -126,10 +164,28 @@ class db:
                 "DELETE FROM docs WHERE id = ?",
                 (id,),
             )
-            
-            self.cursor.execute()
+            self.conn.commit()
         except Exception:
             print("sqlite_handler/delete_docs_by_id: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def delete_docs_by_name(self, file_name: str) -> None:
+        try:
+            self.cursor.execute(
+                "DELETE FROM docs WHERE title = ?",
+                (file_name,),
+            )
+            self.conn.commit()
+        except Exception:
+            print("sqlite_handler/delete_docs_by_name: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def delete_all_docs(self) -> None:
+        try:
+            self.cursor.execute("DELETE FROM docs")
+            self.conn.commit()
+        except Exception:
+            print("sqlite_handler/delete_all_docs: {0}".format(traceback.format_exc()))
             adieu(1)
 
     ## ---- Usecases ---- ##
@@ -177,4 +233,3 @@ class db:
                 self.conn.close()
         except Exception:
             print("sqlite_handler/close: {0}".format(traceback.format_exc()))
-
