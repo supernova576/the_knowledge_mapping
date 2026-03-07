@@ -95,8 +95,14 @@ def scan_docs():
         parser = DocsParser()
         parser.parse_and_add_ALL_docs_to_db()
         flash("Scan completed successfully.", "success")
-    except Exception:
-        flash(traceback.format_exc(), "danger")
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            flash(
+                "Scan failed: parser exited early. Check docs path in conf.json and parser/database logs.",
+                "danger",
+            )
+        else:
+            flash(traceback.format_exc(), "danger")
 
     return redirect(url_for("index"))
 

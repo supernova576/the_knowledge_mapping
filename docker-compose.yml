@@ -6,5 +6,6 @@ services:
     volumes:
       - ./output:/app/output
       - ./conf.json:/app/conf.json
+      - /home/ynsjk/git/priv_The-Knowledge/02_DOCS:/docs
     environment:
       - PYTHONUNBUFFERED=1
