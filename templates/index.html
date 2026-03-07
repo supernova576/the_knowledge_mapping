@@ -46,6 +46,10 @@
             Sync in progress. Documents are being scanned, please wait...
         </div>
 
+        <div class="alert alert-secondary" role="status">
+            <strong>Last sync time:</strong> {{ last_sync_time }}
+        </div>
+
         <div class="row g-3 mb-4">
             <div class="col-md-4">
                 <div class="card shadow-sm">
@@ -155,7 +159,6 @@
                                 <th>Tags</th>
                                 <th>Links</th>
                                 <th>Video links</th>
-                                <th>Last sync</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -194,11 +197,10 @@
                                         }}</a>
                                     {% endfor %}
                                 </td>
-                                <td>{{ doc.last_sync }}</td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="10" class="text-center text-muted py-4">No documents found for this filter.
+                                <td colspan="9" class="text-center text-muted py-4">No documents found for this filter.
                                 </td>
                             </tr>
                             {% endfor %}

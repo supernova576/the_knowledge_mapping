@@ -39,8 +39,7 @@ def _to_display_list(value):
     return [str(normalized)]
 
 
-def _load_docs(view: str, query: str) -> dict:
-    database = db()
+def _load_docs(database: db, view: str, query: str) -> dict:
 
     if view == "id" and query:
         try:
@@ -70,7 +69,8 @@ def index():
     view = request.args.get("view", "all")
     query = request.args.get("q", "").strip()
 
-    docs = _load_docs(view, query)
+    database = db()
+    docs = _load_docs(database, view, query)
 
     total_docs = len(docs)
     compliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "true"])
@@ -86,6 +86,7 @@ def index():
         processed_docs.append(row)
 
     processed_docs.sort(key=lambda x: x.get("id", 0))
+    last_sync_time = database.get_last_sync_time()
 
     return render_template(
         "index.html",
@@ -95,6 +96,7 @@ def index():
         incompliant_docs=incompliant_docs,
         selected_view=view,
         query=query,
+        last_sync_time=last_sync_time,
     )
 
 
@@ -168,7 +170,8 @@ def delete_all():
 def export_results():
     view = request.args.get("view", "all")
     query = request.args.get("q", "").strip()
-    docs = _load_docs(view, query)
+    database = db()
+    docs = _load_docs(database, view, query)
 
     export_path = export_result_to_markdown(docs)
     return send_file(export_path, as_attachment=True, download_name="results.md")
@@ -195,6 +198,18 @@ def version_history():
         versions=versions,
         selected_version=selected_version,
         changes=changes,
+    )
+
+
+@app.errorhandler(404)
+def handle_not_found_error(error):
+    logger.info("Page not found: %s", request.path)
+    return (
+        render_template(
+            "404.html",
+            error_message="The page you requested does not exist or may have been moved.",
+        ),
+        404,
     )
 
 

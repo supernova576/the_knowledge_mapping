@@ -243,10 +243,11 @@ class DocsParser:
                 if existing_docs:
                     first_existing = next(iter(existing_docs.values()))
                     db_object.log_change_if_needed(first_existing, append_dict, sync_time)
-                    db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"), sync_time)
+                    db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"))
                 else:
-                    db_object.create_new_docs_entry(append_dict, sync_time)
+                    db_object.create_new_docs_entry(append_dict)
 
+            db_object.update_last_sync_time(sync_time)
             db_object.trim_old_change_versions(10)
             logger.info("Full docs sync completed")
 
