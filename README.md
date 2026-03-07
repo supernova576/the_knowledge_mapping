@@ -39,4 +39,6 @@ Adjust `conf.json`:
 - `docs.full_path_to_docs`: absolute path to docs folder to scan
 - `log.log_file_path`: log file location (default `logs/app.log`)
 
+Timestamps for syncs and logs are generated in the `Europe/Zurich` timezone.
+
 > The docs path must be accessible from where the app runs (host/container).

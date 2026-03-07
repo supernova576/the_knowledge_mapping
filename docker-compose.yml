@@ -10,3 +10,4 @@ services:
       - /home/ynsjk/git/priv_The-Knowledge/02_DOCS:/docs
     environment:
       - PYTHONUNBUFFERED=1
+      - TZ=Europe/Zurich

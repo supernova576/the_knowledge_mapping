@@ -39,6 +39,18 @@ def _to_display_list(value):
     return [str(normalized)]
 
 
+
+
+def _row_style_class(doc: dict) -> str:
+    is_compliant = doc.get("is_compliant") == "true"
+    manual_override = doc.get("manual_compliant_override", "") == "true"
+
+    if manual_override and is_compliant:
+        return "row-compliant-manual"
+    if is_compliant and not manual_override:
+        return "row-compliant-auto"
+    return ""
+
 def _load_docs(database: db, view: str, query: str) -> dict:
 
     if view == "id" and query:
@@ -83,6 +95,7 @@ def index():
         row["links_list"] = _to_display_list(row.get("links"))
         row["video_links_list"] = _to_display_list(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
+        row["row_style_class"] = _row_style_class(row)
         processed_docs.append(row)
 
     processed_docs.sort(key=lambda x: x.get("id", 0))
@@ -118,6 +131,35 @@ def scan_docs():
         else:
             logger.error("Scan failed with unhandled exception\n%s", traceback.format_exc())
             flash(traceback.format_exc(), "danger")
+
+    return redirect(url_for("index"))
+
+
+@app.route("/compliance/manual", methods=["POST"])
+def set_manual_compliance():
+    doc_id = request.form.get("doc_id", "").strip()
+    manual_override = request.form.get("manual_compliant_override", "").strip().lower()
+
+    if not doc_id:
+        logger.warning("Manual compliance update requested without doc_id")
+        flash("Please provide a document ID.", "warning")
+        return redirect(url_for("index"))
+
+    if manual_override not in ("true", ""):
+        logger.warning("Invalid manual compliance value for id=%s value=%s", doc_id, manual_override)
+        flash("Manual compliance value must be true or empty.", "danger")
+        return redirect(url_for("index"))
+
+    try:
+        database = db()
+        database.update_manual_compliance_by_id(int(doc_id), manual_override)
+        if manual_override == "true":
+            flash(f"Document id={doc_id} is now manually marked as compliant.", "success")
+        else:
+            flash(f"Manual compliance override removed for id={doc_id}.", "success")
+    except ValueError:
+        logger.warning("Manual compliance update failed due to non-numeric id: %s", doc_id)
+        flash("ID must be numeric.", "danger")
 
     return redirect(url_for("index"))
 

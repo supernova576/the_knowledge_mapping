@@ -1,11 +1,11 @@
 import json
 import sqlite3
 import traceback
-from datetime import datetime
 from pathlib import Path
 from sys import exit as adieu
 
 from .logger import get_logger
+from .timezone_utils import now_in_zurich_str
 
 
 logger = get_logger(__name__)
@@ -47,7 +47,8 @@ class db:
                     video_links TEXT,
                     tags TEXT,
                     is_compliant TEXT,
-                    noncompliance_reason TEXT
+                    noncompliance_reason TEXT,
+                    manual_compliant_override TEXT
                 )
                 """
             )
@@ -98,7 +99,7 @@ class db:
     def create_new_docs_entry(self, ndd: dict) -> None:
         try:
             self._execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -108,6 +109,7 @@ class db:
                     ndd.get("is_compliant", "false"),
                     ndd.get("video_links", "N/A"),
                     ndd.get("noncompliance_reason", "N/A"),
+                    ndd.get("manual_compliant_override", ""),
                 ),
             )
             self._commit()
@@ -189,7 +191,7 @@ class db:
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
             self._execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ? WHERE id = ?",
+                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ? WHERE id = ?",
                 (
                     udd.get("title", "N/A"),
                     udd.get("created_at", "N/A"),
@@ -199,6 +201,7 @@ class db:
                     udd.get("is_compliant", "false"),
                     udd.get("video_links", "N/A"),
                     udd.get("noncompliance_reason", "N/A"),
+                    udd.get("manual_compliant_override", ""),
                     id,
                 ),
             )
@@ -236,7 +239,7 @@ class db:
 
     def update_last_sync_time(self, sync_time: str | None = None) -> str:
         try:
-            ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = sync_time or now_in_zurich_str()
             self.upsert_setting("last_sync_time", ts)
             return ts
         except Exception:
@@ -381,6 +384,24 @@ class db:
             logger.warning("Deleted all changes from database")
         except Exception:
             logger.error("sqlite_handler/delete_all_changes failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def update_manual_compliance_by_id(self, id: int, manual_override: str) -> None:
+        try:
+            if manual_override == "true":
+                self._execute(
+                    "UPDATE docs SET manual_compliant_override = ?, is_compliant = ?, noncompliance_reason = ? WHERE id = ?",
+                    (manual_override, "true", "N/A", id),
+                )
+            else:
+                self._execute(
+                    "UPDATE docs SET manual_compliant_override = ? WHERE id = ?",
+                    ("", id),
+                )
+            self._commit()
+            logger.info("Updated manual compliance override for id=%s to=%s", id, manual_override)
+        except Exception:
+            logger.error("sqlite_handler/update_manual_compliance_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_non_compliant_docs(self) -> dict:

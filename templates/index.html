@@ -147,7 +147,7 @@
             <div class="card-body">
                 <h2 class="h5">Documents overview</h2>
                 <div class="table-responsive">
-                    <table class="table table-sm align-middle">
+                    <table class="table table-sm align-middle compliance-table">
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -155,6 +155,7 @@
                                 <th>Created</th>
                                 <th>Changed</th>
                                 <th>Compliant</th>
+                                <th>Manual compliance</th>
                                 <th>Noncompliance reasons</th>
                                 <th>Tags</th>
                                 <th>Links</th>
@@ -163,7 +164,7 @@
                         </thead>
                         <tbody>
                             {% for doc in docs %}
-                            <tr>
+                            <tr class="{{ doc.row_style_class }}">
                                 <td>{{ doc.id }}</td>
                                 <td>{{ doc.title }}</td>
                                 <td>{{ doc.created_at }}</td>
@@ -174,6 +175,13 @@
                                     {% else %}
                                     <span class="badge text-bg-danger">false</span>
                                     {% endif %}
+                                </td>
+                                <td>
+                                    <form method="post" action="{{ url_for('set_manual_compliance') }}" class="d-flex gap-1">
+                                        <input type="hidden" name="doc_id" value="{{ doc.id }}" />
+                                        <input class="form-control form-control-sm" name="manual_compliant_override" value="{{ doc.manual_compliant_override }}" placeholder="true or empty" />
+                                        <button class="btn btn-sm btn-outline-success">Save</button>
+                                    </form>
                                 </td>
                                 <td>
                                     {% for reason in doc.noncompliance_reason_list %}
@@ -200,7 +208,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-4">No documents found for this filter.
+                                <td colspan="10" class="text-center text-muted py-4">No documents found for this filter.
                                 </td>
                             </tr>
                             {% endfor %}

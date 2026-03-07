@@ -1,12 +1,13 @@
 import json
 import re
 import traceback
-from datetime import datetime
+import datetime
 from pathlib import Path
 from sys import exit as adieu
 
 from .DatabaseConnector import db
 from .logger import get_logger
+from .timezone_utils import now_in_zurich_str
 
 
 logger = get_logger(__name__)
@@ -130,7 +131,7 @@ class DocsParser:
             if not dates:
                 return "N/A"
 
-            unique_dates = sorted(set(dates), key=lambda d: datetime.strptime(d, "%d.%m.%Y"))
+            unique_dates = sorted(set(dates), key=lambda d: now_in_zurich_str())
             return json.dumps(unique_dates, ensure_ascii=False)
 
         except Exception:
@@ -219,7 +220,7 @@ class DocsParser:
     def parse_and_add_ALL_docs_to_db(self) -> None:
         try:
             db_object = db()
-            sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sync_time = now_in_zurich_str()
             logger.info("Starting full docs sync at %s", sync_time)
 
             for doc_full_path in self.__get_full_document_list():
@@ -237,11 +238,19 @@ class DocsParser:
                     "tags": self.__parse_tags_from_doc(file_contents),
                     "is_compliant": is_compliant,
                     "noncompliance_reason": noncompliance_reason,
+                    "manual_compliant_override": "",
                 }
 
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
                     first_existing = next(iter(existing_docs.values()))
+                    manual_override = first_existing.get("manual_compliant_override", "")
+                    append_dict["manual_compliant_override"] = manual_override
+
+                    if manual_override == "true":
+                        append_dict["is_compliant"] = "true"
+                        append_dict["noncompliance_reason"] = "N/A"
+
                     db_object.log_change_if_needed(first_existing, append_dict, sync_time)
                     db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"))
                 else:

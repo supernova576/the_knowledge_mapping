@@ -1,6 +1,17 @@
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
+
+from .timezone_utils import ZURICH_TIMEZONE
+
+
+class ZurichTimezoneFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=ZURICH_TIMEZONE)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
 
 def _resolve_log_path() -> Path:
@@ -25,7 +36,7 @@ def get_logger(name: str) -> logging.Logger:
         return logger
 
     logger.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    formatter = ZurichTimezoneFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
