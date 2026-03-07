@@ -177,7 +177,6 @@
                                 <th>Created</th>
                                 <th>Changed</th>
                                 <th>Compliant</th>
-                                <th>Manual compliance</th>
                                 <th>Noncompliance reasons</th>
                                 <th>Tags</th>
                                 <th>Links</th>
@@ -193,9 +192,6 @@
                                 <td>{{ doc.changed_at }}</td>
                                 <td>
                                     <span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span>
-                                </td>
-                                <td>
-                                    <span class="badge {{ doc.compliance_tag_class }}">{{ doc.manual_compliant_override }}</span>
                                 </td>
                                 <td>
                                     {% for reason in doc.noncompliance_reason_list %}
@@ -222,7 +218,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="10" class="text-center text-muted py-4">No documents found for this filter.
+                                <td colspan="9" class="text-center text-muted py-4">No documents found for this filter.
                                 </td>
                             </tr>
                             {% endfor %}

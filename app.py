@@ -53,6 +53,7 @@ def _compliance_tag_class(doc: dict) -> str:
         return "compliance-tag-manual"
     if is_compliant:
         return "compliance-tag-compliant"
+    
     return "compliance-tag-not-compliant"
 
 def _load_docs(database: db, view: str, query: str) -> dict:

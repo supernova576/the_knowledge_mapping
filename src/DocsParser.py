@@ -177,7 +177,7 @@ class DocsParser:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
 
-            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^##\s+|\Z)", cleaned)
+            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
             beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
             beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
@@ -244,12 +244,6 @@ class DocsParser:
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
                     first_existing = next(iter(existing_docs.values()))
-                    manual_override = first_existing.get("manual_compliant_override", "false")
-                    append_dict["manual_compliant_override"] = manual_override
-
-                    if manual_override == "true":
-                        append_dict["is_compliant"] = "true"
-                        append_dict["noncompliance_reason"] = "N/A"
 
                     db_object.log_change_if_needed(first_existing, append_dict, sync_time)
                     db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"))
