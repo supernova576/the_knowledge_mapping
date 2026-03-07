@@ -3,6 +3,6 @@
         "db_path": "output/docs.db"
     },
     "docs": {
-        "full_path_to_docs": "/home/ynsjk/git/priv_the_knowledge_mapping/input"
+        "full_path_to_docs": "/home/ynsjk/git/priv_The-Knowledge/02_DOCS"
     }
 }

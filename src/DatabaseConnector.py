@@ -116,6 +116,39 @@ class db:
             print("sqlite_handler/get_docs_by_name: {0}".format(traceback.format_exc()))
             adieu(1)
 
+    def get_docs_by_tag(self, tag_name: str) -> dict:
+        try:
+            self.cursor.execute("SELECT * FROM docs")
+            rows = self.cursor.fetchall()
+            result = {}
+
+            for row in rows:
+                row_dict = dict(row)
+                tags_raw = row_dict.get("tags", "N/A")
+                tags = []
+
+                if isinstance(tags_raw, str):
+                    stripped = tags_raw.strip()
+                    if stripped.startswith("[") and stripped.endswith("]"):
+                        try:
+                            parsed = json.loads(stripped)
+                            if isinstance(parsed, list):
+                                tags = [str(item) for item in parsed]
+                        except json.JSONDecodeError:
+                            tags = [tags_raw]
+                    elif stripped not in ("", "N/A"):
+                        tags = [tags_raw]
+                elif isinstance(tags_raw, list):
+                    tags = [str(item) for item in tags_raw]
+
+                if tag_name in tags:
+                    result[row_dict.get("id")] = row_dict
+
+            return result
+        except Exception:
+            print("sqlite_handler/get_docs_by_tag: {0}".format(traceback.format_exc()))
+            adieu(1)
+
     def get_all_docs(self) -> dict:
         try:
             self.cursor.execute("SELECT * FROM docs")

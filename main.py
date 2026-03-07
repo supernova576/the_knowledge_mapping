@@ -19,6 +19,7 @@ def print_helper_banner() -> None:
 
     --get-by-id [id]        Gets an entry by id
     --get-by-name [name]    Gets an entry by file-name
+    --get-by-tag [tag]      Gets entries by tag
     --get-incompliant       Gets all incompliant files
 
     --delete-by-id          Deletes an entry by id
@@ -105,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--get-by-id", type=int)
     parser.add_argument("--get-by-name", type=str)
+    parser.add_argument("--get-by-tag", type=str)
     parser.add_argument("--get-incompliant", action="store_true")
 
     parser.add_argument("--delete-by-id", type=int)
@@ -137,6 +139,9 @@ def main():
 
         if args.get_by_name is not None:
             result = db_object.get_docs_by_name(args.get_by_name)
+
+        if args.get_by_tag is not None:
+            result = db_object.get_docs_by_tag(args.get_by_tag)
 
         if args.get_incompliant:
             result = db_object.get_non_compliant_docs()
