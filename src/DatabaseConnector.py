@@ -50,15 +50,29 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_name TEXT,
+                    sync_time TEXT,
+                    has_links_changed TEXT,
+                    has_video_links_changed TEXT,
+                    has_tags_changed TEXT,
+                    has_compliance_changed TEXT
+                )
+                """
+            )
+
             self.conn.commit()
         except Exception:
             print("sqlite_handler/init_db: {0}".format(traceback.format_exc()))
             adieu(1)
 
     ## ---- STANDARD CRUD ---- ##
-    def create_new_docs_entry(self, ndd: dict) -> None:
+    def create_new_docs_entry(self, ndd: dict, sync_time: str | None = None) -> None:
         try:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             self.cursor.execute(
                 "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, last_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -164,12 +178,12 @@ class db:
             print("sqlite_handler/get_all_docs: {0}".format(traceback.format_exc()))
             adieu(1)
 
-    def update_docs_by_id(self, udd: dict, id: int) -> None:
+    def update_docs_by_id(self, udd: dict, id: int, sync_time: str | None = None) -> None:
         try:
             if id == "N/A":
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             self.cursor.execute(
                 "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, last_sync = ? WHERE id = ?",
@@ -189,6 +203,98 @@ class db:
             self.conn.commit()
         except Exception:
             print("sqlite_handler/update_docs_by_id: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def log_change_if_needed(self, previous_doc: dict | None, current_doc: dict, sync_time: str) -> None:
+        try:
+            if not current_doc:
+                return
+
+            previous = previous_doc or {}
+            changed = {
+                "has_links_changed": "true" if previous.get("links") != current_doc.get("links") else "false",
+                "has_video_links_changed": "true" if previous.get("video_links") != current_doc.get("video_links") else "false",
+                "has_tags_changed": "true" if previous.get("tags") != current_doc.get("tags") else "false",
+                "has_compliance_changed": "true" if previous.get("is_compliant") != current_doc.get("is_compliant") else "false",
+            }
+
+            if all(value == "false" for value in changed.values()):
+                return
+
+            self.cursor.execute(
+                """
+                INSERT INTO changes
+                (file_name, sync_time, has_links_changed, has_video_links_changed, has_tags_changed, has_compliance_changed)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    current_doc.get("title", "N/A"),
+                    sync_time,
+                    changed["has_links_changed"],
+                    changed["has_video_links_changed"],
+                    changed["has_tags_changed"],
+                    changed["has_compliance_changed"],
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            print("sqlite_handler/log_change_if_needed: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def get_latest_change_versions(self, limit: int = 10) -> list[str]:
+        try:
+            self.cursor.execute(
+                """
+                SELECT sync_time FROM changes
+                GROUP BY sync_time
+                ORDER BY sync_time DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = self.cursor.fetchall()
+            return [dict(row).get("sync_time") for row in rows if dict(row).get("sync_time")]
+        except Exception:
+            print("sqlite_handler/get_latest_change_versions: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def get_changes_by_version(self, sync_time: str) -> list[dict]:
+        try:
+            self.cursor.execute(
+                """
+                SELECT * FROM changes
+                WHERE sync_time = ?
+                ORDER BY id ASC
+                """,
+                (sync_time,),
+            )
+            rows = self.cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:
+            print("sqlite_handler/get_changes_by_version: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def trim_old_change_versions(self, keep: int = 10) -> None:
+        try:
+            self.cursor.execute(
+                """
+                DELETE FROM changes
+                WHERE sync_time NOT IN (
+                    SELECT sync_time
+                    FROM (
+                        SELECT sync_time
+                        FROM changes
+                        GROUP BY sync_time
+                        ORDER BY sync_time DESC
+                        LIMIT ?
+                    )
+                )
+                """,
+                (keep,),
+            )
+            self.conn.commit()
+        except Exception:
+            print("sqlite_handler/trim_old_change_versions: {0}".format(traceback.format_exc()))
             adieu(1)
 
     def delete_docs_by_id(self, id: int) -> None:
@@ -238,6 +344,24 @@ class db:
             return result
         except Exception:
             print("sqlite_handler/get_non_compliant_docs: {0}".format(traceback.format_exc()))
+            adieu(1)
+
+    def get_compliant_docs(self) -> dict:
+        try:
+            self.cursor.execute(
+                "SELECT * FROM docs WHERE is_compliant = ?",
+                ("true",),
+            )
+            rows = self.cursor.fetchall()
+            result = {}
+
+            for row in rows:
+                row_dict = dict(row)
+                result[row_dict.get("id")] = row_dict
+
+            return result
+        except Exception:
+            print("sqlite_handler/get_compliant_docs: {0}".format(traceback.format_exc()))
             adieu(1)
     
     def check_if_doc_is_already_in_db(self, file_name: str) -> dict:

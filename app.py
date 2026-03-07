@@ -54,6 +54,9 @@ def _load_docs(view: str, query: str) -> dict:
     if view == "incompliant":
         return database.get_non_compliant_docs()
 
+    if view == "compliant":
+        return database.get_compliant_docs()
+
     return database.get_all_docs()
 
 
@@ -153,6 +156,29 @@ def export_results():
 
     export_path = export_result_to_markdown(docs)
     return send_file(export_path, as_attachment=True, download_name="results.md")
+
+
+@app.route("/history", methods=["GET"])
+def version_history():
+    database = db()
+    versions = database.get_latest_change_versions(10)
+    selected_version = request.args.get("version", "").strip()
+
+    if not selected_version and versions:
+        selected_version = versions[0]
+
+    if selected_version and selected_version not in versions:
+        flash("Selected version is not available anymore.", "warning")
+        selected_version = versions[0] if versions else ""
+
+    changes = database.get_changes_by_version(selected_version) if selected_version else []
+
+    return render_template(
+        "history.html",
+        versions=versions,
+        selected_version=selected_version,
+        changes=changes,
+    )
 
 
 if __name__ == "__main__":

@@ -217,6 +217,7 @@ class DocsParser:
     def parse_and_add_ALL_docs_to_db(self) -> None:
         try:
             db_object = db()
+            sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r") as f:
@@ -232,11 +233,14 @@ class DocsParser:
                     "is_compliant": self.__enumerate_is_compliant(file_contents),
                 }
 
-                r = db_object.check_if_doc_is_already_in_db(append_dict.get("title", "N/A"))
-                if r.get("bool", "N/A") == True:
-                    db_object.update_docs_by_id(append_dict, r.get("id", "N/A"))
+                existing_doc = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
+                if existing_doc:
+                    db_object.log_change_if_needed(existing_doc, append_dict, sync_time)
+                    db_object.update_docs_by_id(append_dict, existing_doc.get("id", "N/A"), sync_time)
                 else:
-                    db_object.create_new_docs_entry(append_dict)
+                    db_object.create_new_docs_entry(append_dict, sync_time)
+
+            db_object.trim_old_change_versions(10)
 
         except Exception:
             print(traceback.format_exc())
