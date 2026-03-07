@@ -41,15 +41,19 @@ def _to_display_list(value):
 
 
 
-def _row_style_class(doc: dict) -> str:
-    is_compliant = doc.get("is_compliant") == "true"
-    manual_override = doc.get("manual_compliant_override", "") == "true"
+def _normalize_manual_override(value: str | None) -> str:
+    return "true" if str(value).strip().lower() == "true" else "false"
 
-    if manual_override and is_compliant:
-        return "row-compliant-manual"
-    if is_compliant and not manual_override:
-        return "row-compliant-auto"
-    return ""
+
+def _compliance_tag_class(doc: dict) -> str:
+    is_compliant = doc.get("is_compliant") == "true"
+    manual_override = _normalize_manual_override(doc.get("manual_compliant_override")) == "true"
+
+    if manual_override:
+        return "compliance-tag-manual"
+    if is_compliant:
+        return "compliance-tag-compliant"
+    return "compliance-tag-not-compliant"
 
 def _load_docs(database: db, view: str, query: str) -> dict:
 
@@ -95,7 +99,8 @@ def index():
         row["links_list"] = _to_display_list(row.get("links"))
         row["video_links_list"] = _to_display_list(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
-        row["row_style_class"] = _row_style_class(row)
+        row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
+        row["compliance_tag_class"] = _compliance_tag_class(row)
         processed_docs.append(row)
 
     processed_docs.sort(key=lambda x: x.get("id", 0))
@@ -138,16 +143,16 @@ def scan_docs():
 @app.route("/compliance/manual", methods=["POST"])
 def set_manual_compliance():
     doc_id = request.form.get("doc_id", "").strip()
-    manual_override = request.form.get("manual_compliant_override", "").strip().lower()
+    manual_override = _normalize_manual_override(request.form.get("manual_compliant_override", "false"))
 
     if not doc_id:
         logger.warning("Manual compliance update requested without doc_id")
         flash("Please provide a document ID.", "warning")
         return redirect(url_for("index"))
 
-    if manual_override not in ("true", ""):
+    if manual_override not in ("true", "false"):
         logger.warning("Invalid manual compliance value for id=%s value=%s", doc_id, manual_override)
-        flash("Manual compliance value must be true or empty.", "danger")
+        flash("Manual compliance value must be true or false.", "danger")
         return redirect(url_for("index"))
 
     try:

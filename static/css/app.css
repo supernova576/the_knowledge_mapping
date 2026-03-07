@@ -15,16 +15,17 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
-.compliance-table tr.row-compliant-manual > td {
-  background-color: #d1f7d6;
-}
-
-.compliance-table tr.row-compliant-auto > td {
-  background-color: #198754;
+.badge.compliance-tag-not-compliant {
+  background-color: #dc3545;
   color: #fff;
 }
 
-.compliance-table tr.row-compliant-auto a,
-.compliance-table tr.row-compliant-auto .badge {
-  color: inherit;
+.badge.compliance-tag-manual {
+  background-color: #d1f7d6;
+  color: #1f5a2c;
+}
+
+.badge.compliance-tag-compliant {
+  background-color: #198754;
+  color: #fff;
 }

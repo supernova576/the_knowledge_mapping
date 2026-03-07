@@ -391,12 +391,12 @@ class db:
             if manual_override == "true":
                 self._execute(
                     "UPDATE docs SET manual_compliant_override = ?, is_compliant = ?, noncompliance_reason = ? WHERE id = ?",
-                    (manual_override, "true", "N/A", id),
+                    ("true", "true", "N/A", id),
                 )
             else:
                 self._execute(
                     "UPDATE docs SET manual_compliant_override = ? WHERE id = ?",
-                    ("", id),
+                    ("false", id),
                 )
             self._commit()
             logger.info("Updated manual compliance override for id=%s to=%s", id, manual_override)

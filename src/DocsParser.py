@@ -238,13 +238,13 @@ class DocsParser:
                     "tags": self.__parse_tags_from_doc(file_contents),
                     "is_compliant": is_compliant,
                     "noncompliance_reason": noncompliance_reason,
-                    "manual_compliant_override": "",
+                    "manual_compliant_override": "false",
                 }
 
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
                     first_existing = next(iter(existing_docs.values()))
-                    manual_override = first_existing.get("manual_compliant_override", "")
+                    manual_override = first_existing.get("manual_compliant_override", "false")
                     append_dict["manual_compliant_override"] = manual_override
 
                     if manual_override == "true":

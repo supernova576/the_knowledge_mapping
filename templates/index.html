@@ -113,6 +113,28 @@
 
         <div class="card shadow-sm mb-4">
             <div class="card-body">
+                <h2 class="h5">Manual compliance</h2>
+                <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label">Document ID</label>
+                        <input class="form-control" name="doc_id" placeholder="ID" required />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Manual overwrite</label>
+                        <select name="manual_compliant_override" class="form-select">
+                            <option value="false" selected>false</option>
+                            <option value="true">true</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-grid">
+                        <button class="btn btn-outline-success">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
                 <h2 class="h5">Delete controls</h2>
                 <div class="row g-3">
                     <div class="col-md-4">
@@ -164,24 +186,16 @@
                         </thead>
                         <tbody>
                             {% for doc in docs %}
-                            <tr class="{{ doc.row_style_class }}">
+                            <tr>
                                 <td>{{ doc.id }}</td>
                                 <td>{{ doc.title }}</td>
                                 <td>{{ doc.created_at }}</td>
                                 <td>{{ doc.changed_at }}</td>
                                 <td>
-                                    {% if doc.is_compliant == 'true' %}
-                                    <span class="badge text-bg-success">true</span>
-                                    {% else %}
-                                    <span class="badge text-bg-danger">false</span>
-                                    {% endif %}
+                                    <span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span>
                                 </td>
                                 <td>
-                                    <form method="post" action="{{ url_for('set_manual_compliance') }}" class="d-flex gap-1">
-                                        <input type="hidden" name="doc_id" value="{{ doc.id }}" />
-                                        <input class="form-control form-control-sm" name="manual_compliant_override" value="{{ doc.manual_compliant_override }}" placeholder="true or empty" />
-                                        <button class="btn btn-sm btn-outline-success">Save</button>
-                                    </form>
+                                    <span class="badge {{ doc.compliance_tag_class }}">{{ doc.manual_compliant_override }}</span>
                                 </td>
                                 <td>
                                     {% for reason in doc.noncompliance_reason_list %}
