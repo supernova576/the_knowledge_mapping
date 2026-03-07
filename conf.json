@@ -4,5 +4,8 @@
     },
     "docs": {
         "full_path_to_docs": "/docs"
+    },
+    "log": {
+        "log_file_path": "logs/app.log"
     }
 }

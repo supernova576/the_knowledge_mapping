@@ -1,37 +1,39 @@
-import sqlite3
 import json
+import sqlite3
 import traceback
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from sys import exit as adieu
+
+from .logger import get_logger
+
+
+logger = get_logger(__name__)
+
 
 class db:
     def __init__(self) -> None:
         try:
-            # -- Get config-parameters --
             path = Path(__file__).resolve().parent.parent / "conf.json"
-
-            with open(f"{path}", "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 j = json.loads(f.read())
-
                 self.db_path: Path = Path(__file__).resolve().parent.parent / j["db"]["db_path"]
 
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # connect and initialize DB
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
 
             self.__init_db()
+            logger.info("Database connected at %s", self.db_path)
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Database initialization failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __init_db(self) -> None:
         try:
             if not self.conn:
-                # nothing to do when not connected
                 return
 
             self.cursor.execute(
@@ -66,58 +68,48 @@ class db:
 
             self.conn.commit()
         except Exception:
-            print("sqlite_handler/init_db: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
             adieu(1)
 
-    ## ---- STANDARD CRUD ---- ##
     def create_new_docs_entry(self, ndd: dict, sync_time: str | None = None) -> None:
         try:
             ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
+
             self.cursor.execute(
                 "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, last_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    ndd.get("title", "N/A"), 
-                    ndd.get("created_at", "N/A"), 
-                    ndd.get("changed_at", "N/A"), 
-                    ndd.get("links", "N/A"), 
-                    ndd.get("tags", "N/A"), 
+                    ndd.get("title", "N/A"),
+                    ndd.get("created_at", "N/A"),
+                    ndd.get("changed_at", "N/A"),
+                    ndd.get("links", "N/A"),
+                    ndd.get("tags", "N/A"),
                     ndd.get("is_compliant", "false"),
                     ndd.get("video_links", "N/A"),
-                    ts
+                    ts,
                 ),
             )
             self.conn.commit()
+            logger.info("Created docs entry for title=%s", ndd.get("title", "N/A"))
         except Exception:
-            print("sqlite_handler/create_new_docs_entry: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/create_new_docs_entry failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_docs_by_id(self, id: int) -> dict:
         try:
-            self.cursor.execute(
-                "SELECT * FROM docs WHERE id = ?",
-                (id,),
-            )
+            self.cursor.execute("SELECT * FROM docs WHERE id = ?", (id,))
             row = self.cursor.fetchall()
             if len(row) == 0:
                 return {}
 
-            result = {}
-
             row_dict = dict(row[0])
-            result[row_dict.get("id")] = row_dict
-
-            return result
+            return {row_dict.get("id"): row_dict}
         except Exception:
-            print("sqlite_handler/get_docs_by_id: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_docs_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_docs_by_name(self, file_name: str) -> dict:
         try:
-            self.cursor.execute(
-                "SELECT * FROM docs WHERE title = ?",
-                (file_name,),
-            )
+            self.cursor.execute("SELECT * FROM docs WHERE title = ?", (file_name,))
             rows = self.cursor.fetchall()
             result = {}
 
@@ -127,7 +119,7 @@ class db:
 
             return result
         except Exception:
-            print("sqlite_handler/get_docs_by_name: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_docs_by_name failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_docs_by_tag(self, tag_name: str) -> dict:
@@ -160,7 +152,7 @@ class db:
 
             return result
         except Exception:
-            print("sqlite_handler/get_docs_by_tag: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_docs_by_tag failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_all_docs(self) -> dict:
@@ -175,7 +167,7 @@ class db:
 
             return result
         except Exception:
-            print("sqlite_handler/get_all_docs: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_all_docs failed\n%s", traceback.format_exc())
             adieu(1)
 
     def update_docs_by_id(self, udd: dict, id: int, sync_time: str | None = None) -> None:
@@ -188,21 +180,22 @@ class db:
             self.cursor.execute(
                 "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, last_sync = ? WHERE id = ?",
                 (
-                    udd.get("title", "N/A"), 
-                    udd.get("created_at", "N/A"), 
-                    udd.get("changed_at", "N/A"), 
-                    udd.get("links", "N/A"), 
-                    udd.get("tags", "N/A"), 
+                    udd.get("title", "N/A"),
+                    udd.get("created_at", "N/A"),
+                    udd.get("changed_at", "N/A"),
+                    udd.get("links", "N/A"),
+                    udd.get("tags", "N/A"),
                     udd.get("is_compliant", "false"),
                     udd.get("video_links", "N/A"),
                     ts,
-                    id
+                    id,
                 ),
             )
 
             self.conn.commit()
+            logger.info("Updated docs entry id=%s title=%s", id, udd.get("title", "N/A"))
         except Exception:
-            print("sqlite_handler/update_docs_by_id: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/update_docs_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def log_change_if_needed(self, previous_doc: dict | None, current_doc: dict, sync_time: str) -> None:
@@ -219,6 +212,7 @@ class db:
             }
 
             if all(value == "false" for value in changed.values()):
+                logger.info("No content changes detected for title=%s", current_doc.get("title", "N/A"))
                 return
 
             self.cursor.execute(
@@ -237,8 +231,9 @@ class db:
                 ),
             )
             self.conn.commit()
+            logger.info("Logged changes for title=%s at sync_time=%s", current_doc.get("title", "N/A"), sync_time)
         except Exception:
-            print("sqlite_handler/log_change_if_needed: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/log_change_if_needed failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_latest_change_versions(self, limit: int = 10) -> list[str]:
@@ -255,7 +250,7 @@ class db:
             rows = self.cursor.fetchall()
             return [dict(row).get("sync_time") for row in rows if dict(row).get("sync_time")]
         except Exception:
-            print("sqlite_handler/get_latest_change_versions: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_latest_change_versions failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_changes_by_version(self, sync_time: str) -> list[dict]:
@@ -271,7 +266,7 @@ class db:
             rows = self.cursor.fetchall()
             return [dict(row) for row in rows]
         except Exception:
-            print("sqlite_handler/get_changes_by_version: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_changes_by_version failed\n%s", traceback.format_exc())
             adieu(1)
 
     def trim_old_change_versions(self, keep: int = 10) -> None:
@@ -293,47 +288,50 @@ class db:
                 (keep,),
             )
             self.conn.commit()
+            logger.info("Trimmed old change versions; keeping latest=%s", keep)
         except Exception:
-            print("sqlite_handler/trim_old_change_versions: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/trim_old_change_versions failed\n%s", traceback.format_exc())
             adieu(1)
 
     def delete_docs_by_id(self, id: int) -> None:
         try:
-            self.cursor.execute(
-                "DELETE FROM docs WHERE id = ?",
-                (id,),
-            )
+            self.cursor.execute("DELETE FROM docs WHERE id = ?", (id,))
             self.conn.commit()
+            logger.info("Deleted docs entry id=%s", id)
         except Exception:
-            print("sqlite_handler/delete_docs_by_id: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/delete_docs_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def delete_docs_by_name(self, file_name: str) -> None:
         try:
-            self.cursor.execute(
-                "DELETE FROM docs WHERE title = ?",
-                (file_name,),
-            )
+            self.cursor.execute("DELETE FROM docs WHERE title = ?", (file_name,))
             self.conn.commit()
+            logger.info("Deleted docs entries title=%s", file_name)
         except Exception:
-            print("sqlite_handler/delete_docs_by_name: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/delete_docs_by_name failed\n%s", traceback.format_exc())
             adieu(1)
 
     def delete_all_docs(self) -> None:
         try:
             self.cursor.execute("DELETE FROM docs")
             self.conn.commit()
+            logger.warning("Deleted all docs from database")
         except Exception:
-            print("sqlite_handler/delete_all_docs: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/delete_all_docs failed\n%s", traceback.format_exc())
             adieu(1)
 
-    ## ---- Usecases ---- ##
+    def delete_all_changes(self) -> None:
+        try:
+            self.cursor.execute("DELETE FROM changes")
+            self.conn.commit()
+            logger.warning("Deleted all changes from database")
+        except Exception:
+            logger.error("sqlite_handler/delete_all_changes failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def get_non_compliant_docs(self) -> dict:
         try:
-            self.cursor.execute(
-                "SELECT * FROM docs WHERE is_compliant = ?",
-                ("false",),
-            )
+            self.cursor.execute("SELECT * FROM docs WHERE is_compliant = ?", ("false",))
             rows = self.cursor.fetchall()
             result = {}
 
@@ -343,15 +341,12 @@ class db:
 
             return result
         except Exception:
-            print("sqlite_handler/get_non_compliant_docs: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_non_compliant_docs failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_compliant_docs(self) -> dict:
         try:
-            self.cursor.execute(
-                "SELECT * FROM docs WHERE is_compliant = ?",
-                ("true",),
-            )
+            self.cursor.execute("SELECT * FROM docs WHERE is_compliant = ?", ("true",))
             rows = self.cursor.fetchall()
             result = {}
 
@@ -361,27 +356,23 @@ class db:
 
             return result
         except Exception:
-            print("sqlite_handler/get_compliant_docs: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/get_compliant_docs failed\n%s", traceback.format_exc())
             adieu(1)
-    
+
     def check_if_doc_is_already_in_db(self, file_name: str) -> dict:
         try:
             if file_name == "N/A":
                 raise Exception("Filename kann nicht N/A sein!! fehler beim Parsen!")
 
-            self.cursor.execute(
-                "SELECT id FROM docs WHERE title = ? LIMIT 1",
-                (file_name,),
-            )
+            self.cursor.execute("SELECT id FROM docs WHERE title = ? LIMIT 1", (file_name,))
 
             r = self.cursor.fetchall()
             if len(r) > 0:
                 return {"bool": True, "id": dict(r[0]).get("id", "N/A")}
-            else:
-                return {"bool": False, "id": "N/A"}
+            return {"bool": False, "id": "N/A"}
 
         except Exception:
-            print("sqlite_handler/check_if_doc_is_already_in_db: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/check_if_doc_is_already_in_db failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __del__(self) -> None:
@@ -389,4 +380,4 @@ class db:
             if getattr(self, "conn", None):
                 self.conn.close()
         except Exception:
-            print("sqlite_handler/close: {0}".format(traceback.format_exc()))
+            logger.error("sqlite_handler/close failed\n%s", traceback.format_exc())

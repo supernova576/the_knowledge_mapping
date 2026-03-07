@@ -1,29 +1,32 @@
-import re
 import json
+import re
 import traceback
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from sys import exit as adieu
 
 from .DatabaseConnector import db
+from .logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class DocsParser:
     def __init__(self) -> None:
         try:
-            # -- Get config-parameters --
             path = Path(__file__).resolve().parent.parent / "conf.json"
 
-            with open(f"{path}", "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 j: dict = json.loads(f.read())
-
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
 
-            if self.docs_path == False:
+            if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
 
+            logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Docs parser initialization failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __get_full_document_list(self) -> list[str]:
@@ -34,11 +37,11 @@ class DocsParser:
                 raise Exception(f"Docs-Pfad '{self.docs_path}' existiert nicht")
 
             files: list[str] = [str(fp.resolve()) for fp in p.rglob("*") if fp.is_file()]
-
+            logger.info("Found %s document files for scanning", len(files))
             return files
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to enumerate docs\n%s", traceback.format_exc())
             adieu(1)
 
     def __strip_ignored_sections(self, doc_content: str) -> str:
@@ -59,7 +62,7 @@ class DocsParser:
             return cleaned
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed while stripping ignored sections\n%s", traceback.format_exc())
             adieu(1)
 
     def __extract_subsection_block(self, doc_content: str, subsection_name: str) -> str:
@@ -71,17 +74,14 @@ class DocsParser:
             return match.group(1).strip() if match else ""
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to extract subsection %s\n%s", subsection_name, traceback.format_exc())
             adieu(1)
 
     def __extract_markdown_links(self, text: str) -> list[str]:
         try:
-            # [label](url)
             links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", text)
-            # plain URL fallback (e.g. in copied citations)
             links.extend(re.findall(r"(?<!\()\bhttps?://[^\s)>]+", text))
 
-            # deduplicate while preserving order
             deduped: list[str] = []
             for link in links:
                 if link not in deduped:
@@ -90,7 +90,7 @@ class DocsParser:
             return deduped
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse markdown links\n%s", traceback.format_exc())
             adieu(1)
 
     def __to_db_text(self, value: str | list[str]) -> str:
@@ -100,7 +100,7 @@ class DocsParser:
             return value if value else "N/A"
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to convert parser value to database text\n%s", traceback.format_exc())
             adieu(1)
 
     def __parse_title_from_doc(self, file_name: str) -> str:
@@ -109,7 +109,7 @@ class DocsParser:
             return title if title else "N/A"
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse title from %s\n%s", file_name, traceback.format_exc())
             adieu(1)
 
     def __parse_created_at_from_doc(self, doc_content: str) -> str:
@@ -119,7 +119,7 @@ class DocsParser:
             return match.group(1) if match else "N/A"
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse created_at\n%s", traceback.format_exc())
             adieu(1)
 
     def __parse_changed_at_from_doc(self, doc_content: str) -> str:
@@ -130,14 +130,11 @@ class DocsParser:
             if not dates:
                 return "N/A"
 
-            unique_dates = sorted(
-                set(dates),
-                key=lambda d: datetime.strptime(d, "%d.%m.%Y"),
-            )
+            unique_dates = sorted(set(dates), key=lambda d: datetime.strptime(d, "%d.%m.%Y"))
             return json.dumps(unique_dates, ensure_ascii=False)
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse changed_at\n%s", traceback.format_exc())
             adieu(1)
 
     def __parse_links_from_doc(self, doc_content: str) -> str:
@@ -148,7 +145,7 @@ class DocsParser:
             return self.__to_db_text(links)
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse links\n%s", traceback.format_exc())
             adieu(1)
 
     def __parse_video_links_from_doc(self, doc_content: str) -> str:
@@ -159,7 +156,7 @@ class DocsParser:
             return self.__to_db_text(links)
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse video links\n%s", traceback.format_exc())
             adieu(1)
 
     def __parse_tags_from_doc(self, doc_content: str) -> str:
@@ -171,35 +168,26 @@ class DocsParser:
             return self.__to_db_text(tags)
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to parse tags\n%s", traceback.format_exc())
             adieu(1)
 
     def __enumerate_is_compliant(self, doc_content: str) -> str:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
 
-            # Beschreibung: max 3 Sätze
-            beschreibung_match = re.search(
-                r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^##\s+|\Z)",
-                cleaned,
-            )
+            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^##\s+|\Z)", cleaned)
             beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
-            sentence_count = len(
-                [s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()]
-            )
+            sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
             beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
 
-            # Externe Referenzen: mindestens 1
             external_refs_block = self.__extract_subsection_block(cleaned, "Externe Referenzen")
             external_links = self.__extract_markdown_links(external_refs_block) if external_refs_block else []
             external_links_ok = len(external_links) >= 1
 
-            # Tags: mindestens 2
             tags_block = self.__extract_subsection_block(cleaned, "Page Tags")
             tags = list(dict.fromkeys(re.findall(r"(?<!\w)#[-\w]+", tags_block)))
             tags_ok = len(tags) >= 2
 
-            # Video erst nötig ab ca. 6000 Zeichen (ohne ignorierte Kapitel)
             requires_video = len(cleaned) > 6000
             if requires_video:
                 video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
@@ -211,16 +199,17 @@ class DocsParser:
             return "true" if (beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
             adieu(1)
 
     def parse_and_add_ALL_docs_to_db(self) -> None:
         try:
             db_object = db()
             sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info("Starting full docs sync at %s", sync_time)
 
             for doc_full_path in self.__get_full_document_list():
-                with open(doc_full_path, "r") as f:
+                with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
 
                 append_dict = {
@@ -233,15 +222,17 @@ class DocsParser:
                     "is_compliant": self.__enumerate_is_compliant(file_contents),
                 }
 
-                existing_doc = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
-                if existing_doc:
-                    db_object.log_change_if_needed(existing_doc, append_dict, sync_time)
-                    db_object.update_docs_by_id(append_dict, existing_doc.get("id", "N/A"), sync_time)
+                existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
+                if existing_docs:
+                    first_existing = next(iter(existing_docs.values()))
+                    db_object.log_change_if_needed(first_existing, append_dict, sync_time)
+                    db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"), sync_time)
                 else:
                     db_object.create_new_docs_entry(append_dict, sync_time)
 
             db_object.trim_old_change_versions(10)
+            logger.info("Full docs sync completed")
 
         except Exception:
-            print(traceback.format_exc())
+            logger.error("Full docs sync failed\n%s", traceback.format_exc())
             adieu(1)

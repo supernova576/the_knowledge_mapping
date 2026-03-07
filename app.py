@@ -7,10 +7,13 @@ from flask import Flask, flash, redirect, render_template, request, send_file, u
 from main import export_result_to_markdown
 from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
+from src.logger import get_logger
 
 
 app = Flask(__name__)
 app.secret_key = "knowledge-mapping-secret"
+
+logger = get_logger(__name__)
 
 
 def _normalize_value(value):
@@ -42,6 +45,7 @@ def _load_docs(view: str, query: str) -> dict:
         try:
             return database.get_docs_by_id(int(query))
         except ValueError:
+            logger.warning("Invalid ID query received in UI: %s", query)
             flash("ID must be a number", "danger")
             return database.get_all_docs()
 
@@ -95,16 +99,20 @@ def index():
 @app.route("/scan", methods=["POST"])
 def scan_docs():
     try:
+        logger.info("UI requested full scan")
         parser = DocsParser()
         parser.parse_and_add_ALL_docs_to_db()
+        logger.info("UI full scan completed")
         flash("Scan completed successfully.", "success")
     except BaseException as exc:
         if isinstance(exc, SystemExit):
+            logger.error("Scan failed due to parser SystemExit")
             flash(
                 "Scan failed: parser exited early. Check docs path in conf.json and parser/database logs.",
                 "danger",
             )
         else:
+            logger.error("Scan failed with unhandled exception\n%s", traceback.format_exc())
             flash(traceback.format_exc(), "danger")
 
     return redirect(url_for("index"))
@@ -114,14 +122,17 @@ def scan_docs():
 def delete_by_id():
     doc_id = request.form.get("doc_id", "").strip()
     if not doc_id:
+        logger.warning("Delete by id requested without doc_id")
         flash("Please provide a document ID.", "warning")
         return redirect(url_for("index"))
 
     try:
         database = db()
         database.delete_docs_by_id(int(doc_id))
+        logger.info("Deleted entry by id via UI: %s", doc_id)
         flash(f"Deleted entry with id={doc_id}", "success")
     except ValueError:
+        logger.warning("Delete by id failed due to non-numeric id: %s", doc_id)
         flash("ID must be numeric.", "danger")
 
     return redirect(url_for("index"))
@@ -131,11 +142,13 @@ def delete_by_id():
 def delete_by_name():
     name = request.form.get("name", "").strip()
     if not name:
+        logger.warning("Delete by name requested without name")
         flash("Please provide a file name.", "warning")
         return redirect(url_for("index"))
 
     database = db()
     database.delete_docs_by_name(name)
+    logger.info("Deleted entries by name via UI: %s", name)
     flash(f"Deleted entries with name={name}", "success")
     return redirect(url_for("index"))
 
@@ -144,6 +157,7 @@ def delete_by_name():
 def delete_all():
     database = db()
     database.delete_all_docs()
+    logger.warning("Deleted all entries via UI")
     flash("Deleted all entries.", "success")
     return redirect(url_for("index"))
 
@@ -168,6 +182,7 @@ def version_history():
         selected_version = versions[0]
 
     if selected_version and selected_version not in versions:
+        logger.warning("Requested unavailable change version: %s", selected_version)
         flash("Selected version is not available anymore.", "warning")
         selected_version = versions[0] if versions else ""
 

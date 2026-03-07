@@ -25,7 +25,7 @@ Flask-based GUI for scanning docs, storing metadata in SQLite, checking complian
 ### Build and run with Docker
 ```bash
 docker build -t knowledge-mapping .
-docker run --rm -p 5000:5000 -v $(pwd)/output:/app/output -v $(pwd)/conf.json:/app/conf.json knowledge-mapping
+docker run --rm -p 5000:5000 -v $(pwd)/output:/app/output -v $(pwd)/logs:/app/logs -v $(pwd)/conf.json:/app/conf.json knowledge-mapping
 ```
 
 ### Build and run with Docker Compose
@@ -37,5 +37,6 @@ docker compose up --build
 Adjust `conf.json`:
 - `db.db_path`: database output path (default `output/docs.db`)
 - `docs.full_path_to_docs`: absolute path to docs folder to scan
+- `log.log_file_path`: log file location (default `logs/app.log`)
 
 > The docs path must be accessible from where the app runs (host/container).

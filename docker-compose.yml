@@ -5,6 +5,7 @@ services:
       - "5000:5000"
     volumes:
       - ./output:/app/output
+      - ./logs:/app/logs
       - ./conf.json:/app/conf.json
       - /home/ynsjk/git/priv_The-Knowledge/02_DOCS:/docs
     environment:
