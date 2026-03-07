@@ -1,0 +1,10 @@
+services:
+  knowledge-mapping:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./output:/app/output
+      - ./conf.json:/app/conf.json
+    environment:
+      - PYTHONUNBUFFERED=1
