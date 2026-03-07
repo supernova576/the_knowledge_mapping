@@ -80,12 +80,12 @@ class db:
         try:
             self.cursor.execute(
                 "SELECT * FROM docs WHERE id = ?",
-                (id),
+                (id,),
             )
             row = self.cursor.fetchall()
             result = {}
 
-            row_dict = dict(row)
+            row_dict = dict(row[0])
             result[row_dict.get("id")] = row_dict
 
             return result
@@ -93,8 +93,11 @@ class db:
             print("sqlite_handler/get_docs_by_id: {0}".format(traceback.format_exc()))
             adieu(1)
 
-    def update_docs_by_id(self, udd: dict) -> None:
+    def update_docs_by_id(self, udd: dict, id: int) -> None:
         try:
+            if id == "N/A":
+                raise Exception("ID muss einen Wert haben: N/A erhalten")
+
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             self.cursor.execute(
@@ -107,11 +110,12 @@ class db:
                     udd.get("tags", "N/A"), 
                     udd.get("is_compliant", "false"),
                     udd.get("video_links", "N/A"),
-                    ts
+                    ts,
+                    id
                 ),
             )
-            
-            self.cursor.execute()
+
+            self.conn.commit()
         except Exception:
             print("sqlite_handler/update_docs_by_id: {0}".format(traceback.format_exc()))
             adieu(1)
@@ -120,7 +124,7 @@ class db:
         try:
             self.cursor.execute(
                 "DELETE FROM docs WHERE id = ?",
-                (id),
+                (id,),
             )
             
             self.cursor.execute()
@@ -133,7 +137,7 @@ class db:
         try:
             self.cursor.execute(
                 "SELECT * FROM docs WHERE is_compliant = ?",
-                ("false"),
+                ("false",),
             )
             rows = self.cursor.fetchall()
             result = {}
@@ -147,6 +151,26 @@ class db:
             print("sqlite_handler/get_non_compliant_docs: {0}".format(traceback.format_exc()))
             adieu(1)
     
+    def check_if_doc_is_already_in_db(self, file_name: str) -> dict:
+        try:
+            if file_name == "N/A":
+                raise Exception("Filename kann nicht N/A sein!! fehler beim Parsen!")
+
+            self.cursor.execute(
+                "SELECT id FROM docs WHERE title = ? LIMIT 1",
+                (file_name,),
+            )
+
+            r = self.cursor.fetchall()
+            if len(r) > 0:
+                return {"bool": True, "id": dict(r[0]).get("id", "N/A")}
+            else:
+                return {"bool": False, "id": "N/A"}
+
+        except Exception:
+            print("sqlite_handler/check_if_doc_is_already_in_db: {0}".format(traceback.format_exc()))
+            adieu(1)
+
     def __del__(self) -> None:
         try:
             if getattr(self, "conn", None):
