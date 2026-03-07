@@ -26,8 +26,8 @@
             <div class="d-flex gap-2">
                 <button id="theme-toggle" type="button" class="btn btn-outline-secondary">🌙 Dark mode</button>
                 <a class="btn btn-outline-info" href="{{ url_for('version_history') }}">Version history</a>
-                <form method="post" action="{{ url_for('scan_docs') }}">
-                    <button class="btn btn-primary">Run full scan</button>
+                <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
+                    <button id="scan-submit" class="btn btn-primary">Run full scan</button>
                 </form>
             </div>
         </div>
@@ -41,6 +41,10 @@
         </div>
         {% endif %}
         {% endwith %}
+
+        <div id="sync-loading-banner" class="alert alert-info d-none mb-3" role="alert">
+            Sync in progress. Documents are being scanned, please wait...
+        </div>
 
         <div class="row g-3 mb-4">
             <div class="col-md-4">
@@ -226,6 +230,20 @@
                 toggle.addEventListener("click", function () {
                     const current = root.getAttribute("data-bs-theme") || "light";
                     setTheme(current === "dark" ? "light" : "dark");
+                });
+            }
+
+            const scanForm = document.getElementById("scan-form");
+            const scanSubmit = document.getElementById("scan-submit");
+            const syncLoadingBanner = document.getElementById("sync-loading-banner");
+
+            if (scanForm && syncLoadingBanner) {
+                scanForm.addEventListener("submit", function () {
+                    syncLoadingBanner.classList.remove("d-none");
+                    if (scanSubmit) {
+                        scanSubmit.disabled = true;
+                        scanSubmit.textContent = "Syncing...";
+                    }
                 });
             }
         })();

@@ -3,6 +3,7 @@ import traceback
 from pathlib import Path
 
 from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from werkzeug.exceptions import HTTPException
 
 from main import export_result_to_markdown
 from src.DatabaseConnector import db
@@ -194,6 +195,33 @@ def version_history():
         versions=versions,
         selected_version=selected_version,
         changes=changes,
+    )
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(error):
+    logger.error("Internal server error on %s\n%s", request.path, traceback.format_exc())
+    return (
+        render_template(
+            "500.html",
+            error_message="Something went wrong while loading this page. Please try again.",
+        ),
+        500,
+    )
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return error
+
+    logger.error("Unhandled exception on %s\n%s", request.path, traceback.format_exc())
+    return (
+        render_template(
+            "500.html",
+            error_message="Something went wrong while loading this page. Please try again.",
+        ),
+        500,
     )
 
 
