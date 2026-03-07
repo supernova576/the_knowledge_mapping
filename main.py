@@ -82,6 +82,8 @@ def export_result_to_markdown(results: dict) -> Path:
                     f"- **Created at:** {row.get('created_at', 'N/A')}",
                     f"- **Changed at:** {row.get('changed_at', 'N/A')}",
                     f"- **Is compliant:** {row.get('is_compliant', 'N/A')}",
+                    "- **Noncompliance reasons:**",
+                    _as_markdown_list(row.get("noncompliance_reason", "N/A")),
                     f"- **Last sync:** {row.get('last_sync', 'N/A')}",
                     "",
                     "### Tags",

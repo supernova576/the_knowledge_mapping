@@ -47,6 +47,7 @@ class db:
                     video_links TEXT,
                     tags TEXT,
                     is_compliant TEXT,
+                    noncompliance_reason TEXT,
                     last_sync TEXT
                 )
                 """
@@ -76,7 +77,7 @@ class db:
             ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             self.cursor.execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, last_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, last_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -85,6 +86,7 @@ class db:
                     ndd.get("tags", "N/A"),
                     ndd.get("is_compliant", "false"),
                     ndd.get("video_links", "N/A"),
+                    ndd.get("noncompliance_reason", "N/A"),
                     ts,
                 ),
             )
@@ -178,7 +180,7 @@ class db:
             ts = sync_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             self.cursor.execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, last_sync = ? WHERE id = ?",
+                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, last_sync = ? WHERE id = ?",
                 (
                     udd.get("title", "N/A"),
                     udd.get("created_at", "N/A"),
@@ -187,6 +189,7 @@ class db:
                     udd.get("tags", "N/A"),
                     udd.get("is_compliant", "false"),
                     udd.get("video_links", "N/A"),
+                    udd.get("noncompliance_reason", "N/A"),
                     ts,
                     id,
                 ),
@@ -208,7 +211,12 @@ class db:
                 "has_links_changed": "true" if previous.get("links") != current_doc.get("links") else "false",
                 "has_video_links_changed": "true" if previous.get("video_links") != current_doc.get("video_links") else "false",
                 "has_tags_changed": "true" if previous.get("tags") != current_doc.get("tags") else "false",
-                "has_compliance_changed": "true" if previous.get("is_compliant") != current_doc.get("is_compliant") else "false",
+                "has_compliance_changed": "true"
+                if (
+                    previous.get("is_compliant") != current_doc.get("is_compliant")
+                    or previous.get("noncompliance_reason") != current_doc.get("noncompliance_reason")
+                )
+                else "false",
             }
 
             if all(value == "false" for value in changed.values()):

@@ -171,32 +171,46 @@ class DocsParser:
             logger.error("Failed to parse tags\n%s", traceback.format_exc())
             adieu(1)
 
-    def __enumerate_is_compliant(self, doc_content: str) -> str:
+    def __enumerate_compliance(self, doc_content: str) -> tuple[str, str]:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
+            noncompliance_reasons: list[str] = []
 
             beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^##\s+|\Z)", cleaned)
             beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
             beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
+            if not beschreibung_ok:
+                noncompliance_reasons.append(
+                    "Beschreibung: Maximal 3 Sätze!"
+                )
 
             external_refs_block = self.__extract_subsection_block(cleaned, "Externe Referenzen")
             external_links = self.__extract_markdown_links(external_refs_block) if external_refs_block else []
             external_links_ok = len(external_links) >= 1
+            if not external_links_ok:
+                noncompliance_reasons.append("Links: Mind. 1 externer Link")
 
             tags_block = self.__extract_subsection_block(cleaned, "Page Tags")
             tags = list(dict.fromkeys(re.findall(r"(?<!\w)#[-\w]+", tags_block)))
             tags_ok = len(tags) >= 2
+            if not tags_ok:
+                noncompliance_reasons.append("Tags: Mind. 2 Tags")
 
             requires_video = len(cleaned) > 6000
             if requires_video:
                 video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
                 video_links = self.__extract_markdown_links(video_block) if video_block else []
                 video_ok = len(video_links) >= 1
+                if not video_ok:
+                    noncompliance_reasons.append(
+                        "Erklärvideo: ab 6000 Zeichen"
+                    )
             else:
                 video_ok = True
 
-            return "true" if (beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
+            is_compliant = "true" if (beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
+            return is_compliant, self.__to_db_text(noncompliance_reasons)
 
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
@@ -212,6 +226,8 @@ class DocsParser:
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
 
+                is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents)
+
                 append_dict = {
                     "title": self.__parse_title_from_doc(doc_full_path),
                     "created_at": self.__parse_created_at_from_doc(file_contents),
@@ -219,7 +235,8 @@ class DocsParser:
                     "links": self.__parse_links_from_doc(file_contents),
                     "video_links": self.__parse_video_links_from_doc(file_contents),
                     "tags": self.__parse_tags_from_doc(file_contents),
-                    "is_compliant": self.__enumerate_is_compliant(file_contents),
+                    "is_compliant": is_compliant,
+                    "noncompliance_reason": noncompliance_reason,
                 }
 
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))

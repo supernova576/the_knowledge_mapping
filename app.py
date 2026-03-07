@@ -81,6 +81,7 @@ def index():
         row["tags_list"] = _to_display_list(row.get("tags"))
         row["links_list"] = _to_display_list(row.get("links"))
         row["video_links_list"] = _to_display_list(row.get("video_links"))
+        row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         processed_docs.append(row)
 
     processed_docs.sort(key=lambda x: x.get("id", 0))
