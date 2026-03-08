@@ -7,9 +7,7 @@ services:
       - ./output:/app/output
       - ./logs:/app/logs
       - ./conf.json:/app/conf.json
-      - /home/ynsjk/git/priv_The-Knowledge/02_DOCS:/docs
-      - /home/ynsjk/git/priv_The-Knowledge/README.md:/todo/README.md
-      - /home/ynsjk/git/priv_The-Knowledge/.git:/git
+      - /home/ynsjk/git/priv_The-Knowledge:/the-knowledge
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Zurich

@@ -36,7 +36,9 @@ docker compose up --build
 ## Config
 Adjust `conf.json`:
 - `db.db_path`: database output path (default `output/docs.db`)
-- `docs.full_path_to_docs`: absolute path to docs folder to scan
+- `docs.full_path_to_docs`: absolute path to docs folder to scan (default `/the-knowledge/02_DOCS`)
+- `todo.full_path_to_todo_file`: absolute path to TODO markdown file (default `/the-knowledge/README.md`)
+- `git.full_path_to_git_dir`: absolute path to git directory (default `/the-knowledge/.git`)
 - `log.log_file_path`: log file location (default `logs/app.log`)
 
 Timestamps for syncs and logs are generated in the `Europe/Zurich` timezone.

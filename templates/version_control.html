@@ -35,7 +35,7 @@
         {% endwith %}
 
         <div class="alert {% if has_changes %}alert-warning{% else %}alert-success{% endif %}" role="status">
-            <strong>Documentation status (/docs only):</strong>
+            <strong>Documentation status (/the-knowledge/02_DOCS only):</strong>
             {% if has_changes %}
             Changes detected.
             {% else %}
@@ -64,7 +64,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="3" class="text-center text-muted py-4">No changes found in /docs.</td>
+                                <td colspan="3" class="text-center text-muted py-4">No changes found in /the-knowledge/02_DOCS.</td>
                             </tr>
                             {% endfor %}
                         </tbody>

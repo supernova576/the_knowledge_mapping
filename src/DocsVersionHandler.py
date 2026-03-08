@@ -1,5 +1,4 @@
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,20 +21,17 @@ class DocsVersionHandler:
         conf_path = Path(__file__).resolve().parent.parent / "conf.json"
         conf_data = json.loads(conf_path.read_text(encoding="utf-8"))
 
-        configured_git_dir = conf_data.get("git", {}).get("full_path_to_git_dir", ".git")
-        configured_docs_dir = conf_data.get("docs", {}).get("full_path_to_docs", "/docs")
-        configured_todo_file = conf_data.get("todo", {}).get("full_path_to_todo_file", "/todo/README.md")
+        configured_git_dir = conf_data.get("git", {}).get("full_path_to_git_dir", "/the-knowledge/.git")
+        configured_docs_dir = conf_data.get("docs", {}).get("full_path_to_docs", "/the-knowledge/02_DOCS")
+        configured_todo_file = conf_data.get("todo", {}).get("full_path_to_todo_file", "/the-knowledge/README.md")
         self.git_executable = conf_data.get("git", {}).get("executable", "git")
 
-        git_dir_path = Path(configured_git_dir)
-        if not git_dir_path.is_absolute():
-            git_dir_path = (Path(__file__).resolve().parent.parent / git_dir_path).resolve()
+        self.git_dir = self._resolve_configured_path(configured_git_dir)
+        self.docs_dir = self._resolve_configured_path(configured_docs_dir)
+        self.todo_file = self._resolve_configured_path(configured_todo_file)
 
-        self.git_dir = git_dir_path if git_dir_path.exists() else Path("/git")
-        self.docs_dir = Path(configured_docs_dir)
-        self.todo_file = Path(configured_todo_file)
         self.work_tree = self._resolve_work_tree()
-        self.docs_path_candidates = self._build_docs_path_candidates(self.docs_dir)
+        self.docs_path_candidates = self._build_docs_path_candidates()
         self.docs_pathspecs = self._build_docs_pathspecs()
 
         logger.info(
@@ -46,57 +42,26 @@ class DocsVersionHandler:
             sorted(self.docs_path_candidates),
         )
 
+    def _resolve_configured_path(self, configured_path: str) -> Path:
+        path = Path(configured_path)
+        if path.is_absolute():
+            return path
+        return (Path(__file__).resolve().parent.parent / path).resolve()
+
+    def _resolve_work_tree(self) -> Path:
+        if self.git_dir.name == ".git":
+            return self.git_dir.parent
+
+        return self.git_dir
+
     def _build_docs_pathspecs(self) -> list[str]:
         pathspecs: list[str] = []
-
-        resolved_work_tree = self.work_tree.resolve()
-
-        if self.docs_dir.is_absolute():
-            try:
-                relative_docs = self.docs_dir.resolve().relative_to(resolved_work_tree)
-                pathspecs.append(relative_docs.as_posix())
-            except ValueError:
-                pass
-        else:
-            pathspecs.append(self.docs_dir.as_posix().strip("/"))
 
         for candidate in sorted(self.docs_path_candidates):
             if candidate not in pathspecs:
                 pathspecs.append(candidate)
 
         return [value for value in pathspecs if value]
-
-    def _resolve_work_tree(self) -> Path:
-        if self.git_dir.name == ".git":
-            return self.git_dir.parent
-
-        synthetic_root = Path("/tmp/the_knowledge_mapping_git_worktree")
-        synthetic_root.mkdir(parents=True, exist_ok=True)
-
-        self._ensure_symlink(self.docs_dir, synthetic_root / "02_DOCS")
-        if self.docs_dir.name and self.docs_dir.name != "02_DOCS":
-            self._ensure_symlink(self.docs_dir, synthetic_root / self.docs_dir.name)
-        if self.todo_file.name:
-            self._ensure_symlink(self.todo_file, synthetic_root / self.todo_file.name)
-
-        return synthetic_root
-
-    def _ensure_symlink(self, source: Path, destination: Path) -> None:
-        if not source.exists():
-            logger.warning("Symlink source not found: %s", source)
-            return
-
-        try:
-            if destination.is_symlink() or destination.exists():
-                if destination.is_symlink() and destination.resolve(strict=False) == source.resolve():
-                    return
-                if destination.is_dir() and not destination.is_symlink():
-                    shutil.rmtree(destination)
-                else:
-                    destination.unlink()
-            destination.symlink_to(source)
-        except OSError as exc:
-            logger.warning("Failed to create symlink %s -> %s: %s", destination, source, exc)
 
     def _display_name(self, file_path: str) -> str:
         normalized_path = self._normalize_path(file_path)
@@ -110,24 +75,23 @@ class DocsVersionHandler:
 
         return Path(normalized_path).stem
 
-    def _build_docs_path_candidates(self, docs_dir: Path) -> set[str]:
+    def _build_docs_path_candidates(self) -> set[str]:
         candidates: set[str] = set()
 
-        docs_raw = docs_dir.as_posix().strip()
+        docs_raw = self.docs_dir.as_posix().strip()
         if docs_raw:
             candidates.add(docs_raw.lstrip("/"))
 
-        if docs_dir.name:
-            candidates.add(docs_dir.name)
+        if self.docs_dir.name:
+            candidates.add(self.docs_dir.name)
 
-        if docs_dir.is_absolute():
+        if self.docs_dir.is_absolute():
             try:
-                relative_docs = docs_dir.resolve().relative_to(self.work_tree.resolve())
+                relative_docs = self.docs_dir.resolve().relative_to(self.work_tree.resolve())
                 candidates.add(relative_docs.as_posix())
             except ValueError:
                 pass
 
-        candidates.add("02_DOCS")
         return {value.strip("/") for value in candidates if value and value.strip("/")}
 
     def _is_docs_file(self, file_path: str) -> bool:
@@ -214,7 +178,6 @@ class DocsVersionHandler:
             if file_path not in summaries:
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=0, deletions=0)
 
-
         result: list[dict] = []
         for change in sorted(summaries.values(), key=lambda item: item.file_path.lower()):
             if change.additions == 0 and change.deletions == 0:
@@ -230,7 +193,6 @@ class DocsVersionHandler:
             )
 
         return result
-
 
     def _extract_porcelain_path(self, row: str) -> str:
         if len(row) < 4:

@@ -181,7 +181,7 @@ def version_control_sync():
         version_handler = DocsVersionHandler()
         snapshot = version_handler.get_status_snapshot()
         change_count = len(snapshot.get("changes", []))
-        flash(f"Git status refreshed. {change_count} changed files detected in /docs.", "success")
+        flash(f"Git status refreshed. {change_count} changed files detected in /the-knowledge/02_DOCS.", "success")
     except Exception as exc:
         flash(f"Failed to refresh git status: {exc}", "danger")
 

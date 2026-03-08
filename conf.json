@@ -3,13 +3,13 @@
         "db_path": "output/docs.db"
     },
     "docs": {
-        "full_path_to_docs": "/docs"
+        "full_path_to_docs": "/the-knowledge/02_DOCS"
     },
     "todo": {
-        "full_path_to_todo_file": "/todo/README.md"
+        "full_path_to_todo_file": "/the-knowledge/README.md"
     },
     "git": {
-        "full_path_to_git_dir": "/git"
+        "full_path_to_git_dir": "/the-knowledge/.git"
     },
     "log": {
         "log_file_path": "logs/app.log"
