@@ -58,7 +58,7 @@
                         <tbody>
                             {% for change in changes %}
                             <tr>
-                                <td>{{ change.file_path }}</td>
+                                <td>{{ change.display_name or change.file_path }}</td>
                                 <td class="text-success">+{{ change.additions }}</td>
                                 <td class="text-danger">-{{ change.deletions }}</td>
                             </tr>

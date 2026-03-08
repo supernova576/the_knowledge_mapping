@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,14 +88,27 @@ class DocsVersionHandler:
 
         try:
             if destination.is_symlink() or destination.exists():
-                if destination.is_symlink() and destination.resolve() == source.resolve():
+                if destination.is_symlink() and destination.resolve(strict=False) == source.resolve():
                     return
                 if destination.is_dir() and not destination.is_symlink():
-                    return
-                destination.unlink()
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink()
             destination.symlink_to(source)
         except OSError as exc:
             logger.warning("Failed to create symlink %s -> %s: %s", destination, source, exc)
+
+    def _display_name(self, file_path: str) -> str:
+        normalized_path = self._normalize_path(file_path)
+
+        for candidate in sorted(self.docs_path_candidates, key=len, reverse=True):
+            if normalized_path == candidate:
+                return Path(candidate).name
+            if normalized_path.startswith(f"{candidate}/"):
+                normalized_path = normalized_path[len(candidate) + 1 :]
+                break
+
+        return Path(normalized_path).stem
 
     def _build_docs_path_candidates(self, docs_dir: Path) -> set[str]:
         candidates: set[str] = set()
@@ -209,6 +223,7 @@ class DocsVersionHandler:
             result.append(
                 {
                     "file_path": change.file_path,
+                    "display_name": self._display_name(change.file_path),
                     "additions": change.additions,
                     "deletions": change.deletions,
                 }
