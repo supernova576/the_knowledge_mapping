@@ -3,12 +3,13 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.exceptions import HTTPException
 
 from main import export_result_to_markdown
 from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
+from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.logger import get_logger
 
@@ -113,6 +114,15 @@ def _load_todos(database: db, query: str) -> list[dict]:
     return processed_rows
 
 
+def _safe_git_snapshot() -> dict:
+    try:
+        version_handler = DocsVersionHandler()
+        return version_handler.get_status_snapshot()
+    except Exception as exc:
+        logger.error("Failed to fetch git status snapshot: %s", exc)
+        return {"has_changes": False, "changes": [], "error": str(exc)}
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -139,6 +149,8 @@ def index():
     processed_docs.sort(key=lambda x: x.get("id", 0))
     last_sync_time = database.get_last_sync_time()
 
+    version_status = _safe_git_snapshot()
+
     return render_template(
         "index.html",
         docs=processed_docs,
@@ -148,7 +160,41 @@ def index():
         selected_view=view,
         query=query,
         last_sync_time=last_sync_time,
+        has_git_changes=version_status.get("has_changes", False),
     )
+
+
+@app.route("/version_control", methods=["GET"])
+def version_control_overview():
+    version_status = _safe_git_snapshot()
+
+    return render_template(
+        "version_control.html",
+        has_changes=version_status.get("has_changes", False),
+        changes=version_status.get("changes", []),
+    )
+
+
+@app.route("/version_control/sync", methods=["POST"])
+def version_control_sync():
+    try:
+        version_handler = DocsVersionHandler()
+        snapshot = version_handler.get_status_snapshot()
+        change_count = len(snapshot.get("changes", []))
+        flash(f"Git status refreshed. {change_count} changed files detected in /docs.", "success")
+    except Exception as exc:
+        flash(f"Failed to refresh git status: {exc}", "danger")
+
+    return redirect(url_for("version_control_overview"))
+
+
+@app.route("/api/version_control/status", methods=["GET"])
+def version_control_status_api():
+    try:
+        version_handler = DocsVersionHandler()
+        return jsonify(version_handler.get_status_snapshot())
+    except Exception as exc:
+        return jsonify({"has_changes": False, "changes": [], "error": str(exc)}), 500
 
 
 @app.route("/scan", methods=["POST"])

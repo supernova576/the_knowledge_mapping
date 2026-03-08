@@ -11,6 +11,8 @@
                         href="{{ url_for('todo_overview') }}">Todo</a></li>
                 <li class="nav-item"><a class="nav-link {% if active_page == 'history' %}active{% endif %}"
                         href="{{ url_for('version_history') }}">Version history</a></li>
+                <li class="nav-item"><a class="nav-link {% if active_page == 'version_control' %}active{% endif %}"
+                        href="{{ url_for('version_control_overview') }}">Version control</a></li>
             </ul>
             <button id="theme-toggle" type="button" class="btn btn-outline-secondary">🌙 Dark mode</button>
         </div>
