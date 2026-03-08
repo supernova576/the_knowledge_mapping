@@ -23,33 +23,20 @@ class DocsVersionHandler:
 
         configured_git_dir = conf_data.get("git", {}).get("full_path_to_git_dir", ".git")
         configured_docs_dir = conf_data.get("docs", {}).get("full_path_to_docs", "/docs")
-
-        configured_git_executable = conf_data.get("git", {}).get("executable", "git")
+        self.git_executable = conf_data.get("git", {}).get("executable", "git")
 
         git_dir_path = Path(configured_git_dir)
         if not git_dir_path.is_absolute():
             git_dir_path = (Path(__file__).resolve().parent.parent / git_dir_path).resolve()
 
         self.git_dir = git_dir_path
-
-        self.work_tree = self.git_dir.parent if self.git_dir.name == ".git" else self.git_dir
-
         self.docs_dir = Path(configured_docs_dir)
-        self.docs_path_candidates = self._build_docs_path_candidates(self.docs_dir)
-
-        logger.info(
-            "DocsVersionHandler initialized with git_dir=%s work_tree=%s docs_candidates=%s",
-        )
-
-        self.docs_dir = Path(configured_docs_dir)
-        self.git_executable = configured_git_executable
         self.work_tree = self._resolve_work_tree()
         self.docs_path_candidates = self._build_docs_path_candidates(self.docs_dir)
 
         logger.info(
             "DocsVersionHandler initialized with git=%s git_dir=%s work_tree=%s docs_candidates=%s",
             self.git_executable,
-
             self.git_dir,
             self.work_tree,
             sorted(self.docs_path_candidates),
@@ -91,10 +78,7 @@ class DocsVersionHandler:
 
     def _run_git_command(self, arguments: list[str]) -> str:
         command = [
-            "git",
-
             self.git_executable,
-
             f"--git-dir={self.git_dir}",
             f"--work-tree={self.work_tree}",
             *arguments,
