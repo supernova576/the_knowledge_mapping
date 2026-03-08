@@ -1,0 +1,24 @@
+<script>
+    (function () {
+        const storageKey = "km-theme";
+        const root = document.documentElement;
+        const toggle = document.getElementById("theme-toggle");
+
+        function setTheme(theme) {
+            root.setAttribute("data-bs-theme", theme);
+            if (toggle) {
+                toggle.textContent = theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
+            }
+            localStorage.setItem(storageKey, theme);
+        }
+
+        setTheme(root.getAttribute("data-bs-theme") || "light");
+
+        if (toggle) {
+            toggle.addEventListener("click", function () {
+                const current = root.getAttribute("data-bs-theme") || "light";
+                setTheme(current === "dark" ? "light" : "dark");
+            });
+        }
+    })();
+</script>

@@ -1,5 +1,6 @@
 import json
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, flash, redirect, render_template, request, send_file, url_for
@@ -8,6 +9,7 @@ from werkzeug.exceptions import HTTPException
 from main import export_result_to_markdown
 from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
+from src.DocsWriter import DocsWriter
 from src.logger import get_logger
 
 
@@ -79,6 +81,36 @@ def _load_docs(database: db, view: str, query: str) -> dict:
         return database.get_compliant_docs()
 
     return database.get_all_docs()
+
+
+def _load_conf() -> dict:
+    conf_path = Path(__file__).resolve().parent / "conf.json"
+    with open(conf_path, "r", encoding="utf-8") as conf_file:
+        return json.loads(conf_file.read())
+
+
+def _today_dd_mm() -> str:
+    return datetime.now().strftime("%d.%m")
+
+
+def _normalize_todo_types(value):
+    normalized = _normalize_value(value)
+    if isinstance(normalized, list):
+        return normalized
+    if not normalized:
+        return []
+    return [str(normalized)]
+
+
+def _load_todos(database: db, query: str) -> list[dict]:
+    rows = database.get_todos_by_note(query) if query else database.get_all_todos()
+    processed_rows = []
+    for row in rows:
+        prepared = dict(row)
+        prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
+        processed_rows.append(prepared)
+
+    return processed_rows
 
 
 @app.route("/", methods=["GET"])
@@ -247,6 +279,116 @@ def version_history():
         selected_version=selected_version,
         changes=changes,
     )
+
+
+@app.route("/todo", methods=["GET"])
+def todo_overview():
+    query = request.args.get("q", "").strip()
+    database = db()
+    todos = _load_todos(database, query)
+    return render_template("todo.html", todos=todos, query=query)
+
+
+@app.route("/todo/sync", methods=["POST"])
+def sync_todos():
+    try:
+        parser = DocsParser()
+        synced = parser.sync_todos_to_db()
+        flash(f"Synced {len(synced)} todos from markdown.", "success")
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            flash("Todo sync failed. Check conf.json todo path and parser logs.", "danger")
+        else:
+            flash(traceback.format_exc(), "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/add", methods=["POST"])
+def add_todo():
+    note = request.form.get("note", "").strip()
+    todo_type = request.form.get("type", "").strip()
+    progress = request.form.get("progress", "Not Started").strip()
+
+    if not note or not todo_type:
+        flash("Todo note and type are required.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        todos.append(
+            {
+                "note": note,
+                "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
+                "progress": progress,
+                "last_update": _today_dd_mm(),
+            }
+        )
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(todos)
+        parser.sync_todos_to_db()
+        flash("Todo added successfully.", "success")
+    except BaseException:
+        flash("Failed to add todo. Check logs and markdown format.", "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/delete", methods=["POST"])
+def delete_todo():
+    todo_id = request.form.get("todo_id", "").strip()
+    if not todo_id:
+        flash("Todo id is required.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        parser = DocsParser()
+        database = db()
+        current_todos = database.get_all_todos()
+        kept_todos = [todo for todo in current_todos if str(todo.get("id")) != todo_id]
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(kept_todos)
+        parser.sync_todos_to_db()
+        flash("Todo deleted.", "success")
+    except BaseException:
+        flash("Failed to delete todo.", "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/progress", methods=["POST"])
+def update_todo_progress():
+    todo_id = request.form.get("todo_id", "").strip()
+    progress = request.form.get("progress", "Not Started").strip()
+
+    if not todo_id:
+        flash("Todo id is required.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        parser = DocsParser()
+        database = db()
+        current_todos = database.get_all_todos()
+
+        for todo in current_todos:
+            if str(todo.get("id")) == todo_id:
+                todo["progress"] = progress
+                todo["last_update"] = _today_dd_mm()
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(current_todos)
+        parser.sync_todos_to_db()
+        flash("Todo progress updated.", "success")
+    except BaseException:
+        flash("Failed to update todo progress.", "danger")
+
+    return redirect(url_for("todo_overview"))
 
 
 @app.errorhandler(404)

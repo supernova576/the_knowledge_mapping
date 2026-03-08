@@ -5,6 +5,9 @@
     "docs": {
         "full_path_to_docs": "/docs"
     },
+    "todo": {
+        "full_path_to_todo_file": "/todo/README.md"
+    },
     "log": {
         "log_file_path": "logs/app.log"
     }

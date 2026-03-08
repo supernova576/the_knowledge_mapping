@@ -5,14 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>The Knowledge</title>
-    <script>
-      (function () {
-        const storageKey = "km-theme";
-        const storedTheme = localStorage.getItem(storageKey);
-        const preferredDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        document.documentElement.setAttribute("data-bs-theme", storedTheme || (preferredDark ? "dark" : "light"));
-      })();
-    </script>
+    {% include '_theme_init.html' %}
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
@@ -21,15 +14,14 @@
 
 <body>
     <div class="container py-4">
+        {% set active_page = 'index' %}
+        {% include '_navbar.html' %}
+
         <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
             <h1 class="h3 mb-0">The Knowledge Overview Dashboard</h1>
-            <div class="d-flex gap-2">
-                <button id="theme-toggle" type="button" class="btn btn-outline-secondary">🌙 Dark mode</button>
-                <a class="btn btn-outline-info" href="{{ url_for('version_history') }}">Version history</a>
-                <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
-                    <button id="scan-submit" class="btn btn-primary">Run full scan</button>
-                </form>
-            </div>
+            <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
+                <button id="scan-submit" class="btn btn-primary">Run full scan</button>
+            </form>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -51,212 +43,58 @@
         </div>
 
         <div class="row g-3 mb-4">
-            <div class="col-md-4">
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h2 class="h6 text-muted">Loaded docs</h2>
-                        <p class="display-6 mb-0">{{ total_docs }}</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card shadow-sm border-success-subtle">
-                    <div class="card-body">
-                        <h2 class="h6 text-muted">Compliant</h2>
-                        <p class="display-6 text-success mb-0">{{ compliant_docs }}</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card shadow-sm border-danger-subtle">
-                    <div class="card-body">
-                        <h2 class="h6 text-muted">Incompliant</h2>
-                        <p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p>
-                    </div>
-                </div>
-            </div>
+            <div class="col-md-4"><div class="card shadow-sm"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
+            <div class="col-md-4"><div class="card shadow-sm border-success-subtle"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
+            <div class="col-md-4"><div class="card shadow-sm border-danger-subtle"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
         </div>
 
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <h2 class="h5">Search & filter</h2>
-                <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
-                    <div class="col-md-3">
-                        <label class="form-label">View</label>
-                        <select name="view" class="form-select">
-                            <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                            <option value="id" {% if selected_view=='id' %}selected{% endif %}>By ID</option>
-                            <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
-                            <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
-                            <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant
-                                only</option>
-                            <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>
-                                Incompliant only</option>
-                        </select>
-                    </div>
-                    <div class="col-md-7">
-                        <label class="form-label">Query</label>
-                        <input name="q" value="{{ query }}" class="form-control" placeholder="id, file name, or #tag" />
-                    </div>
-                    <div class="col-md-2 d-grid">
-                        <button class="btn btn-outline-primary">Apply</button>
-                    </div>
-                </form>
+        <div class="card shadow-sm mb-4"><div class="card-body">
+            <h2 class="h5">Search & filter</h2>
+            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
+                <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
+                    <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
+                    <option value="id" {% if selected_view=='id' %}selected{% endif %}>By ID</option>
+                    <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
+                    <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
+                    <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
+                    <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                </select></div>
+                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="id, file name, or #tag" /></div>
+                <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
+            </form>
+            <div class="mt-3"><a class="btn btn-outline-secondary" href="{{ url_for('export_results', view=selected_view, q=query) }}">Export current view (Markdown)</a></div>
+        </div></div>
 
-                <div class="mt-3">
-                    <a class="btn btn-outline-secondary"
-                        href="{{ url_for('export_results', view=selected_view, q=query) }}">Export current view
-                        (Markdown)</a>
-                </div>
-            </div>
-        </div>
+        <div class="card shadow-sm mb-4"><div class="card-body">
+            <h2 class="h5">Manual compliance</h2>
+            <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
+                <div class="col-md-4"><label class="form-label">Document ID</label><input class="form-control" name="doc_id" placeholder="ID" required /></div>
+                <div class="col-md-4"><label class="form-label">Manual compliant override</label><select class="form-select" name="manual_compliant_override"><option value="true">true</option><option value="false" selected>false</option></select></div>
+                <div class="col-md-4 d-grid"><button class="btn btn-outline-success">Update manual compliance</button></div>
+            </form>
+        </div></div>
 
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <h2 class="h5">Manual compliance</h2>
-                <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
-                    <div class="col-md-4">
-                        <label class="form-label">Document ID</label>
-                        <input class="form-control" name="doc_id" placeholder="ID" required />
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Manual overwrite</label>
-                        <select name="manual_compliant_override" class="form-select">
-                            <option value="false" selected>false</option>
-                            <option value="true">true</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2 d-grid">
-                        <button class="btn btn-outline-success">Save</button>
-                    </div>
-                </form>
-            </div>
-        </div>
+        <div class="card shadow-sm mb-4"><div class="card-body"><h2 class="h5">Delete controls</h2><div class="row g-3">
+            <div class="col-md-4"><form method="post" action="{{ url_for('delete_by_id') }}"><label class="form-label">Delete by ID</label><div class="input-group"><input class="form-control" name="doc_id" placeholder="ID" /><button class="btn btn-outline-danger">Delete</button></div></form></div>
+            <div class="col-md-4"><form method="post" action="{{ url_for('delete_by_name') }}"><label class="form-label">Delete by Name</label><div class="input-group"><input class="form-control" name="name" placeholder="Title" /><button class="btn btn-outline-danger">Delete</button></div></form></div>
+            <div class="col-md-4 d-flex align-items-end"><form method="post" action="{{ url_for('delete_all') }}" class="w-100 d-grid"><button class="btn btn-danger" onclick="return confirm('Delete all docs?')">Delete ALL</button></form></div>
+        </div></div></div>
 
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <h2 class="h5">Delete controls</h2>
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <form method="post" action="{{ url_for('delete_by_id') }}">
-                            <label class="form-label">Delete by ID</label>
-                            <div class="input-group">
-                                <input class="form-control" name="doc_id" placeholder="ID" />
-                                <button class="btn btn-outline-danger">Delete</button>
-                            </div>
-                        </form>
-                    </div>
-                    <div class="col-md-4">
-                        <form method="post" action="{{ url_for('delete_by_name') }}">
-                            <label class="form-label">Delete by Name</label>
-                            <div class="input-group">
-                                <input class="form-control" name="name" placeholder="Title" />
-                                <button class="btn btn-outline-danger">Delete</button>
-                            </div>
-                        </form>
-                    </div>
-                    <div class="col-md-4 d-flex align-items-end">
-                        <form method="post" action="{{ url_for('delete_all') }}" class="w-100 d-grid">
-                            <button class="btn btn-danger" onclick="return confirm('Delete all docs?')">Delete
-                                ALL</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h2 class="h5">Documents overview</h2>
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle compliance-table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Title</th>
-                                <th>Created</th>
-                                <th>Changed</th>
-                                <th>Compliant</th>
-                                <th>Noncompliance reasons</th>
-                                <th>Tags</th>
-                                <th>Links</th>
-                                <th>Video links</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for doc in docs %}
-                            <tr>
-                                <td>{{ doc.id }}</td>
-                                <td>{{ doc.title }}</td>
-                                <td>{{ doc.created_at }}</td>
-                                <td>{{ doc.changed_at }}</td>
-                                <td>
-                                    <span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span>
-                                </td>
-                                <td>
-                                    {% for reason in doc.noncompliance_reason_list %}
-                                    <span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>
-                                    {% endfor %}
-                                </td>
-                                <td>
-                                    {% for tag in doc.tags_list %}
-                                    <span class="badge text-bg-secondary me-1">{{ tag }}</span>
-                                    {% endfor %}
-                                </td>
-                                <td>
-                                    {% for link in doc.links_list %}
-                                    <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link
-                                        }}</a>
-                                    {% endfor %}
-                                </td>
-                                <td>
-                                    {% for link in doc.video_links_list %}
-                                    <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link
-                                        }}</a>
-                                    {% endfor %}
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="9" class="text-center text-muted py-4">No documents found for this filter.
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <div class="card shadow-sm"><div class="card-body"><h2 class="h5">Documents overview</h2><div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>ID</th><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th></tr></thead><tbody>
+            {% for doc in docs %}<tr><td>{{ doc.id }}</td><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{{ doc.changed_at }}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
+            {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
+        </tbody></table></div></div></div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    {% include '_theme_toggle_script.html' %}
     <script>
         (function () {
-            const storageKey = "km-theme";
-            const root = document.documentElement;
-            const toggle = document.getElementById("theme-toggle");
-
-            function setTheme(theme) {
-                root.setAttribute("data-bs-theme", theme);
-                if (toggle) {
-                    toggle.textContent = theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
-                }
-                localStorage.setItem(storageKey, theme);
-            }
-
-            const initialTheme = root.getAttribute("data-bs-theme") || "light";
-            setTheme(initialTheme);
-
-            if (toggle) {
-                toggle.addEventListener("click", function () {
-                    const current = root.getAttribute("data-bs-theme") || "light";
-                    setTheme(current === "dark" ? "light" : "dark");
-                });
-            }
-
             const scanForm = document.getElementById("scan-form");
             const scanSubmit = document.getElementById("scan-submit");
             const syncLoadingBanner = document.getElementById("sync-loading-banner");
-
             if (scanForm && syncLoadingBanner) {
                 scanForm.addEventListener("submit", function () {
                     syncLoadingBanner.classList.remove("d-none");

@@ -76,6 +76,18 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS todos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    note TEXT UNIQUE,
+                    type TEXT,
+                    progress TEXT,
+                    last_update TEXT
+                )
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
@@ -442,6 +454,63 @@ class db:
 
         except Exception:
             logger.error("sqlite_handler/check_if_doc_is_already_in_db failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def replace_all_todos(self, todos: list[dict]) -> None:
+        try:
+            self._execute("DELETE FROM todos")
+            for todo in todos:
+                self._execute(
+                    "INSERT INTO todos (note, type, progress, last_update) VALUES (?, ?, ?, ?)",
+                    (
+                        todo.get("note", "N/A"),
+                        todo.get("type", "[]"),
+                        todo.get("progress", "Not Started"),
+                        todo.get("last_update", "N/A"),
+                    ),
+                )
+            self._commit()
+            logger.info("Replaced todos table with %s entries", len(todos))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_todos failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_todos(self) -> list[dict]:
+        try:
+            return self._fetch_all_dict("SELECT * FROM todos ORDER BY id ASC")
+        except Exception:
+            logger.error("sqlite_handler/get_all_todos failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_todos_by_note(self, query: str) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                "SELECT * FROM todos WHERE lower(note) LIKE lower(?) ORDER BY id ASC",
+                (f"%{query}%",),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_todos_by_note failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def update_todo_progress(self, todo_id: int, progress: str, last_update: str) -> None:
+        try:
+            self._execute(
+                "UPDATE todos SET progress = ?, last_update = ? WHERE id = ?",
+                (progress, last_update, todo_id),
+            )
+            self._commit()
+            logger.info("Updated todo progress id=%s to=%s", todo_id, progress)
+        except Exception:
+            logger.error("sqlite_handler/update_todo_progress failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_todo_by_id(self, todo_id: int) -> None:
+        try:
+            self._execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+            self._commit()
+            logger.info("Deleted todo id=%s", todo_id)
+        except Exception:
+            logger.error("sqlite_handler/delete_todo_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __del__(self) -> None:

@@ -14,6 +14,12 @@ logger = get_logger(__name__)
 
 
 class DocsParser:
+    PROGRESS_ICON_TO_STATE = {
+        "![[not started.png]]": "Not Started",
+        "![[in progress.png]]": "In Progress",
+        "![[done.png]]": "Done",
+    }
+
     def __init__(self) -> None:
         try:
             path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -21,6 +27,7 @@ class DocsParser:
             with open(path, "r", encoding="utf-8") as f:
                 j: dict = json.loads(f.read())
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
+                self.todo_file_path: str = j.get("todo", {}).get("full_path_to_todo_file", False)
 
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
@@ -265,4 +272,78 @@ class DocsParser:
 
         except Exception:
             logger.error("Full docs sync failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _clean_note(self, note: str) -> str:
+        try:
+            return re.sub(r"\s*\(.*?\)", "", note).strip()
+        except Exception:
+            logger.error("Failed to clean note\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _parse_todo_type(self, todo_type: str) -> list[str]:
+        try:
+            parts = [part.strip() for part in todo_type.split("/") if part.strip()]
+            return parts if parts else ["N/A"]
+        except Exception:
+            logger.error("Failed to parse todo type\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _parse_todo_progress(self, raw_progress: str) -> str:
+        try:
+            return self.PROGRESS_ICON_TO_STATE.get(raw_progress.strip(), "Not Started")
+        except Exception:
+            logger.error("Failed to parse todo progress\n%s", traceback.format_exc())
+            adieu(1)
+
+    def parse_todos_from_markdown(self) -> list[dict]:
+        try:
+            if not self.todo_file_path:
+                raise Exception("Todo path missing in conf.json")
+
+            todo_path = Path(self.todo_file_path)
+            with open(todo_path, "r", encoding="utf-8") as file:
+                content = file.read()
+
+            table_pattern = re.compile(
+                r"\|\s*Note\s*\|\s*Type\s*\|\s*Progress\s*\|\s*last Update\s*\|\n"
+                r"\|[^\n]+\|\n"
+                r"((?:\|[^\n]+\|\n?)*)",
+                re.MULTILINE,
+            )
+            match = table_pattern.search(content)
+            if not match:
+                return []
+
+            rows = [line.strip() for line in match.group(1).splitlines() if line.strip().startswith("|")]
+            todos: list[dict] = []
+
+            for row in rows:
+                parts = [cell.strip() for cell in row.strip("|").split("|")]
+                if len(parts) != 4:
+                    continue
+
+                note, todo_type, progress, last_update = parts
+                todos.append(
+                    {
+                        "note": self._clean_note(note),
+                        "type": json.dumps(self._parse_todo_type(todo_type), ensure_ascii=False),
+                        "progress": self._parse_todo_progress(progress),
+                        "last_update": last_update,
+                    }
+                )
+
+            return todos
+        except Exception:
+            logger.error("Failed to parse todos markdown\n%s", traceback.format_exc())
+            adieu(1)
+
+    def sync_todos_to_db(self) -> list[dict]:
+        try:
+            todos = self.parse_todos_from_markdown()
+            db().replace_all_todos(todos)
+            logger.info("Todo sync completed with %s entries", len(todos))
+            return todos
+        except Exception:
+            logger.error("Todo sync failed\n%s", traceback.format_exc())
             adieu(1)

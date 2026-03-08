@@ -8,6 +8,7 @@ services:
       - ./logs:/app/logs
       - ./conf.json:/app/conf.json
       - /home/ynsjk/git/priv_The-Knowledge/02_DOCS:/docs
+      - /home/ynsjk/git/priv_The-Knowledge/README.md:/todo/README.md
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Zurich
