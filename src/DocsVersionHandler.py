@@ -117,11 +117,14 @@ class DocsVersionHandler:
         return {value.strip("/") for value in candidates if value and value.strip("/")}
 
     def _is_docs_file(self, file_path: str) -> bool:
-        normalized_path = file_path.strip().strip('"').strip("/")
+        normalized_path = self._normalize_path(file_path)
         for candidate in self.docs_path_candidates:
             if normalized_path == candidate or normalized_path.startswith(f"{candidate}/"):
                 return True
         return False
+
+    def _normalize_path(self, file_path: str) -> str:
+        return file_path.strip().strip('"').strip("/")
 
     def _run_git_command(self, arguments: list[str]) -> str:
         command = [
@@ -152,10 +155,15 @@ class DocsVersionHandler:
         }
 
     def get_line_change_summary(self) -> list[dict]:
-
-        numstat_output = self._run_git_command(["diff", "--numstat", "HEAD", "--", *self.docs_pathspecs])
-
-        numstat_output = self._run_git_command(["-c", "core.quotepath=off", "diff", "--numstat", "HEAD"])
+        numstat_output = self._run_git_command([
+            "-c",
+            "core.quotepath=off",
+            "diff",
+            "--numstat",
+            "HEAD",
+            "--",
+            *self.docs_pathspecs,
+        ])
 
         summaries: dict[str, FileChangeSummary] = {}
 
@@ -165,7 +173,7 @@ class DocsVersionHandler:
                 if len(parts) < 3:
                     continue
 
-                additions_raw, deletions_raw, file_path = parts[0], parts[1], parts[2]
+                additions_raw, deletions_raw, file_path = parts[0], parts[1], self._normalize_path(parts[2])
                 if not self._is_docs_file(file_path):
                     continue
 
@@ -174,16 +182,14 @@ class DocsVersionHandler:
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=additions, deletions=deletions)
 
         porcelain_output = self._run_git_command([
+            "-c",
+            "core.quotepath=off",
             "status",
             "--porcelain",
-            "--untracked-files=normal",
+            "--untracked-files=all",
             "--",
             *self.docs_pathspecs,
         ])
-
-        porcelain_output = self._run_git_command(
-            ["-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all"]
-        )
 
         for row in porcelain_output.splitlines() if porcelain_output else []:
             file_path = self._extract_porcelain_path(row)
@@ -197,7 +203,7 @@ class DocsVersionHandler:
 
         result: list[dict] = []
         for change in sorted(summaries.values(), key=lambda item: item.file_path.lower()):
-            if change.file_path.lower().endswith(".md") and change.additions == 0 and change.deletions == 0:
+            if change.additions == 0 and change.deletions == 0:
                 continue
 
             result.append(
@@ -217,7 +223,6 @@ class DocsVersionHandler:
 
         path_part = row[3:].strip()
         if " -> " in path_part:
-            return path_part.split(" -> ", maxsplit=1)[1].strip()
+            path_part = path_part.split(" -> ", maxsplit=1)[1].strip()
 
-        return path_part
-
+        return self._normalize_path(path_part)
