@@ -42,20 +42,25 @@
             <strong>Last sync time:</strong> {{ last_sync_time }}
         </div>
 
-        <div id="git-change-banner" class="alert {% if has_git_changes %}alert-warning{% else %}alert-success{% endif %}" role="status">
-            <strong>Version control (/docs):</strong>
-            {% if has_git_changes %}
-            Changes detected in /docs.
-            {% else %}
-            No uncommitted changes detected in /docs.
-            {% endif %}
-            <a href="{{ url_for('version_control_overview') }}" class="alert-link ms-2">Open version control</a>
-        </div>
-
         <div class="row g-3 mb-4">
-            <div class="col-md-4"><div class="card shadow-sm"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
-            <div class="col-md-4"><div class="card shadow-sm border-success-subtle"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-md-4"><div class="card shadow-sm border-danger-subtle"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm border-success-subtle"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm border-danger-subtle"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-md-3">
+                <div id="git-change-banner" class="card shadow-sm {% if has_git_changes %}border-warning-subtle{% else %}border-success-subtle{% endif %}" role="status">
+                    <div class="card-body">
+                        <h2 class="h6 text-muted mb-2">Version control (/docs)</h2>
+                        <p class="mb-2 {% if has_git_changes %}text-warning-emphasis{% else %}text-success-emphasis{% endif %}">
+                            {% if has_git_changes %}
+                            Changes detected.
+                            {% else %}
+                            No uncommitted changes.
+                            {% endif %}
+                        </p>
+                        <a href="{{ url_for('version_control_overview') }}" class="link-primary">Open version control</a>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="card shadow-sm mb-4"><div class="card-body">
@@ -127,15 +132,15 @@
                     return;
                 }
 
-                banner.classList.remove("alert-warning", "alert-success");
+                banner.classList.remove("border-warning-subtle", "border-success-subtle");
                 if (hasChanges) {
-                    banner.classList.add("alert-warning");
-                    banner.innerHTML = `<strong>Version control (/docs):</strong> Changes detected in /docs. <a href="{{ url_for('version_control_overview') }}" class="alert-link ms-2">Open version control</a>`;
+                    banner.classList.add("border-warning-subtle");
+                    banner.innerHTML = `<div class="card-body"><h2 class="h6 text-muted mb-2">Version control (/docs)</h2><p class="mb-2 text-warning-emphasis">Changes detected.</p><a href="{{ url_for('version_control_overview') }}" class="link-primary">Open version control</a></div>`;
                     return;
                 }
 
-                banner.classList.add("alert-success");
-                banner.innerHTML = `<strong>Version control (/docs):</strong> No uncommitted changes detected in /docs. <a href="{{ url_for('version_control_overview') }}" class="alert-link ms-2">Open version control</a>`;
+                banner.classList.add("border-success-subtle");
+                banner.innerHTML = `<div class="card-body"><h2 class="h6 text-muted mb-2">Version control (/docs)</h2><p class="mb-2 text-success-emphasis">No uncommitted changes.</p><a href="{{ url_for('version_control_overview') }}" class="link-primary">Open version control</a></div>`;
             }
 
             async function refreshGitStatus() {

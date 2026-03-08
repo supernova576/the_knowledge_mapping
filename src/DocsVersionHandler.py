@@ -23,16 +23,19 @@ class DocsVersionHandler:
 
         configured_git_dir = conf_data.get("git", {}).get("full_path_to_git_dir", ".git")
         configured_docs_dir = conf_data.get("docs", {}).get("full_path_to_docs", "/docs")
+        configured_todo_file = conf_data.get("todo", {}).get("full_path_to_todo_file", "/todo/README.md")
         self.git_executable = conf_data.get("git", {}).get("executable", "git")
 
         git_dir_path = Path(configured_git_dir)
         if not git_dir_path.is_absolute():
             git_dir_path = (Path(__file__).resolve().parent.parent / git_dir_path).resolve()
 
-        self.git_dir = git_dir_path
+        self.git_dir = git_dir_path if git_dir_path.exists() else Path("/git")
         self.docs_dir = Path(configured_docs_dir)
+        self.todo_file = Path(configured_todo_file)
         self.work_tree = self._resolve_work_tree()
         self.docs_path_candidates = self._build_docs_path_candidates(self.docs_dir)
+        self.docs_pathspecs = self._build_docs_pathspecs()
 
         logger.info(
             "DocsVersionHandler initialized with git=%s git_dir=%s work_tree=%s docs_candidates=%s",
@@ -42,12 +45,56 @@ class DocsVersionHandler:
             sorted(self.docs_path_candidates),
         )
 
+    def _build_docs_pathspecs(self) -> list[str]:
+        pathspecs: list[str] = []
+
+        resolved_work_tree = self.work_tree.resolve()
+
+        if self.docs_dir.is_absolute():
+            try:
+                relative_docs = self.docs_dir.resolve().relative_to(resolved_work_tree)
+                pathspecs.append(relative_docs.as_posix())
+            except ValueError:
+                pass
+        else:
+            pathspecs.append(self.docs_dir.as_posix().strip("/"))
+
+        for candidate in sorted(self.docs_path_candidates):
+            if candidate not in pathspecs:
+                pathspecs.append(candidate)
+
+        return [value for value in pathspecs if value]
+
     def _resolve_work_tree(self) -> Path:
         if self.git_dir.name == ".git":
             return self.git_dir.parent
 
-        docs_parent = self.docs_dir.parent if self.docs_dir.parent != Path("") else self.docs_dir
-        return docs_parent if docs_parent.exists() else self.docs_dir
+        synthetic_root = Path("/tmp/the_knowledge_mapping_git_worktree")
+        synthetic_root.mkdir(parents=True, exist_ok=True)
+
+        self._ensure_symlink(self.docs_dir, synthetic_root / "02_DOCS")
+        if self.docs_dir.name and self.docs_dir.name != "02_DOCS":
+            self._ensure_symlink(self.docs_dir, synthetic_root / self.docs_dir.name)
+        if self.todo_file.name:
+            self._ensure_symlink(self.todo_file, synthetic_root / self.todo_file.name)
+
+        return synthetic_root
+
+    def _ensure_symlink(self, source: Path, destination: Path) -> None:
+        if not source.exists():
+            logger.warning("Symlink source not found: %s", source)
+            return
+
+        try:
+            if destination.is_symlink() or destination.exists():
+                if destination.is_symlink() and destination.resolve() == source.resolve():
+                    return
+                if destination.is_dir() and not destination.is_symlink():
+                    return
+                destination.unlink()
+            destination.symlink_to(source)
+        except OSError as exc:
+            logger.warning("Failed to create symlink %s -> %s: %s", destination, source, exc)
 
     def _build_docs_path_candidates(self, docs_dir: Path) -> set[str]:
         candidates: set[str] = set()
@@ -105,7 +152,11 @@ class DocsVersionHandler:
         }
 
     def get_line_change_summary(self) -> list[dict]:
-        numstat_output = self._run_git_command(["diff", "--numstat", "HEAD"])
+
+        numstat_output = self._run_git_command(["diff", "--numstat", "HEAD", "--", *self.docs_pathspecs])
+
+        numstat_output = self._run_git_command(["-c", "core.quotepath=off", "diff", "--numstat", "HEAD"])
+
         summaries: dict[str, FileChangeSummary] = {}
 
         if numstat_output:
@@ -122,19 +173,51 @@ class DocsVersionHandler:
                 deletions = int(deletions_raw) if deletions_raw.isdigit() else 0
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=additions, deletions=deletions)
 
-        porcelain_output = self._run_git_command(["status", "--porcelain", "--untracked-files=all"])
+        porcelain_output = self._run_git_command([
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--",
+            *self.docs_pathspecs,
+        ])
+
+        porcelain_output = self._run_git_command(
+            ["-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all"]
+        )
+
         for row in porcelain_output.splitlines() if porcelain_output else []:
-            file_path = row[3:]
+            file_path = self._extract_porcelain_path(row)
+            if not file_path:
+                continue
             if not self._is_docs_file(file_path):
                 continue
             if file_path not in summaries:
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=0, deletions=0)
 
-        return [
-            {
-                "file_path": change.file_path,
-                "additions": change.additions,
-                "deletions": change.deletions,
-            }
-            for change in sorted(summaries.values(), key=lambda item: item.file_path.lower())
-        ]
+
+        result: list[dict] = []
+        for change in sorted(summaries.values(), key=lambda item: item.file_path.lower()):
+            if change.file_path.lower().endswith(".md") and change.additions == 0 and change.deletions == 0:
+                continue
+
+            result.append(
+                {
+                    "file_path": change.file_path,
+                    "additions": change.additions,
+                    "deletions": change.deletions,
+                }
+            )
+
+        return result
+
+
+    def _extract_porcelain_path(self, row: str) -> str:
+        if len(row) < 4:
+            return ""
+
+        path_part = row[3:].strip()
+        if " -> " in path_part:
+            return path_part.split(" -> ", maxsplit=1)[1].strip()
+
+        return path_part
+

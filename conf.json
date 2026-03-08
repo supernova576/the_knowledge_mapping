@@ -9,7 +9,7 @@
         "full_path_to_todo_file": "/todo/README.md"
     },
     "git": {
-        "full_path_to_git_dir": ".git"
+        "full_path_to_git_dir": "/git"
     },
     "log": {
         "log_file_path": "logs/app.log"
