@@ -178,6 +178,7 @@ class DocsVersionHandler:
             "-c",
             "core.quotepath=off",
             "diff",
+            "--ignore-cr-at-eol",
             "--numstat",
             "HEAD",
             "--",
