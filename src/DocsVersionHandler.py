@@ -105,6 +105,13 @@ class DocsVersionHandler:
         return file_path.strip().strip('"').strip("/")
 
     def _run_git_command(self, arguments: list[str]) -> str:
+        return_code, stdout, stderr = self._run_git_command_with_code(arguments)
+        if return_code != 0:
+            logger.error("Git command failed: %s\n%s", " ".join([self.git_executable, *arguments]), stderr or "unknown git error")
+            raise RuntimeError(stderr or "unknown git error")
+        return stdout
+
+    def _run_git_command_with_code(self, arguments: list[str]) -> tuple[int, str, str]:
         command = [
             self.git_executable,
             f"--git-dir={self.git_dir}",
@@ -118,12 +125,46 @@ class DocsVersionHandler:
             logger.error("Git executable not found: %s", self.git_executable)
             raise RuntimeError(f"Git executable not found: {self.git_executable}") from exc
 
-        if completed.returncode != 0:
-            stderr = completed.stderr.strip() or "unknown git error"
-            logger.error("Git command failed: %s\n%s", " ".join(command), stderr)
-            raise RuntimeError(stderr)
+        return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
-        return completed.stdout.strip()
+
+    def revert_file(self, file_path: str) -> None:
+        normalized_path = self._normalize_path(file_path)
+        if not normalized_path:
+            raise ValueError("file path is required")
+        if not self._is_docs_file(normalized_path):
+            raise ValueError("only files inside the docs directory can be reverted")
+
+        restore_result = self._run_git_command_with_code([
+            "restore",
+            "--staged",
+            "--worktree",
+            "--",
+            normalized_path,
+        ])
+
+        if restore_result[0] == 0:
+            return
+
+        tracked_result = self._run_git_command_with_code([
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            normalized_path,
+        ])
+
+        if tracked_result[0] != 0:
+            clean_result = self._run_git_command_with_code([
+                "clean",
+                "-f",
+                "--",
+                normalized_path,
+            ])
+            if clean_result[0] != 0:
+                raise RuntimeError(clean_result[2] or restore_result[2] or "failed to clean untracked file")
+            return
+
+        raise RuntimeError(restore_result[2] or "failed to restore file")
 
     def get_status_snapshot(self) -> dict:
         changes = self.get_line_change_summary()

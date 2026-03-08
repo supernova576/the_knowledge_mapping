@@ -43,11 +43,11 @@
         </div>
 
         <div class="row g-3 mb-4">
-            <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
-            <div class="col-md-3"><div class="card shadow-sm border-success-subtle"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-md-3"><div class="card shadow-sm border-danger-subtle"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
+            <div class="col-md-3"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
             <div class="col-md-3">
-                <div id="git-change-banner" class="card shadow-sm {% if has_git_changes %}border-warning-subtle{% else %}border-success-subtle{% endif %}" role="status">
+                <div id="git-change-banner" class="card shadow-sm h-100 {% if has_git_changes %}border-warning-subtle{% else %}border-success-subtle{% endif %}" role="status">
                     <div class="card-body">
                         <h2 class="h6 text-muted mb-2">Version control (Docs)</h2>
                         <p class="mb-2 {% if has_git_changes %}text-warning-emphasis{% else %}text-success-emphasis{% endif %}">
@@ -134,7 +134,7 @@
                 banner.classList.remove("border-warning-subtle", "border-success-subtle");
                 if (hasChanges) {
                     banner.classList.add("border-warning-subtle");
-                    banner.innerHTML = `<div class="card-body"><h2 class="h6 text-muted mb-2">Version control (/the-knowledge/02_DOCS)</h2><p class="mb-2 text-warning-emphasis">Changes detected.</p>/div>`;
+                    banner.innerHTML = `<div class="card-body"><h2 class="h6 text-muted mb-2">Version control (/the-knowledge/02_DOCS)</h2><p class="mb-2 text-warning-emphasis">Changes detected.</p></div>`;
                     return;
                 }
 

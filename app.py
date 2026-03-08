@@ -123,6 +123,12 @@ def _safe_git_snapshot() -> dict:
         return {"has_changes": False, "changes": [], "error": str(exc)}
 
 
+def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
+    title = str(doc.get("title") or "").strip()
+    starts_with_digit = title[:1].isdigit()
+    return (0 if starts_with_digit else 1, title.casefold())
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -146,7 +152,7 @@ def index():
         row["compliance_tag_class"] = _compliance_tag_class(row)
         processed_docs.append(row)
 
-    processed_docs.sort(key=lambda x: x.get("id", 0))
+    processed_docs.sort(key=_docs_alpha_sort_key)
     last_sync_time = database.get_last_sync_time()
 
     version_status = _safe_git_snapshot()
@@ -184,6 +190,23 @@ def version_control_sync():
         flash(f"Git status refreshed. {change_count} changed files detected in /the-knowledge/02_DOCS.", "success")
     except Exception as exc:
         flash(f"Failed to refresh git status: {exc}", "danger")
+
+    return redirect(url_for("version_control_overview"))
+
+
+@app.route("/version_control/revert", methods=["POST"])
+def version_control_revert_file():
+    file_path = request.form.get("file_path", "").strip()
+    if not file_path:
+        flash("A file path is required to revert changes.", "warning")
+        return redirect(url_for("version_control_overview"))
+
+    try:
+        version_handler = DocsVersionHandler()
+        version_handler.revert_file(file_path)
+        flash(f"Reverted changes for: {file_path}", "success")
+    except Exception as exc:
+        flash(f"Failed to revert changes for {file_path}: {exc}", "danger")
 
     return redirect(url_for("version_control_overview"))
 
@@ -330,6 +353,16 @@ def version_history():
 @app.route("/todo", methods=["GET"])
 def todo_overview():
     query = request.args.get("q", "").strip()
+
+    try:
+        parser = DocsParser()
+        parser.sync_todos_to_db()
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            flash("Todo sync failed. Check conf.json todo path and parser logs.", "danger")
+        else:
+            flash("Automatic todo sync failed. You can retry using 'Sync Todos'.", "warning")
+
     database = db()
     todos = _load_todos(database, query)
     return render_template("todo.html", todos=todos, query=query)

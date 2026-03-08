@@ -35,7 +35,7 @@
         {% endwith %}
 
         <div class="alert {% if has_changes %}alert-warning{% else %}alert-success{% endif %}" role="status">
-            <strong>Documentation status (/the-knowledge/02_DOCS only):</strong>
+            <strong>Documentation status:</strong>
             {% if has_changes %}
             Changes detected.
             {% else %}
@@ -53,6 +53,7 @@
                                 <th>File</th>
                                 <th class="text-success">Added lines</th>
                                 <th class="text-danger">Deleted lines</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -61,10 +62,16 @@
                                 <td>{{ change.display_name or change.file_path }}</td>
                                 <td class="text-success">+{{ change.additions }}</td>
                                 <td class="text-danger">-{{ change.deletions }}</td>
+                                <td>
+                                    <form method="post" action="{{ url_for('version_control_revert_file') }}" class="d-inline">
+                                        <input type="hidden" name="file_path" value="{{ change.file_path }}" />
+                                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Revert all local changes for this file?')">Revert file</button>
+                                    </form>
+                                </td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="3" class="text-center text-muted py-4">No changes found in /the-knowledge/02_DOCS.</td>
+                                <td colspan="4" class="text-center text-muted py-4">No changes found!</td>
                             </tr>
                             {% endfor %}
                         </tbody>
