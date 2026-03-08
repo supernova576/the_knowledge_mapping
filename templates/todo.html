@@ -50,8 +50,17 @@
             <tr>
                 <td>{{ todo.id }}</td>
                 <td>{{ todo.note }}</td>
-                <td>{% for todo_type in todo.type_list %}<span class="badge text-bg-secondary me-1">{{ todo_type }}</span>{% endfor %}</td>
-                <td>{{ todo.progress }}</td>
+                <td>
+                    {% for todo_type in todo.type_list %}
+                    {% set normalized_type = todo_type|trim|lower %}
+                    <span class="badge me-1 {% if normalized_type == 'new' %}text-bg-success{% elif normalized_type == 'update' %}text-bg-info{% else %}text-bg-secondary{% endif %}">{{ todo_type }}</span>
+                    {% endfor %}
+                </td>
+                <td>
+                    <img src="{{ url_for('static', filename='png/' ~ (todo.progress|lower) ~ '.png') }}"
+                         alt="{{ todo.progress }}"
+                         height="24" />
+                </td>
                 <td>{{ todo.last_update }}</td>
                 <td>
                     <div class="d-flex gap-2">
