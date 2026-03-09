@@ -18,6 +18,7 @@ class DocsParser:
         "![[not started.png]]": "Not Started",
         "![[in progress.png]]": "In Progress",
         "![[done.png]]": "Done",
+        "![[not needed.png]]": "Not Needed",
     }
 
     def __init__(self) -> None:
@@ -303,15 +304,19 @@ class DocsParser:
         try:
             value = raw_value.strip()
             if not value or value == "-":
-                return "Not Started"
+                return ""
             lowered = value.casefold()
             if "done.png" in lowered:
                 return "Done"
             if "in progress.png" in lowered:
                 return "In Progress"
+            if "not needed.png" in lowered:
+                return "Not Needed"
             if "not started.png" in lowered:
                 return "Not Started"
-            return value
+            if value in ("Done", "In Progress", "Not Needed", "Not Started"):
+                return value
+            return ""
         except Exception:
             logger.error("Failed to normalize HSLU SW progress\n%s", traceback.format_exc())
             adieu(1)

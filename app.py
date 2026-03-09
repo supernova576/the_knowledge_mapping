@@ -114,11 +114,13 @@ def _load_todos(database: db, query: str) -> list[dict]:
     return processed_rows
 
 
-def _load_hslu_overview(database: db, semester: str) -> tuple[list[str], list[dict]]:
+def _load_hslu_overview(database: db, semester: str, module: str) -> tuple[list[str], str, list[str], str, list[dict]]:
     semesters = database.get_hslu_semesters()
-    selected = semester if semester in semesters else (semesters[0] if semesters else "")
-    rows = database.get_hslu_sw_overview_by_semester(selected) if selected else []
-    return semesters, rows
+    selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
+    modules = database.get_hslu_modules_by_semester(selected_semester) if selected_semester else []
+    selected_module = module if module in modules else ""
+    rows = database.get_hslu_sw_overview_by_semester_and_module(selected_semester, selected_module) if selected_semester else []
+    return semesters, selected_semester, modules, selected_module, rows
 
 
 def _safe_git_snapshot() -> dict:
@@ -527,12 +529,15 @@ def hslu_semester_overview():
         flash("Automatic HSLU sync failed. You can retry using 'Sync now'.", "warning")
 
     semester = request.args.get("semester", "").strip()
-    semesters, overview_rows = _load_hslu_overview(database, semester)
+    module = request.args.get("module", "").strip()
+    semesters, selected_semester, modules, selected_module, overview_rows = _load_hslu_overview(database, semester, module)
 
     return render_template(
         "hslu_semester_overview.html",
         semesters=semesters,
-        selected_semester=(semester if semester in semesters else (semesters[0] if semesters else "")),
+        selected_semester=selected_semester,
+        modules=modules,
+        selected_module=selected_module,
         overview_rows=overview_rows,
         last_sync_time=database.get_last_sync_time(),
     )
@@ -541,6 +546,7 @@ def hslu_semester_overview():
 @app.route("/hslu/semester_overview/sync", methods=["POST"])
 def hslu_semester_overview_sync():
     semester = request.form.get("semester", "").strip()
+    module = request.form.get("module", "").strip()
 
     try:
         parser = DocsParser()
@@ -554,6 +560,8 @@ def hslu_semester_overview_sync():
         flash("HSLU sync failed unexpectedly.", "danger")
 
     if semester:
+        if module:
+            return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
         return redirect(url_for("hslu_semester_overview", semester=semester))
     return redirect(url_for("hslu_semester_overview"))
 

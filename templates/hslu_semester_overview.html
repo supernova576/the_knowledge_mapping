@@ -21,6 +21,7 @@
             <h1 class="h3 mb-0">HSLU Semester Overview</h1>
             <form method="post" action="{{ url_for('hslu_semester_overview_sync') }}" class="d-flex gap-2">
                 <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                <input type="hidden" name="module" value="{{ selected_module }}" />
                 <button class="btn btn-primary">Sync now</button>
             </form>
         </div>
@@ -41,9 +42,9 @@
 
         <div class="card shadow-sm mb-4">
             <div class="card-body">
-                <h2 class="h5">Select semester</h2>
+                <h2 class="h5">Select filters</h2>
                 <form method="get" action="{{ url_for('hslu_semester_overview') }}" class="row g-2 align-items-end">
-                    <div class="col-md-8">
+                    <div class="col-md-5">
                         <label class="form-label">Semester</label>
                         <select name="semester" class="form-select">
                             {% for semester in semesters %}
@@ -51,7 +52,16 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-5">
+                        <label class="form-label">Module (optional)</label>
+                        <select name="module" class="form-select">
+                            <option value="" {% if not selected_module %}selected{% endif %}>All modules</option>
+                            {% for module in modules %}
+                            <option value="{{ module }}" {% if module==selected_module %}selected{% endif %}>{{ module }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
                         <button class="btn btn-outline-primary w-100">Apply</button>
                     </div>
                 </form>
@@ -67,6 +77,7 @@
                             <tr>
                                 <th>KW</th>
                                 <th>SW</th>
+                                <th>Modul</th>
                                 <th>Thema</th>
                                 <th>Heruntergeladen</th>
                                 <th>Dokumentiert</th>
@@ -78,14 +89,23 @@
                             <tr>
                                 <td>{{ row.KW }}</td>
                                 <td>{{ row.SW }}</td>
+                                <td>{{ row.module }}</td>
                                 <td>{{ row.thema }}</td>
-                                <td>{{ row.downloaded }}</td>
-                                <td>{{ row.documented }}</td>
+                                <td>
+                                    {% if row.downloaded %}
+                                    <img src="{{ url_for('static', filename='png/' ~ row.downloaded|lower) }}.png" alt="{{ row.downloaded }}"  />
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.documented %}
+                                    <img src="{{ url_for('static', filename='png/' ~ row.documented|lower) }}.png" alt="{{ row.documented }}"  />
+                                    {% endif %}
+                                </td>
                                 <td>{{ row.deadlines }}</td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="6" class="text-center text-muted py-4">No semester data found.</td>
+                                <td colspan="7" class="text-center text-muted py-4">No semester data found.</td>
                             </tr>
                             {% endfor %}
                         </tbody>

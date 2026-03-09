@@ -541,8 +541,8 @@ class db:
                         row.get("KW", "N/A"),
                         row.get("SW", "N/A"),
                         row.get("thema", "N/A"),
-                        row.get("downloaded", "Not Started"),
-                        row.get("documented", "Not Started"),
+                        row.get("downloaded", ""),
+                        row.get("documented", ""),
                         row.get("deadlines", "-"),
                     ),
                 )
@@ -562,14 +562,30 @@ class db:
             logger.error("sqlite_handler/get_hslu_semesters failed\n%s", traceback.format_exc())
             adieu(1)
 
-    def get_hslu_sw_overview_by_semester(self, semester: str) -> list[dict]:
+    def get_hslu_modules_by_semester(self, semester: str) -> list[str]:
         try:
+            rows = self._fetch_all_dict(
+                "SELECT DISTINCT module FROM hslu_sw_overview WHERE semester = ? AND module IS NOT NULL AND trim(module) != '' ORDER BY module COLLATE NOCASE ASC",
+                (semester,),
+            )
+            return [row.get("module", "") for row in rows if row.get("module")]
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_modules_by_semester failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_sw_overview_by_semester_and_module(self, semester: str, module: str = "") -> list[dict]:
+        try:
+            if module:
+                return self._fetch_all_dict(
+                    "SELECT * FROM hslu_sw_overview WHERE semester = ? AND module = ? ORDER BY CAST(KW AS INTEGER) ASC, CAST(SW AS INTEGER) ASC, module COLLATE NOCASE ASC",
+                    (semester, module),
+                )
             return self._fetch_all_dict(
                 "SELECT * FROM hslu_sw_overview WHERE semester = ? ORDER BY CAST(KW AS INTEGER) ASC, CAST(SW AS INTEGER) ASC, module COLLATE NOCASE ASC",
                 (semester,),
             )
         except Exception:
-            logger.error("sqlite_handler/get_hslu_sw_overview_by_semester failed\n%s", traceback.format_exc())
+            logger.error("sqlite_handler/get_hslu_sw_overview_by_semester_and_module failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __del__(self) -> None:
