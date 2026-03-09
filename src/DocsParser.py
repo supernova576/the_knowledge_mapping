@@ -28,6 +28,7 @@ class DocsParser:
                 j: dict = json.loads(f.read())
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
                 self.todo_file_path: str = j.get("todo", {}).get("full_path_to_todo_file", False)
+                self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
 
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
@@ -294,6 +295,104 @@ class DocsParser:
             return self.PROGRESS_ICON_TO_STATE.get(raw_progress.strip(), "Not Started")
         except Exception:
             logger.error("Failed to parse todo progress\n%s", traceback.format_exc())
+            adieu(1)
+
+
+
+    def _normalize_sw_progress(self, raw_value: str) -> str:
+        try:
+            value = raw_value.strip()
+            if not value or value == "-":
+                return "Not Started"
+            lowered = value.casefold()
+            if "done.png" in lowered:
+                return "Done"
+            if "in progress.png" in lowered:
+                return "In Progress"
+            if "not started.png" in lowered:
+                return "Not Started"
+            return value
+        except Exception:
+            logger.error("Failed to normalize HSLU SW progress\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _extract_uebersicht_sw_rows(self, markdown_content: str) -> list[list[str]]:
+        try:
+            section_match = re.search(
+                r"(?ims)^##\s+Übersicht\s+SW\s*$\n(.*?)(?=^##\s+|\Z)",
+                markdown_content,
+            )
+            if not section_match:
+                return []
+
+            section_block = section_match.group(1)
+            row_pattern = re.compile(
+                r"^\|\s*(\d{1,2})\s*\|\s*(\d{1,2})\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*$",
+                re.MULTILINE,
+            )
+
+            parsed_rows: list[list[str]] = []
+            for kw, sw, thema, downloaded, documented, deadlines in row_pattern.findall(section_block):
+                parsed_rows.append(
+                    [
+                        kw.strip(),
+                        sw.strip(),
+                        thema.strip(),
+                        downloaded.strip(),
+                        documented.strip(),
+                        deadlines.replace("\n", " ").strip() or "-",
+                    ]
+                )
+            return parsed_rows
+        except Exception:
+            logger.error("Failed to extract Übersicht SW rows\n%s", traceback.format_exc())
+            adieu(1)
+
+    def parse_hslu_sw_overview(self) -> list[dict]:
+        try:
+            hslu_root = Path(self.hslu_base_path)
+            if not hslu_root.exists() or not hslu_root.is_dir():
+                logger.warning("HSLU path not found: %s", hslu_root)
+                return []
+
+            all_rows: list[dict] = []
+            for semester_dir in sorted([p for p in hslu_root.iterdir() if p.is_dir()], key=lambda item: item.name.casefold()):
+                semester_name = semester_dir.name
+                for module_dir in sorted([p for p in semester_dir.iterdir() if p.is_dir()], key=lambda item: item.name.casefold()):
+                    module_name = module_dir.name
+                    index_file = module_dir / "Index.md"
+                    if not index_file.exists() or not index_file.is_file():
+                        continue
+
+                    markdown_content = index_file.read_text(encoding="utf-8")
+                    for kw, sw, thema, downloaded, documented, deadlines in self._extract_uebersicht_sw_rows(markdown_content):
+                        all_rows.append(
+                            {
+                                "semester": semester_name,
+                                "module": module_name,
+                                "KW": kw,
+                                "SW": sw,
+                                "thema": thema,
+                                "downloaded": self._normalize_sw_progress(downloaded),
+                                "documented": self._normalize_sw_progress(documented),
+                                "deadlines": deadlines if deadlines else "-",
+                            }
+                        )
+
+            logger.info("Parsed %s HSLU SW overview rows", len(all_rows))
+            return all_rows
+        except Exception:
+            logger.error("Failed to parse HSLU SW overview\n%s", traceback.format_exc())
+            adieu(1)
+
+    def sync_hslu_sw_overview_to_db(self) -> list[dict]:
+        try:
+            rows = self.parse_hslu_sw_overview()
+            db().replace_all_hslu_sw_overview(rows)
+            logger.info("HSLU SW overview sync completed with %s rows", len(rows))
+            return rows
+        except Exception:
+            logger.error("HSLU SW overview sync failed\n%s", traceback.format_exc())
             adieu(1)
 
     def parse_todos_from_markdown(self) -> list[dict]:

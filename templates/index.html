@@ -98,7 +98,8 @@
             {% for doc in docs %}<tr><td>{{ doc.id }}</td><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{{ doc.changed_at }}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
             {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
         </tbody></table></div></div></div>
-    </div>
+            {% include '_footer.html' %}
+</div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"

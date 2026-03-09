@@ -114,6 +114,13 @@ def _load_todos(database: db, query: str) -> list[dict]:
     return processed_rows
 
 
+def _load_hslu_overview(database: db, semester: str) -> tuple[list[str], list[dict]]:
+    semesters = database.get_hslu_semesters()
+    selected = semester if semester in semesters else (semesters[0] if semesters else "")
+    rows = database.get_hslu_sw_overview_by_semester(selected) if selected else []
+    return semesters, rows
+
+
 def _safe_git_snapshot() -> dict:
     try:
         version_handler = DocsVersionHandler()
@@ -507,6 +514,48 @@ def handle_unexpected_error(error):
         ),
         500,
     )
+
+
+@app.route("/hslu/semester_overview", methods=["GET"])
+def hslu_semester_overview():
+    database = db()
+    parser = DocsParser()
+
+    try:
+        parser.sync_hslu_sw_overview_to_db()
+    except SystemExit:
+        flash("Automatic HSLU sync failed. You can retry using 'Sync now'.", "warning")
+
+    semester = request.args.get("semester", "").strip()
+    semesters, overview_rows = _load_hslu_overview(database, semester)
+
+    return render_template(
+        "hslu_semester_overview.html",
+        semesters=semesters,
+        selected_semester=(semester if semester in semesters else (semesters[0] if semesters else "")),
+        overview_rows=overview_rows,
+        last_sync_time=database.get_last_sync_time(),
+    )
+
+
+@app.route("/hslu/semester_overview/sync", methods=["POST"])
+def hslu_semester_overview_sync():
+    semester = request.form.get("semester", "").strip()
+
+    try:
+        parser = DocsParser()
+        rows = parser.sync_hslu_sw_overview_to_db()
+        db().update_last_sync_time()
+        flash(f"Synced {len(rows)} semester overview rows.", "success")
+    except SystemExit:
+        flash("HSLU sync failed. Check logs and folder mapping.", "danger")
+    except Exception:
+        logger.error("HSLU sync endpoint failed\n%s", traceback.format_exc())
+        flash("HSLU sync failed unexpectedly.", "danger")
+
+    if semester:
+        return redirect(url_for("hslu_semester_overview", semester=semester))
+    return redirect(url_for("hslu_semester_overview"))
 
 
 if __name__ == "__main__":

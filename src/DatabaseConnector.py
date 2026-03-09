@@ -88,6 +88,22 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS hslu_sw_overview (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    semester TEXT,
+                    module TEXT,
+                    KW TEXT,
+                    SW TEXT,
+                    thema TEXT,
+                    downloaded TEXT,
+                    documented TEXT,
+                    deadlines TEXT
+                )
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
@@ -511,6 +527,49 @@ class db:
             logger.info("Deleted todo id=%s", todo_id)
         except Exception:
             logger.error("sqlite_handler/delete_todo_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:
+        try:
+            self._execute("DELETE FROM hslu_sw_overview")
+            for row in rows:
+                self._execute(
+                    "INSERT INTO hslu_sw_overview (semester, module, KW, SW, thema, downloaded, documented, deadlines) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row.get("semester", "N/A"),
+                        row.get("module", "N/A"),
+                        row.get("KW", "N/A"),
+                        row.get("SW", "N/A"),
+                        row.get("thema", "N/A"),
+                        row.get("downloaded", "Not Started"),
+                        row.get("documented", "Not Started"),
+                        row.get("deadlines", "-"),
+                    ),
+                )
+            self._commit()
+            logger.info("Replaced hslu_sw_overview with %s entries", len(rows))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_hslu_sw_overview failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_semesters(self) -> list[str]:
+        try:
+            rows = self._fetch_all_dict(
+                "SELECT DISTINCT semester FROM hslu_sw_overview WHERE semester IS NOT NULL AND trim(semester) != '' ORDER BY semester COLLATE NOCASE ASC"
+            )
+            return [row.get("semester", "") for row in rows if row.get("semester")]
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_semesters failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_sw_overview_by_semester(self, semester: str) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                "SELECT * FROM hslu_sw_overview WHERE semester = ? ORDER BY CAST(KW AS INTEGER) ASC, CAST(SW AS INTEGER) ASC, module COLLATE NOCASE ASC",
+                (semester,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_sw_overview_by_semester failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __del__(self) -> None:
