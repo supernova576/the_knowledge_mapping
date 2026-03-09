@@ -130,18 +130,18 @@ class DocsVersionHandler:
         stdout = completed.stdout.strip()
         stderr = completed.stderr.strip()
 
-        if return_code != 0 and self._is_missing_ssh_client_error(stderr):
-            fallback_result = self._run_git_command_with_https_origin_fallback(arguments)
+        if return_code != 0 and self._is_https_auth_error(stderr):
+            fallback_result = self._run_git_command_with_ssh_origin_fallback(arguments)
             if fallback_result is not None:
                 return fallback_result
 
         return return_code, stdout, stderr
 
-    def _is_missing_ssh_client_error(self, stderr: str) -> bool:
+    def _is_https_auth_error(self, stderr: str) -> bool:
         error_text = (stderr or "").lower()
-        return "cannot run ssh" in error_text and "no such file or directory" in error_text
+        return "could not read username for 'https://" in error_text
 
-    def _run_git_command_with_https_origin_fallback(self, arguments: list[str]) -> tuple[int, str, str] | None:
+    def _run_git_command_with_ssh_origin_fallback(self, arguments: list[str]) -> tuple[int, str, str] | None:
         if not arguments:
             return None
 
@@ -149,11 +149,11 @@ class DocsVersionHandler:
         if git_action not in {"pull", "push", "fetch"}:
             return None
 
-        https_origin = self._get_https_origin_url()
-        if not https_origin:
+        ssh_origin = self._get_ssh_origin_url()
+        if not ssh_origin:
             return None
 
-        fallback_arguments = [git_action, https_origin, *arguments[1:]]
+        fallback_arguments = [git_action, ssh_origin, *arguments[1:]]
         fallback_command = [
             self.git_executable,
             f"--git-dir={self.git_dir}",
@@ -162,7 +162,7 @@ class DocsVersionHandler:
         ]
 
         logger.warning(
-            "SSH client is unavailable; retrying git command over HTTPS: %s",
+            "HTTPS authentication failed; retrying git command over SSH: %s",
             " ".join([self.git_executable, *fallback_arguments]),
         )
 
@@ -173,12 +173,12 @@ class DocsVersionHandler:
             fallback_completed.stderr.strip(),
         )
 
-    def _get_https_origin_url(self) -> str:
+    def _get_ssh_origin_url(self) -> str:
         origin_code, origin_stdout, _ = self._run_git_command_raw(["remote", "get-url", "origin"])
         if origin_code != 0:
             return ""
 
-        return self._convert_remote_to_https(origin_stdout.strip())
+        return self._convert_remote_to_ssh(origin_stdout.strip())
 
     def _run_git_command_raw(self, arguments: list[str]) -> tuple[int, str, str]:
         command = [
@@ -196,23 +196,25 @@ class DocsVersionHandler:
 
         return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
-    def _convert_remote_to_https(self, remote_url: str) -> str:
+    def _convert_remote_to_ssh(self, remote_url: str) -> str:
         normalized_url = (remote_url or "").strip()
         if not normalized_url:
             return ""
 
-        if normalized_url.startswith("http://") or normalized_url.startswith("https://"):
+        if normalized_url.startswith("git@"):
             return normalized_url
 
         if normalized_url.startswith("ssh://"):
+            return normalized_url
+
+        if normalized_url.startswith("http://") or normalized_url.startswith("https://"):
             parsed_url = urlparse(normalized_url)
             if parsed_url.hostname and parsed_url.path:
-                return f"https://{parsed_url.hostname}{parsed_url.path}"
+                repo_path = parsed_url.path.lstrip("/")
+                return f"git@{parsed_url.hostname}:{repo_path}"
 
         if "@" in normalized_url and ":" in normalized_url and not normalized_url.startswith("/"):
-            host_and_path = normalized_url.split("@", maxsplit=1)[1]
-            host, repo_path = host_and_path.split(":", maxsplit=1)
-            return f"https://{host}/{repo_path}"
+            return normalized_url
 
         return ""
 
