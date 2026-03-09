@@ -9,7 +9,9 @@
         "full_path_to_todo_file": "/the-knowledge/README.md"
     },
     "git": {
-        "full_path_to_git_dir": "/the-knowledge/.git"
+        "full_path_to_git_dir": "/the-knowledge/.git",
+        "username": "The Knowledge Mapping Tool",
+        "email": "yaniskla3a@gmail.com"
     },
     "log": {
         "log_file_path": "logs/app.log"

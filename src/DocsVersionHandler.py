@@ -25,7 +25,10 @@ class DocsVersionHandler:
         configured_git_dir = conf_data.get("git", {}).get("full_path_to_git_dir", "/the-knowledge/.git")
         configured_docs_dir = conf_data.get("docs", {}).get("full_path_to_docs", "/the-knowledge/02_DOCS")
         configured_todo_file = conf_data.get("todo", {}).get("full_path_to_todo_file", "/the-knowledge/README.md")
-        self.git_executable = conf_data.get("git", {}).get("executable", "git")
+        git_conf = conf_data.get("git", {})
+        self.git_executable = git_conf.get("executable", "git")
+        self.git_username = str(git_conf.get("username", "")).strip()
+        self.git_email = str(git_conf.get("email", "")).strip()
 
         self.git_dir = self._resolve_configured_path(configured_git_dir)
         self.docs_dir = self._resolve_configured_path(configured_docs_dir)
@@ -112,9 +115,19 @@ class DocsVersionHandler:
             raise RuntimeError(stderr or "unknown git error")
         return stdout
 
+
+    def _build_git_identity_args(self) -> list[str]:
+        args: list[str] = []
+        if self.git_username:
+            args.extend(["-c", f"user.name={self.git_username}"])
+        if self.git_email:
+            args.extend(["-c", f"user.email={self.git_email}"])
+        return args
+
     def _run_git_command_with_code(self, arguments: list[str]) -> tuple[int, str, str]:
         command = [
             self.git_executable,
+            *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
             f"--work-tree={self.work_tree}",
             *arguments,
@@ -156,6 +169,7 @@ class DocsVersionHandler:
         fallback_arguments = [git_action, ssh_origin, *arguments[1:]]
         fallback_command = [
             self.git_executable,
+            *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
             f"--work-tree={self.work_tree}",
             *fallback_arguments,
@@ -183,6 +197,7 @@ class DocsVersionHandler:
     def _run_git_command_raw(self, arguments: list[str]) -> tuple[int, str, str]:
         command = [
             self.git_executable,
+            *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
             f"--work-tree={self.work_tree}",
             *arguments,
