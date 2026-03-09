@@ -1,9 +1,12 @@
+import html
 import json
+import re
 import traceback
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
+from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
 from main import export_result_to_markdown
@@ -18,6 +21,34 @@ app = Flask(__name__)
 app.secret_key = "knowledge-mapping-secret"
 
 logger = get_logger(__name__)
+
+
+SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+
+
+def _render_hslu_inline_markdown(value: str) -> str:
+    text = str(value or "")
+
+    def _render_fragment(fragment: str) -> str:
+        pattern = re.compile(r"(\*\*(.+?)\*\*|==(.+?)==)")
+        parts: list[str] = []
+        last_end = 0
+        for match in pattern.finditer(fragment):
+            parts.append(html.escape(fragment[last_end:match.start()]))
+            bold_content = match.group(2)
+            mark_content = match.group(3)
+            if bold_content is not None:
+                parts.append(f"<strong>{_render_fragment(bold_content)}</strong>")
+            else:
+                parts.append(
+                    f'<b><span style="color: white; background-color: #D4B039;">{_render_fragment(mark_content or "")}</span></b>'
+                )
+            last_end = match.end()
+
+        parts.append(html.escape(fragment[last_end:]))
+        return "".join(parts)
+
+    return _render_fragment(text)
 
 
 def _normalize_value(value):
@@ -540,7 +571,40 @@ def hslu_semester_overview():
         selected_module=selected_module,
         overview_rows=overview_rows,
         last_sync_time=database.get_last_sync_time(),
+        sw_status_options=SW_STATUS_OPTIONS,
     )
+
+
+@app.route("/hslu/semester_overview/status", methods=["POST"])
+def hslu_semester_overview_update_status():
+    semester = request.form.get("semester", "").strip()
+    module = request.form.get("module", "").strip()
+    kw = request.form.get("kw", "").strip()
+    sw = request.form.get("sw", "").strip()
+    field = request.form.get("field", "").strip().lower()
+    status = request.form.get("status", "").strip()
+
+    if not semester or not module or not kw or not sw:
+        flash("Missing row identifiers for status update.", "warning")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+
+    if field not in ("downloaded", "documented"):
+        flash("Invalid status target field.", "danger")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+
+    if status not in SW_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+
+    try:
+        parser = DocsParser()
+        parser.update_hslu_sw_status(semester, module, kw, sw, field, status)
+        parser.sync_hslu_sw_overview_to_db()
+        flash(f"Updated {field} status for KW {kw} / SW {sw}.", "success")
+    except SystemExit:
+        flash("Failed to update markdown status. Check logs and file mapping.", "danger")
+
+    return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
 
 
 @app.route("/hslu/semester_overview/sync", methods=["POST"])
@@ -564,6 +628,11 @@ def hslu_semester_overview_sync():
             return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
         return redirect(url_for("hslu_semester_overview", semester=semester))
     return redirect(url_for("hslu_semester_overview"))
+
+
+@app.template_filter("render_hslu_inline_markdown")
+def render_hslu_inline_markdown_filter(value: str) -> Markup:
+    return Markup(_render_hslu_inline_markdown(value))
 
 
 if __name__ == "__main__":

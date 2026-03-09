@@ -89,19 +89,43 @@
                             <tr>
                                 <td>{{ row.KW }}</td>
                                 <td>{{ row.SW }}</td>
-                                <td>{{ row.module }}</td>
-                                <td>{{ row.thema }}</td>
+                                <td>{{ row.module|render_hslu_inline_markdown }}</td>
+                                <td>{{ row.thema|render_hslu_inline_markdown }}</td>
                                 <td>
-                                    {% if row.downloaded %}
-                                    <img src="{{ url_for('static', filename='png/' ~ row.downloaded|lower) }}.png" alt="{{ row.downloaded }}"  />
-                                    {% endif %}
+                                    <form method="post" action="{{ url_for('hslu_semester_overview_update_status') }}" class="d-flex gap-2 align-items-center">
+                                        <input type="hidden" name="semester" value="{{ row.semester }}" />
+                                        <input type="hidden" name="module" value="{{ row.module }}" />
+                                        <input type="hidden" name="kw" value="{{ row.KW }}" />
+                                        <input type="hidden" name="sw" value="{{ row.SW }}" />
+                                        <input type="hidden" name="field" value="downloaded" />
+                                        <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                                            {% for status_option in sw_status_options %}
+                                            <option value="{{ status_option }}" {% if row.downloaded == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% if row.downloaded %}
+                                        <img src="{{ url_for('static', filename='png/' ~ row.downloaded|lower) }}.png" alt="{{ row.downloaded }}" height="22" />
+                                        {% endif %}
+                                    </form>
                                 </td>
                                 <td>
-                                    {% if row.documented %}
-                                    <img src="{{ url_for('static', filename='png/' ~ row.documented|lower) }}.png" alt="{{ row.documented }}"  />
-                                    {% endif %}
+                                    <form method="post" action="{{ url_for('hslu_semester_overview_update_status') }}" class="d-flex gap-2 align-items-center">
+                                        <input type="hidden" name="semester" value="{{ row.semester }}" />
+                                        <input type="hidden" name="module" value="{{ row.module }}" />
+                                        <input type="hidden" name="kw" value="{{ row.KW }}" />
+                                        <input type="hidden" name="sw" value="{{ row.SW }}" />
+                                        <input type="hidden" name="field" value="documented" />
+                                        <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                                            {% for status_option in sw_status_options %}
+                                            <option value="{{ status_option }}" {% if row.documented == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% if row.documented %}
+                                        <img src="{{ url_for('static', filename='png/' ~ row.documented|lower) }}.png" alt="{{ row.documented }}" height="22" />
+                                        {% endif %}
+                                    </form>
                                 </td>
-                                <td>{{ row.deadlines }}</td>
+                                <td>{{ row.deadlines|render_hslu_inline_markdown }}</td>
                             </tr>
                             {% else %}
                             <tr>

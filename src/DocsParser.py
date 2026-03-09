@@ -20,6 +20,13 @@ class DocsParser:
         "![[done.png]]": "Done",
         "![[not needed.png]]": "Not Needed",
     }
+    SW_PROGRESS_STATE_TO_RAW = {
+        "Done": "![[done.png]]",
+        "In Progress": "![[in progress.png]]",
+        "Not Needed": "![[not needed.png]]",
+        "Not Started": "![[not started.png]]",
+        "": "",
+    }
 
     def __init__(self) -> None:
         try:
@@ -319,6 +326,95 @@ class DocsParser:
             return ""
         except Exception:
             logger.error("Failed to normalize HSLU SW progress\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _sw_progress_state_to_raw(self, state: str) -> str:
+        try:
+            normalized_state = state.strip()
+            if normalized_state == "-":
+                normalized_state = ""
+
+            if normalized_state not in self.SW_PROGRESS_STATE_TO_RAW:
+                raise ValueError(f"Invalid SW progress state: {state}")
+
+            return self.SW_PROGRESS_STATE_TO_RAW[normalized_state]
+        except Exception:
+            logger.error("Failed to convert SW progress state to raw markdown\n%s", traceback.format_exc())
+            adieu(1)
+
+    def update_hslu_sw_status(
+        self,
+        semester: str,
+        module: str,
+        kw: str,
+        sw: str,
+        field: str,
+        target_status: str,
+    ) -> None:
+        try:
+            if field not in ("downloaded", "documented"):
+                raise ValueError(f"Invalid field for update: {field}")
+
+            index_file = Path(self.hslu_base_path) / semester / module / "Index.md"
+            if not index_file.exists() or not index_file.is_file():
+                raise FileNotFoundError(f"Could not find Index.md at {index_file}")
+
+            raw_value = self._sw_progress_state_to_raw(target_status)
+            lines = index_file.read_text(encoding="utf-8").splitlines(keepends=True)
+
+            section_start = -1
+            section_end = len(lines)
+            for idx, line in enumerate(lines):
+                if re.match(r"^##\s+Übersicht\s+SW\s*$", line.strip()):
+                    section_start = idx
+                    break
+
+            if section_start == -1:
+                raise ValueError("Section '## Übersicht SW' not found")
+
+            for idx in range(section_start + 1, len(lines)):
+                if re.match(r"^##\s+", lines[idx].strip()):
+                    section_end = idx
+                    break
+
+            row_pattern = re.compile(
+                r"^\|\s*(\d{1,2})\s*\|\s*(\d{1,2})\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*$"
+            )
+
+            row_updated = False
+            for idx in range(section_start + 1, section_end):
+                match = row_pattern.match(lines[idx].rstrip("\n"))
+                if not match:
+                    continue
+
+                current_kw, current_sw, thema, downloaded, documented, deadlines = match.groups()
+                if current_kw.strip() != kw.strip() or current_sw.strip() != sw.strip():
+                    continue
+
+                if field == "downloaded":
+                    downloaded = raw_value
+                else:
+                    documented = raw_value
+
+                lines[idx] = f"| {current_kw.strip()} | {current_sw.strip()} | {thema.strip()} | {downloaded.strip()} | {documented.strip()} | {deadlines.strip()} |\n"
+                row_updated = True
+                break
+
+            if not row_updated:
+                raise ValueError(f"Could not find row for KW={kw}, SW={sw} in {index_file}")
+
+            index_file.write_text("".join(lines), encoding="utf-8")
+            logger.info(
+                "Updated HSLU status in markdown semester=%s module=%s KW=%s SW=%s field=%s status=%s",
+                semester,
+                module,
+                kw,
+                sw,
+                field,
+                target_status,
+            )
+        except Exception:
+            logger.error("Failed to update HSLU SW status in markdown\n%s", traceback.format_exc())
             adieu(1)
 
     def _extract_uebersicht_sw_rows(self, markdown_content: str) -> list[list[str]]:
