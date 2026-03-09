@@ -261,6 +261,35 @@ def version_control_revert_file():
     return redirect(url_for("version_control_overview"))
 
 
+@app.route("/version_control/pull", methods=["POST"])
+def version_control_pull():
+    try:
+        version_handler = DocsVersionHandler()
+        output = version_handler.pull_latest()
+        flash(f"Git pull completed successfully. {output}", "success")
+    except Exception as exc:
+        flash(f"Failed to pull changes: {exc}", "danger")
+
+    return redirect(url_for("version_control_overview"))
+
+
+@app.route("/version_control/push", methods=["POST"])
+def version_control_push():
+    commit_message = request.form.get("commit_message", "").strip()
+    if not commit_message:
+        flash("Commit message is required before pushing.", "warning")
+        return redirect(url_for("version_control_overview"))
+
+    try:
+        version_handler = DocsVersionHandler()
+        output = version_handler.commit_and_push(commit_message)
+        flash(f"Commit and push completed successfully. {output}", "success")
+    except Exception as exc:
+        flash(f"Failed to commit/push changes: {exc}", "danger")
+
+    return redirect(url_for("version_control_overview"))
+
+
 @app.route("/api/version_control/status", methods=["GET"])
 def version_control_status_api():
     try:

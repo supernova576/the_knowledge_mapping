@@ -173,6 +173,31 @@ class DocsVersionHandler:
             "changes": changes,
         }
 
+    def pull_latest(self) -> str:
+        output = self._run_git_command(["pull"])
+        return output or "Already up to date."
+
+    def commit_and_push(self, message: str) -> str:
+        commit_message = (message or "").strip()
+        if not commit_message:
+            raise ValueError("commit message is required")
+
+        self._run_git_command(["add", "-A"])
+
+        commit_code, commit_stdout, commit_stderr = self._run_git_command_with_code(["commit", "-m", commit_message])
+        if commit_code != 0:
+            combined_output = "\n".join(value for value in [commit_stdout, commit_stderr] if value).strip()
+            no_changes_messages = ["nothing to commit", "no changes added to commit"]
+            if any(message in combined_output.lower() for message in no_changes_messages):
+                raise RuntimeError("No changes to commit.")
+            raise RuntimeError(commit_stderr or commit_stdout or "failed to commit changes")
+
+        push_output = self._run_git_command(["push"])
+        commit_summary = commit_stdout or "Commit created successfully."
+        if push_output:
+            return f"{commit_summary}\n{push_output}"
+        return commit_summary
+
     def get_line_change_summary(self) -> list[dict]:
         numstat_output = self._run_git_command([
             "-c",
