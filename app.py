@@ -348,50 +348,6 @@ def set_manual_compliance():
     return redirect(url_for("index"))
 
 
-@app.route("/delete/id", methods=["POST"])
-def delete_by_id():
-    doc_id = request.form.get("doc_id", "").strip()
-    if not doc_id:
-        logger.warning("Delete by id requested without doc_id")
-        flash("Please provide a document ID.", "warning")
-        return redirect(url_for("index"))
-
-    try:
-        database = db()
-        database.delete_docs_by_id(int(doc_id))
-        logger.info("Deleted entry by id via UI: %s", doc_id)
-        flash(f"Deleted entry with id={doc_id}", "success")
-    except ValueError:
-        logger.warning("Delete by id failed due to non-numeric id: %s", doc_id)
-        flash("ID must be numeric.", "danger")
-
-    return redirect(url_for("index"))
-
-
-@app.route("/delete/name", methods=["POST"])
-def delete_by_name():
-    name = request.form.get("name", "").strip()
-    if not name:
-        logger.warning("Delete by name requested without name")
-        flash("Please provide a file name.", "warning")
-        return redirect(url_for("index"))
-
-    database = db()
-    database.delete_docs_by_name(name)
-    logger.info("Deleted entries by name via UI: %s", name)
-    flash(f"Deleted entries with name={name}", "success")
-    return redirect(url_for("index"))
-
-
-@app.route("/delete/all", methods=["POST"])
-def delete_all():
-    database = db()
-    database.delete_all_docs()
-    logger.warning("Deleted all entries via UI")
-    flash("Deleted all entries.", "success")
-    return redirect(url_for("index"))
-
-
 @app.route("/export", methods=["GET"])
 def export_results():
     view = request.args.get("view", "all")
@@ -641,18 +597,19 @@ def hslu_semester_overview_update_status():
     field = request.form.get("field", "").strip().lower()
     status = request.form.get("status", "").strip()
     sw_filter = request.form.get("sw_filter", "").strip()
+    module_filter = request.form.get("module_filter", "").strip()
 
     if not semester or not module or not kw or not sw:
         flash("Missing row identifiers for status update.", "warning")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
 
     if field not in ("downloaded", "documented"):
         flash("Invalid status target field.", "danger")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
 
     if status not in SW_STATUS_OPTIONS:
         flash("Invalid status selection.", "danger")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
 
     try:
         parser = DocsParser()
@@ -662,7 +619,7 @@ def hslu_semester_overview_update_status():
     except SystemExit:
         flash("Failed to update markdown status. Check logs and file mapping.", "danger")
 
-    return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
+    return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
 
 
 @app.route("/hslu/semester_overview/sync", methods=["POST"])

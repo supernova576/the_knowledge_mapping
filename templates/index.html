@@ -88,12 +88,6 @@
             </form>
         </div></div>
 
-        <div class="card shadow-sm mb-4"><div class="card-body"><h2 class="h5">Delete controls</h2><div class="row g-3">
-            <div class="col-md-4"><form method="post" action="{{ url_for('delete_by_id') }}"><label class="form-label">Delete by ID</label><div class="input-group"><input class="form-control" name="doc_id" placeholder="ID" /><button class="btn btn-outline-danger">Delete</button></div></form></div>
-            <div class="col-md-4"><form method="post" action="{{ url_for('delete_by_name') }}"><label class="form-label">Delete by Name</label><div class="input-group"><input class="form-control" name="name" placeholder="Title" /><button class="btn btn-outline-danger">Delete</button></div></form></div>
-            <div class="col-md-4 d-flex align-items-end"><form method="post" action="{{ url_for('delete_all') }}" class="w-100 d-grid"><button class="btn btn-danger" onclick="return confirm('Delete all docs?')">Delete ALL</button></form></div>
-        </div></div></div>
-
         <div class="card shadow-sm"><div class="card-body"><h2 class="h5">Documents overview</h2><div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>ID</th><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th></tr></thead><tbody>
             {% for doc in docs %}<tr><td>{{ doc.id }}</td><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{{ doc.changed_at }}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
             {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}

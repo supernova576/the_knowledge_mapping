@@ -109,6 +109,7 @@
                                         <input type="hidden" name="sw" value="{{ row.SW }}" />
                                         <input type="hidden" name="field" value="downloaded" />
                                         <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                        <input type="hidden" name="module_filter" value="{{ selected_module }}" />
                                         <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
                                             {% for status_option in sw_status_options %}
                                             <option value="{{ status_option }}" {% if row.downloaded == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
@@ -127,6 +128,7 @@
                                         <input type="hidden" name="sw" value="{{ row.SW }}" />
                                         <input type="hidden" name="field" value="documented" />
                                         <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                        <input type="hidden" name="module_filter" value="{{ selected_module }}" />
                                         <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
                                             {% for status_option in sw_status_options %}
                                             <option value="{{ status_option }}" {% if row.documented == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
