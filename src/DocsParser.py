@@ -530,7 +530,7 @@ class DocsParser:
             if not section_match:
                 raise ValueError(f"Section not found: {section}")
             block = section_match.group(2)
-            lines = block.splitlines()
+            lines = block.splitlines(keepends=True)
             table_indices = [i for i, line in enumerate(lines) if line.strip().startswith("|")]
             if len(table_indices) < 3:
                 raise ValueError("Checklist table not found")
@@ -553,7 +553,8 @@ class DocsParser:
                     if row_sw != sw:
                         continue
                     cells[item_idx] = raw_icon
-                    lines[i] = "| " + " | ".join(cells) + " |"
+                    line_ending = "\n" if lines[i].endswith("\n") else ""
+                    lines[i] = "| " + " | ".join(cells) + f" |{line_ending}"
                     break
                 else:
                     raise ValueError(f"SW row not found for {sw}")
@@ -567,11 +568,12 @@ class DocsParser:
                     if cells[0] != checklist_row:
                         continue
                     cells[1] = raw_icon
-                    lines[i] = "| " + " | ".join(cells) + " |"
+                    line_ending = "\n" if lines[i].endswith("\n") else ""
+                    lines[i] = "| " + " | ".join(cells) + f" |{line_ending}"
                     break
                 else:
                     raise ValueError(f"Checklist row not found for {checklist_row}")
-            new_block = "\n".join(lines)
+            new_block = "".join(lines)
             new_content = content[:section_match.start(2)] + new_block + content[section_match.end(2):]
             file_path.write_text(new_content, encoding="utf-8")
             logger.info("Updated HSLU checklist markdown id=%s status=%s", row_id, target_status)
