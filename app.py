@@ -181,7 +181,8 @@ def _load_hslu_checklist(database: db, semester: str, sw: str, sections: list[st
 
     selected_sections = [section for section in sections if section in available_sections]
     if not selected_sections:
-        selected_sections = list(available_sections)
+        default_sections = ["Kontaktstudium", "während Lernblocker"]
+        selected_sections = [section for section in default_sections if section in available_sections]
 
     filtered_rows = [row for row in rows if str(row.get("section") or "").strip() in selected_sections]
 
