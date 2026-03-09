@@ -44,7 +44,7 @@
             <div class="card-body">
                 <h2 class="h5">Select filters</h2>
                 <form method="get" action="{{ url_for('hslu_semester_checklist') }}" class="row g-2 align-items-end">
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <label class="form-label">Semester</label>
                         <select name="semester" class="form-select">
                             {% for semester in semesters %}
@@ -52,9 +52,18 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label">SW (optional)</label>
                         <input type="number" min="1" step="1" name="sw" value="{{ selected_sw }}" class="form-control" placeholder="e.g. 1" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Section</label>
+                        <select class="form-select" name="section" multiple size="4">
+                            {% for section_name in available_sections %}
+                            <option value="{{ section_name }}" {% if section_name in selected_sections %}selected{% endif %}>{{ section_name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">All selected by default. Deselect to hide section tables.</div>
                     </div>
                     <div class="col-md-2">
                         <button class="btn btn-outline-primary w-100">Apply</button>
@@ -63,53 +72,178 @@
             </div>
         </div>
 
-        <div class="card shadow-sm">
+        {% set outside_sections = ['vor Studiumsbeginn', 'Lernphase'] %}
+        {% set shown_outside_sections = [] %}
+        {% for section_name in outside_sections %}
+            {% if section_name in selected_sections %}
+                {% set _ = shown_outside_sections.append(section_name) %}
+            {% endif %}
+        {% endfor %}
+
+        {% if shown_outside_sections %}
+        <div class="card shadow-sm mb-4">
             <div class="card-body">
-                <h2 class="h5">Semester checklist table</h2>
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle">
-                        <thead>
-                            <tr>
-                                <th>Section</th>
-                                <th>SW</th>
-                                <th>Row</th>
-                                <th>Checklist item</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in checklist_rows %}
-                            <tr>
-                                <td>{{ row.section|render_hslu_inline_markdown }}</td>
-                                <td>{{ row.sw if row.sw else '-' }}</td>
-                                <td>{{ row.checklist_row|render_hslu_inline_markdown }}</td>
-                                <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
-                                <td>
-                                    <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
-                                        <input type="hidden" name="row_id" value="{{ row.id }}" />
-                                        <input type="hidden" name="semester" value="{{ selected_semester }}" />
-                                        <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
-                                        <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
-                                            {% for status_option in sw_status_options %}
-                                            <option value="{{ status_option }}" {% if row.status == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
-                                            {% endfor %}
-                                        </select>
-                                        {% if row.status %}
-                                        <img src="{{ url_for('static', filename='png/' ~ row.status|lower) }}.png" alt="{{ row.status }}" height="22" />
-                                        {% endif %}
-                                    </form>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="5" class="text-center text-muted py-4">No checklist data found.</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <h2 class="h5">Ausserhalb Kontaktstudium</h2>
+                <div class="row g-3">
+                    {% for section_name in shown_outside_sections %}
+                    {% set section_rows = checklist_rows_by_section.get(section_name, []) %}
+                    <div class="{{ 'col-md-6' if shown_outside_sections|length > 1 else 'col-12' }}">
+                        <h3 class="h6 mb-2">{{ section_name|render_hslu_inline_markdown }}</h3>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Checklist item</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in section_rows %}
+                                    <tr>
+                                        <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                        <td>
+                                            <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
+                                                <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                                <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                                                <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                                {% for selected_section in selected_sections %}
+                                                <input type="hidden" name="section_filters" value="{{ selected_section }}" />
+                                                {% endfor %}
+                                                <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                                                    {% for status_option in sw_status_options %}
+                                                    <option value="{{ status_option }}" {% if row.status == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                {% if row.status %}
+                                                <img src="{{ url_for('static', filename='png/' ~ row.status|lower) }}.png" alt="{{ row.status }}" height="22" />
+                                                {% endif %}
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr>
+                                        <td colspan="2" class="text-center text-muted py-4">No checklist data found.</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
+        {% endif %}
+
+        {% for section_name in ['Kontaktstudium', 'während Lernblocker'] %}
+            {% if section_name in selected_sections %}
+            {% set section_rows = checklist_rows_by_section.get(section_name, []) %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h2 class="h5">{{ section_name|render_hslu_inline_markdown }}</h2>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>SW</th>
+                                    <th>Checklist item</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in section_rows %}
+                                <tr>
+                                    <td>{{ row.sw if row.sw else '-' }}</td>
+                                    <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                    <td>
+                                        <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
+                                            <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                            <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                                            <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                            {% for selected_section in selected_sections %}
+                                            <input type="hidden" name="section_filters" value="{{ selected_section }}" />
+                                            {% endfor %}
+                                            <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                                                {% for status_option in sw_status_options %}
+                                                <option value="{{ status_option }}" {% if row.status == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
+                                                {% endfor %}
+                                            </select>
+                                            {% if row.status %}
+                                            <img src="{{ url_for('static', filename='png/' ~ row.status|lower) }}.png" alt="{{ row.status }}" height="22" />
+                                            {% endif %}
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted py-4">No checklist data found.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        {% for section_name in selected_sections %}
+            {% if section_name not in outside_sections and section_name not in ['Kontaktstudium', 'während Lernblocker'] %}
+            {% set section_rows = checklist_rows_by_section.get(section_name, []) %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h2 class="h5">{{ section_name|render_hslu_inline_markdown }}</h2>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>SW</th>
+                                    <th>Checklist item</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in section_rows %}
+                                <tr>
+                                    <td>{{ row.sw if row.sw else '-' }}</td>
+                                    <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                    <td>
+                                        <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
+                                            <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                            <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                                            <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                            {% for selected_section in selected_sections %}
+                                            <input type="hidden" name="section_filters" value="{{ selected_section }}" />
+                                            {% endfor %}
+                                            <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                                                {% for status_option in sw_status_options %}
+                                                <option value="{{ status_option }}" {% if row.status == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
+                                                {% endfor %}
+                                            </select>
+                                            {% if row.status %}
+                                            <img src="{{ url_for('static', filename='png/' ~ row.status|lower) }}.png" alt="{{ row.status }}" height="22" />
+                                            {% endif %}
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted py-4">No checklist data found.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        {% if not selected_sections %}
+        <div class="card shadow-sm">
+            <div class="card-body text-center text-muted py-4">No sections selected.</div>
+        </div>
+        {% endif %}
 
         {% include '_footer.html' %}
     </div>

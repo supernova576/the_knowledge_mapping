@@ -2,6 +2,7 @@ import html
 import json
 import re
 import traceback
+from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
@@ -166,12 +167,51 @@ def _load_hslu_overview(database: db, semester: str, module: str, sw: str) -> tu
 
 
 
-def _load_hslu_checklist(database: db, semester: str, sw: str) -> tuple[list[str], str, str, list[dict]]:
+def _load_hslu_checklist(database: db, semester: str, sw: str, sections: list[str]) -> tuple[list[str], str, str, list[str], list[str], dict[str, list[dict]]]:
     semesters = database.get_hslu_checklist_semesters()
     selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
     selected_sw = sw.zfill(2) if sw.isdigit() else ""
     rows = database.get_hslu_sw_checklist_by_semester_and_sw(selected_semester, selected_sw) if selected_semester else []
-    return semesters, selected_semester, selected_sw, rows
+
+    available_sections: list[str] = []
+    for row in rows:
+        section_name = str(row.get("section") or "").strip()
+        if section_name and section_name not in available_sections:
+            available_sections.append(section_name)
+
+    selected_sections = [section for section in sections if section in available_sections]
+    if not selected_sections:
+        selected_sections = list(available_sections)
+
+    filtered_rows = [row for row in rows if str(row.get("section") or "").strip() in selected_sections]
+
+    deduplicated_rows: list[dict] = []
+    seen = set()
+    for row in filtered_rows:
+        sw_value = str(row.get("sw") or "").strip()
+        checklist_row = str(row.get("checklist_row") or "").strip()
+        checklist_item = str(row.get("checklist_item") or "").strip()
+
+        if not sw_value and not checklist_row and not checklist_item:
+            continue
+
+        unique_key = (
+            str(row.get("section") or "").strip().casefold(),
+            sw_value.casefold(),
+            checklist_row.casefold(),
+            checklist_item.casefold(),
+        )
+        if unique_key in seen:
+            continue
+        seen.add(unique_key)
+        deduplicated_rows.append(row)
+
+    rows_by_section: dict[str, list[dict]] = {section: [] for section in selected_sections}
+    for row in deduplicated_rows:
+        section_name = str(row.get("section") or "").strip()
+        rows_by_section.setdefault(section_name, []).append(row)
+
+    return semesters, selected_semester, selected_sw, available_sections, selected_sections, rows_by_section
 
 def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
     title = str(doc.get("title") or "").strip()
@@ -669,14 +709,19 @@ def hslu_semester_checklist():
 
     semester = request.args.get("semester", "").strip()
     sw = request.args.get("sw", "").strip()
-    semesters, selected_semester, selected_sw, checklist_rows = _load_hslu_checklist(database, semester, sw)
+    sections = [item.strip() for item in request.args.getlist("section") if item.strip()]
+    semesters, selected_semester, selected_sw, available_sections, selected_sections, checklist_rows_by_section = _load_hslu_checklist(
+        database, semester, sw, sections
+    )
 
     return render_template(
         "hslu_semester_checklist.html",
         semesters=semesters,
         selected_semester=selected_semester,
         selected_sw=selected_sw,
-        checklist_rows=checklist_rows,
+        available_sections=available_sections,
+        selected_sections=selected_sections,
+        checklist_rows_by_section=checklist_rows_by_section,
         last_sync_time=database.get_last_sync_time(),
         sw_status_options=SW_STATUS_OPTIONS,
     )
@@ -686,16 +731,21 @@ def hslu_semester_checklist():
 def hslu_semester_checklist_update_status():
     semester = request.form.get("semester", "").strip()
     sw_filter = request.form.get("sw_filter", "").strip()
+    section_filters = [section.strip() for section in request.form.getlist("section_filters") if section.strip()]
     row_id = request.form.get("row_id", "").strip()
     status = request.form.get("status", "").strip()
 
+    def _redirect_with_filters():
+        query = urlencode({"semester": semester, "sw": sw_filter, "section": section_filters}, doseq=True)
+        return redirect(f"{url_for('hslu_semester_checklist')}?{query}")
+
     if not row_id.isdigit():
         flash("Missing checklist row identifier.", "warning")
-        return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+        return _redirect_with_filters()
 
     if status not in SW_STATUS_OPTIONS:
         flash("Invalid status selection.", "danger")
-        return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+        return _redirect_with_filters()
 
     try:
         parser = DocsParser()
@@ -705,7 +755,7 @@ def hslu_semester_checklist_update_status():
     except SystemExit:
         flash("Failed to update checklist markdown status. Check logs and file mapping.", "danger")
 
-    return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+    return _redirect_with_filters()
 
 
 @app.route("/hslu/semester_checklist/sync", methods=["POST"])
