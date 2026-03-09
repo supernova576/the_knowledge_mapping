@@ -2,6 +2,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .logger import get_logger
 
@@ -125,7 +126,95 @@ class DocsVersionHandler:
             logger.error("Git executable not found: %s", self.git_executable)
             raise RuntimeError(f"Git executable not found: {self.git_executable}") from exc
 
+        return_code = completed.returncode
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+
+        if return_code != 0 and self._is_missing_ssh_client_error(stderr):
+            fallback_result = self._run_git_command_with_https_origin_fallback(arguments)
+            if fallback_result is not None:
+                return fallback_result
+
+        return return_code, stdout, stderr
+
+    def _is_missing_ssh_client_error(self, stderr: str) -> bool:
+        error_text = (stderr or "").lower()
+        return "cannot run ssh" in error_text and "no such file or directory" in error_text
+
+    def _run_git_command_with_https_origin_fallback(self, arguments: list[str]) -> tuple[int, str, str] | None:
+        if not arguments:
+            return None
+
+        git_action = arguments[0]
+        if git_action not in {"pull", "push", "fetch"}:
+            return None
+
+        https_origin = self._get_https_origin_url()
+        if not https_origin:
+            return None
+
+        fallback_arguments = [git_action, https_origin, *arguments[1:]]
+        fallback_command = [
+            self.git_executable,
+            f"--git-dir={self.git_dir}",
+            f"--work-tree={self.work_tree}",
+            *fallback_arguments,
+        ]
+
+        logger.warning(
+            "SSH client is unavailable; retrying git command over HTTPS: %s",
+            " ".join([self.git_executable, *fallback_arguments]),
+        )
+
+        fallback_completed = subprocess.run(fallback_command, capture_output=True, text=True, check=False)
+        return (
+            fallback_completed.returncode,
+            fallback_completed.stdout.strip(),
+            fallback_completed.stderr.strip(),
+        )
+
+    def _get_https_origin_url(self) -> str:
+        origin_code, origin_stdout, _ = self._run_git_command_raw(["remote", "get-url", "origin"])
+        if origin_code != 0:
+            return ""
+
+        return self._convert_remote_to_https(origin_stdout.strip())
+
+    def _run_git_command_raw(self, arguments: list[str]) -> tuple[int, str, str]:
+        command = [
+            self.git_executable,
+            f"--git-dir={self.git_dir}",
+            f"--work-tree={self.work_tree}",
+            *arguments,
+        ]
+
+        try:
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        except FileNotFoundError as exc:
+            logger.error("Git executable not found: %s", self.git_executable)
+            raise RuntimeError(f"Git executable not found: {self.git_executable}") from exc
+
         return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+    def _convert_remote_to_https(self, remote_url: str) -> str:
+        normalized_url = (remote_url or "").strip()
+        if not normalized_url:
+            return ""
+
+        if normalized_url.startswith("http://") or normalized_url.startswith("https://"):
+            return normalized_url
+
+        if normalized_url.startswith("ssh://"):
+            parsed_url = urlparse(normalized_url)
+            if parsed_url.hostname and parsed_url.path:
+                return f"https://{parsed_url.hostname}{parsed_url.path}"
+
+        if "@" in normalized_url and ":" in normalized_url and not normalized_url.startswith("/"):
+            host_and_path = normalized_url.split("@", maxsplit=1)[1]
+            host, repo_path = host_and_path.split(":", maxsplit=1)
+            return f"https://{host}/{repo_path}"
+
+        return ""
 
 
     def revert_file(self, file_path: str) -> None:
