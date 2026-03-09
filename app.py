@@ -164,15 +164,6 @@ def _load_hslu_overview(database: db, semester: str, module: str, sw: str) -> tu
     return semesters, selected_semester, modules, selected_module, selected_sw, rows, standard_semester
 
 
-def _safe_git_snapshot() -> dict:
-    try:
-        version_handler = DocsVersionHandler()
-        return version_handler.get_status_snapshot()
-    except Exception as exc:
-        logger.error("Failed to fetch git status snapshot: %s", exc)
-        return {"has_changes": False, "changes": [], "error": str(exc)}
-
-
 def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
     title = str(doc.get("title") or "").strip()
     starts_with_digit = title[:1].isdigit()
@@ -205,7 +196,7 @@ def index():
     processed_docs.sort(key=_docs_alpha_sort_key)
     last_sync_time = database.get_last_sync_time()
 
-    version_status = _safe_git_snapshot()
+    version_status = database.get_version_control_snapshot()
 
     return render_template(
         "index.html",
@@ -222,22 +213,29 @@ def index():
 
 @app.route("/version_control", methods=["GET"])
 def version_control_overview():
-    version_status = _safe_git_snapshot()
+    database = db()
+    version_status = database.get_version_control_snapshot()
 
     return render_template(
         "version_control.html",
         has_changes=version_status.get("has_changes", False),
         changes=version_status.get("changes", []),
+        synced_at=version_status.get("synced_at", "Never"),
     )
 
 
 @app.route("/version_control/sync", methods=["POST"])
 def version_control_sync():
     try:
+        database = db()
         version_handler = DocsVersionHandler()
         snapshot = version_handler.get_status_snapshot()
         change_count = len(snapshot.get("changes", []))
-        flash(f"Git status refreshed. {change_count} changed files detected in /the-knowledge/02_DOCS.", "success")
+        synced_at = database.save_version_control_snapshot(snapshot)
+        flash(
+            f"Git status refreshed at {synced_at}. {change_count} changed files detected in /the-knowledge/02_DOCS.",
+            "success",
+        )
     except Exception as exc:
         flash(f"Failed to refresh git status: {exc}", "danger")
 
@@ -293,10 +291,10 @@ def version_control_push():
 @app.route("/api/version_control/status", methods=["GET"])
 def version_control_status_api():
     try:
-        version_handler = DocsVersionHandler()
-        return jsonify(version_handler.get_status_snapshot())
+        database = db()
+        return jsonify(database.get_version_control_snapshot())
     except Exception as exc:
-        return jsonify({"has_changes": False, "changes": [], "error": str(exc)}), 500
+        return jsonify({"has_changes": False, "changes": [], "synced_at": "Never", "error": str(exc)}), 500
 
 
 @app.route("/scan", methods=["POST"])

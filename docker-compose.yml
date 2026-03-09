@@ -7,7 +7,7 @@ services:
       - ./output:/app/output
       - ./logs:/app/logs
       - ./conf.json:/app/conf.json
-      - /home/ynsjk/git/priv_The-Knowledge:/the-knowledge
+      - C:\Users\yanis\Desktop\Git\The-Knowledge:/the-knowledge
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Zurich

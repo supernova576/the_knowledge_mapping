@@ -109,6 +109,17 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS version_control_snapshots (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    has_changes TEXT NOT NULL,
+                    changes_json TEXT NOT NULL,
+                    synced_at TEXT NOT NULL
+                )
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
@@ -284,6 +295,63 @@ class db:
             return self.get_setting("last_sync_time", "Never")
         except Exception:
             logger.error("sqlite_handler/get_last_sync_time failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def save_version_control_snapshot(self, snapshot: dict, synced_at: str | None = None) -> str:
+        try:
+            timestamp = synced_at or now_in_zurich_str()
+            changes = snapshot.get("changes") if isinstance(snapshot, dict) else []
+            if not isinstance(changes, list):
+                changes = []
+
+            has_changes = "true" if bool(snapshot.get("has_changes")) else "false"
+            changes_json = json.dumps(changes, ensure_ascii=False)
+
+            self._execute(
+                """
+                INSERT INTO version_control_snapshots (id, has_changes, changes_json, synced_at)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    has_changes=excluded.has_changes,
+                    changes_json=excluded.changes_json,
+                    synced_at=excluded.synced_at
+                """,
+                (has_changes, changes_json, timestamp),
+            )
+            self._commit()
+            return timestamp
+        except Exception:
+            logger.error("sqlite_handler/save_version_control_snapshot failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_version_control_snapshot(self) -> dict:
+        try:
+            row = self._fetch_one_dict(
+                "SELECT has_changes, changes_json, synced_at FROM version_control_snapshots WHERE id = 1"
+            )
+            if not row:
+                return {
+                    "has_changes": False,
+                    "changes": [],
+                    "synced_at": "Never",
+                }
+
+            raw_changes = row.get("changes_json", "[]")
+            try:
+                parsed_changes = json.loads(raw_changes)
+            except json.JSONDecodeError:
+                parsed_changes = []
+
+            if not isinstance(parsed_changes, list):
+                parsed_changes = []
+
+            return {
+                "has_changes": str(row.get("has_changes", "false")).lower() == "true",
+                "changes": parsed_changes,
+                "synced_at": row.get("synced_at", "Never") or "Never",
+            }
+        except Exception:
+            logger.error("sqlite_handler/get_version_control_snapshot failed\n%s", traceback.format_exc())
             adieu(1)
 
     def log_change_if_needed(self, previous_doc: dict | None, current_doc: dict, sync_time: str) -> None:
