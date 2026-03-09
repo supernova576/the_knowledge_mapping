@@ -58,11 +58,21 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Section</label>
-                        <select class="form-select" name="section" multiple size="4">
+                        <div class="form-control" style="max-height: 9.5rem; overflow-y: auto;">
                             {% for section_name in available_sections %}
-                            <option value="{{ section_name }}" {% if section_name in selected_sections %}selected{% endif %}>{{ section_name }}</option>
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    name="section"
+                                    value="{{ section_name }}"
+                                    id="section-{{ loop.index }}"
+                                    {% if section_name in selected_sections %}checked{% endif %}
+                                />
+                                <label class="form-check-label" for="section-{{ loop.index }}">{{ section_name }}</label>
+                            </div>
                             {% endfor %}
-                        </select>
+                        </div>
                         <div class="form-text">All selected by default. Deselect to hide section tables.</div>
                     </div>
                     <div class="col-md-2">
