@@ -71,10 +71,15 @@ class db:
                 """
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
-                    value TEXT
+                    value TEXT,
+                    hslu_semester_overview_standard_semester TEXT
                 )
                 """
             )
+
+            settings_columns = [row["name"] for row in self._execute("PRAGMA table_info(settings)").fetchall()]
+            if "hslu_semester_overview_standard_semester" not in settings_columns:
+                self._execute("ALTER TABLE settings ADD COLUMN hslu_semester_overview_standard_semester TEXT")
 
             self.cursor.execute(
                 """
@@ -586,6 +591,34 @@ class db:
             )
         except Exception:
             logger.error("sqlite_handler/get_hslu_sw_overview_by_semester_and_module failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def set_hslu_standard_semester(self, semester: str) -> None:
+        try:
+            self._execute(
+                """
+                INSERT INTO settings (key, value, hslu_semester_overview_standard_semester)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET hslu_semester_overview_standard_semester=excluded.hslu_semester_overview_standard_semester
+                """,
+                ("hslu_semester_overview", "", semester),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/set_hslu_standard_semester failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_standard_semester(self) -> str:
+        try:
+            row = self._fetch_one_dict(
+                "SELECT hslu_semester_overview_standard_semester FROM settings WHERE key = ?",
+                ("hslu_semester_overview",),
+            )
+            if not row:
+                return ""
+            return (row.get("hslu_semester_overview_standard_semester") or "").strip()
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_standard_semester failed\n%s", traceback.format_exc())
             adieu(1)
 
     def __del__(self) -> None:

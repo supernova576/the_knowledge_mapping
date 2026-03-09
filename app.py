@@ -145,13 +145,23 @@ def _load_todos(database: db, query: str) -> list[dict]:
     return processed_rows
 
 
-def _load_hslu_overview(database: db, semester: str, module: str) -> tuple[list[str], str, list[str], str, list[dict]]:
+def _load_hslu_overview(database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
     semesters = database.get_hslu_semesters()
-    selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
+    standard_semester = database.get_hslu_standard_semester()
+
+    default_semester = standard_semester if standard_semester in semesters else (semesters[0] if semesters else "")
+    selected_semester = semester if semester in semesters else default_semester
+
     modules = database.get_hslu_modules_by_semester(selected_semester) if selected_semester else []
     selected_module = module if module in modules else ""
+
+    selected_sw = sw if sw.isdigit() else ""
+
     rows = database.get_hslu_sw_overview_by_semester_and_module(selected_semester, selected_module) if selected_semester else []
-    return semesters, selected_semester, modules, selected_module, rows
+    if selected_sw:
+        rows = [row for row in rows if str(row.get("SW", "")).strip() == selected_sw]
+
+    return semesters, selected_semester, modules, selected_module, selected_sw, rows, standard_semester
 
 
 def _safe_git_snapshot() -> dict:
@@ -561,7 +571,8 @@ def hslu_semester_overview():
 
     semester = request.args.get("semester", "").strip()
     module = request.args.get("module", "").strip()
-    semesters, selected_semester, modules, selected_module, overview_rows = _load_hslu_overview(database, semester, module)
+    sw = request.args.get("sw", "").strip()
+    semesters, selected_semester, modules, selected_module, selected_sw, overview_rows, standard_semester = _load_hslu_overview(database, semester, module, sw)
 
     return render_template(
         "hslu_semester_overview.html",
@@ -570,10 +581,29 @@ def hslu_semester_overview():
         modules=modules,
         selected_module=selected_module,
         overview_rows=overview_rows,
+        selected_sw=selected_sw,
+        standard_semester=standard_semester,
         last_sync_time=database.get_last_sync_time(),
         sw_status_options=SW_STATUS_OPTIONS,
     )
 
+
+
+
+@app.route("/hslu/semester_overview/standard_semester", methods=["POST"])
+def hslu_semester_overview_standard_semester():
+    semester = request.form.get("semester", "").strip()
+
+    database = db()
+    semesters = database.get_hslu_semesters()
+
+    if not semester or semester not in semesters:
+        flash("Please select a valid semester before setting it as standard.", "warning")
+        return redirect(url_for("hslu_semester_overview"))
+
+    database.set_hslu_standard_semester(semester)
+    flash(f"Standard semester set to '{semester}'.", "success")
+    return redirect(url_for("hslu_semester_overview", semester=semester))
 
 @app.route("/hslu/semester_overview/status", methods=["POST"])
 def hslu_semester_overview_update_status():
@@ -583,18 +613,19 @@ def hslu_semester_overview_update_status():
     sw = request.form.get("sw", "").strip()
     field = request.form.get("field", "").strip().lower()
     status = request.form.get("status", "").strip()
+    sw_filter = request.form.get("sw_filter", "").strip()
 
     if not semester or not module or not kw or not sw:
         flash("Missing row identifiers for status update.", "warning")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
 
     if field not in ("downloaded", "documented"):
         flash("Invalid status target field.", "danger")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
 
     if status not in SW_STATUS_OPTIONS:
         flash("Invalid status selection.", "danger")
-        return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
 
     try:
         parser = DocsParser()
@@ -604,13 +635,14 @@ def hslu_semester_overview_update_status():
     except SystemExit:
         flash("Failed to update markdown status. Check logs and file mapping.", "danger")
 
-    return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
+    return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw_filter))
 
 
 @app.route("/hslu/semester_overview/sync", methods=["POST"])
 def hslu_semester_overview_sync():
     semester = request.form.get("semester", "").strip()
     module = request.form.get("module", "").strip()
+    sw = request.form.get("sw", "").strip()
 
     try:
         parser = DocsParser()
@@ -625,8 +657,8 @@ def hslu_semester_overview_sync():
 
     if semester:
         if module:
-            return redirect(url_for("hslu_semester_overview", semester=semester, module=module))
-        return redirect(url_for("hslu_semester_overview", semester=semester))
+            return redirect(url_for("hslu_semester_overview", semester=semester, module=module, sw=sw))
+        return redirect(url_for("hslu_semester_overview", semester=semester, sw=sw))
     return redirect(url_for("hslu_semester_overview"))
 
 

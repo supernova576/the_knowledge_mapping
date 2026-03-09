@@ -22,6 +22,7 @@
             <form method="post" action="{{ url_for('hslu_semester_overview_sync') }}" class="d-flex gap-2">
                 <input type="hidden" name="semester" value="{{ selected_semester }}" />
                 <input type="hidden" name="module" value="{{ selected_module }}" />
+                <input type="hidden" name="sw" value="{{ selected_sw }}" />
                 <button class="btn btn-primary">Sync now</button>
             </form>
         </div>
@@ -44,7 +45,7 @@
             <div class="card-body">
                 <h2 class="h5">Select filters</h2>
                 <form method="get" action="{{ url_for('hslu_semester_overview') }}" class="row g-2 align-items-end">
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <label class="form-label">Semester</label>
                         <select name="semester" class="form-select">
                             {% for semester in semesters %}
@@ -52,7 +53,7 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <label class="form-label">Module (optional)</label>
                         <select name="module" class="form-select">
                             <option value="" {% if not selected_module %}selected{% endif %}>All modules</option>
@@ -62,8 +63,17 @@
                         </select>
                     </div>
                     <div class="col-md-2">
+                        <label class="form-label">SW (optional)</label>
+                        <input type="number" min="1" step="1" name="sw" value="{{ selected_sw }}" class="form-control" placeholder="e.g. 1" />
+                    </div>
+                    <div class="col-md-2">
                         <button class="btn btn-outline-primary w-100">Apply</button>
                     </div>
+                </form>
+                <form method="post" action="{{ url_for('hslu_semester_overview_standard_semester') }}" class="mt-3 d-flex gap-2 align-items-center">
+                    <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                    <small class="text-muted">Current standard semester: <strong>{{ standard_semester if standard_semester else 'Not set' }}</strong></small>
+                    <button class="btn btn-outline-secondary btn-sm" {% if not selected_semester %}disabled{% endif %}>Set selected semester as standard</button>
                 </form>
             </div>
         </div>
@@ -98,6 +108,7 @@
                                         <input type="hidden" name="kw" value="{{ row.KW }}" />
                                         <input type="hidden" name="sw" value="{{ row.SW }}" />
                                         <input type="hidden" name="field" value="downloaded" />
+                                        <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
                                         <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
                                             {% for status_option in sw_status_options %}
                                             <option value="{{ status_option }}" {% if row.downloaded == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
@@ -115,6 +126,7 @@
                                         <input type="hidden" name="kw" value="{{ row.KW }}" />
                                         <input type="hidden" name="sw" value="{{ row.SW }}" />
                                         <input type="hidden" name="field" value="documented" />
+                                        <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
                                         <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
                                             {% for status_option in sw_status_options %}
                                             <option value="{{ status_option }}" {% if row.documented == status_option %}selected{% endif %}>{{ status_option if status_option else 'EMPTY' }}</option>
