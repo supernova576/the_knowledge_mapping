@@ -111,6 +111,21 @@ class db:
 
             self.cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS hslu_sw_checklist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    semester TEXT,
+                    section TEXT,
+                    sw TEXT,
+                    checklist_row TEXT,
+                    checklist_item TEXT,
+                    status TEXT,
+                    file_path TEXT
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS version_control_snapshots (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     has_changes TEXT NOT NULL,
@@ -625,6 +640,28 @@ class db:
             logger.error("sqlite_handler/replace_all_hslu_sw_overview failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def replace_all_hslu_sw_checklist(self, rows: list[dict]) -> None:
+        try:
+            self._execute("DELETE FROM hslu_sw_checklist")
+            for row in rows:
+                self._execute(
+                    "INSERT INTO hslu_sw_checklist (semester, section, sw, checklist_row, checklist_item, status, file_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row.get("semester", "N/A"),
+                        row.get("section", "N/A"),
+                        row.get("sw", ""),
+                        row.get("checklist_row", "N/A"),
+                        row.get("checklist_item", "N/A"),
+                        row.get("status", ""),
+                        row.get("file_path", "N/A"),
+                    ),
+                )
+            self._commit()
+            logger.info("Replaced hslu_sw_checklist with %s entries", len(rows))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_hslu_sw_checklist failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def get_hslu_semesters(self) -> list[str]:
         try:
             rows = self._fetch_all_dict(
@@ -644,6 +681,48 @@ class db:
             return [row.get("module", "") for row in rows if row.get("module")]
         except Exception:
             logger.error("sqlite_handler/get_hslu_modules_by_semester failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_checklist_semesters(self) -> list[str]:
+        try:
+            rows = self._fetch_all_dict(
+                "SELECT DISTINCT semester FROM hslu_sw_checklist WHERE semester IS NOT NULL AND trim(semester) != '' ORDER BY semester COLLATE NOCASE ASC"
+            )
+            return [row.get("semester", "") for row in rows if row.get("semester")]
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_checklist_semesters failed\n%s", traceback.format_exc())
+            adieu(1)
+
+
+
+    def get_hslu_sw_checklist_by_id(self, checklist_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM hslu_sw_checklist WHERE id = ?", (checklist_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_sw_checklist_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_sw_checklist_by_semester_and_sw(self, semester: str, sw: str = "") -> list[dict]:
+        try:
+            if sw:
+                return self._fetch_all_dict(
+                    """
+                    SELECT * FROM hslu_sw_checklist
+                    WHERE semester = ? AND (sw = ? OR trim(sw) = '')
+                    ORDER BY section COLLATE NOCASE ASC, CAST(NULLIF(sw, '') AS INTEGER) ASC, checklist_row COLLATE NOCASE ASC, checklist_item COLLATE NOCASE ASC
+                    """,
+                    (semester, sw),
+                )
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM hslu_sw_checklist
+                WHERE semester = ?
+                ORDER BY section COLLATE NOCASE ASC, CAST(NULLIF(sw, '') AS INTEGER) ASC, checklist_row COLLATE NOCASE ASC, checklist_item COLLATE NOCASE ASC
+                """,
+                (semester,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_sw_checklist_by_semester_and_sw failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_hslu_sw_overview_by_semester_and_module(self, semester: str, module: str = "") -> list[dict]:

@@ -164,6 +164,15 @@ def _load_hslu_overview(database: db, semester: str, module: str, sw: str) -> tu
     return semesters, selected_semester, modules, selected_module, selected_sw, rows, standard_semester
 
 
+
+
+def _load_hslu_checklist(database: db, semester: str, sw: str) -> tuple[list[str], str, str, list[dict]]:
+    semesters = database.get_hslu_checklist_semesters()
+    selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
+    selected_sw = sw.zfill(2) if sw.isdigit() else ""
+    rows = database.get_hslu_sw_checklist_by_semester_and_sw(selected_semester, selected_sw) if selected_semester else []
+    return semesters, selected_semester, selected_sw, rows
+
 def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
     title = str(doc.get("title") or "").strip()
     starts_with_digit = title[:1].isdigit()
@@ -645,6 +654,77 @@ def hslu_semester_overview_sync():
         return redirect(url_for("hslu_semester_overview", semester=semester, sw=sw))
     return redirect(url_for("hslu_semester_overview"))
 
+
+
+
+@app.route("/hslu/semester_checklist", methods=["GET"])
+def hslu_semester_checklist():
+    database = db()
+    parser = DocsParser()
+
+    try:
+        parser.sync_hslu_semester_checklist_to_db()
+    except SystemExit:
+        flash("Automatic checklist sync failed. You can retry using 'Sync now'.", "warning")
+
+    semester = request.args.get("semester", "").strip()
+    sw = request.args.get("sw", "").strip()
+    semesters, selected_semester, selected_sw, checklist_rows = _load_hslu_checklist(database, semester, sw)
+
+    return render_template(
+        "hslu_semester_checklist.html",
+        semesters=semesters,
+        selected_semester=selected_semester,
+        selected_sw=selected_sw,
+        checklist_rows=checklist_rows,
+        last_sync_time=database.get_last_sync_time(),
+        sw_status_options=SW_STATUS_OPTIONS,
+    )
+
+
+@app.route("/hslu/semester_checklist/status", methods=["POST"])
+def hslu_semester_checklist_update_status():
+    semester = request.form.get("semester", "").strip()
+    sw_filter = request.form.get("sw_filter", "").strip()
+    row_id = request.form.get("row_id", "").strip()
+    status = request.form.get("status", "").strip()
+
+    if not row_id.isdigit():
+        flash("Missing checklist row identifier.", "warning")
+        return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+
+    if status not in SW_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+
+    try:
+        parser = DocsParser()
+        parser.update_hslu_semester_checklist_status(int(row_id), status)
+        parser.sync_hslu_semester_checklist_to_db()
+        flash("Checklist status updated.", "success")
+    except SystemExit:
+        flash("Failed to update checklist markdown status. Check logs and file mapping.", "danger")
+
+    return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw_filter))
+
+
+@app.route("/hslu/semester_checklist/sync", methods=["POST"])
+def hslu_semester_checklist_sync():
+    semester = request.form.get("semester", "").strip()
+    sw = request.form.get("sw", "").strip()
+
+    try:
+        parser = DocsParser()
+        rows = parser.sync_hslu_semester_checklist_to_db()
+        db().update_last_sync_time()
+        flash(f"Synced {len(rows)} semester checklist rows.", "success")
+    except SystemExit:
+        flash("Semester checklist sync failed. Check logs and folder mapping.", "danger")
+    except Exception:
+        logger.error("Semester checklist sync endpoint failed\n%s", traceback.format_exc())
+        flash("Semester checklist sync failed unexpectedly.", "danger")
+
+    return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw))
 
 @app.template_filter("render_hslu_inline_markdown")
 def render_hslu_inline_markdown_filter(value: str) -> Markup:

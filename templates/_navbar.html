@@ -14,11 +14,13 @@
                 <li class="nav-item"><a class="nav-link {% if active_page == 'version_control' %}active{% endif %}"
                         href="{{ url_for('version_control_overview') }}">Version control</a></li>
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle {% if active_page == 'hslu_semester_overview' %}active{% endif %}" href="#" role="button"
+                    <a class="nav-link dropdown-toggle {% if active_page in ['hslu_semester_overview', 'hslu_semester_checklist'] %}active{% endif %}" href="#" role="button"
                         data-bs-toggle="dropdown" aria-expanded="false">HSLU</a>
                     <ul class="dropdown-menu dropdown-menu-end">
                         <li><a class="dropdown-item {% if active_page == 'hslu_semester_overview' %}active{% endif %}"
                                 href="{{ url_for('hslu_semester_overview') }}">Semester Overview</a></li>
+                        <li><a class="dropdown-item {% if active_page == 'hslu_semester_checklist' %}active{% endif %}"
+                                href="{{ url_for('hslu_semester_checklist') }}">Semester Checklist</a></li>
                     </ul>
                 </li>
             </ul>
