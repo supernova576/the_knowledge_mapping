@@ -7,8 +7,8 @@ services:
       - ./output:/app/output
       - ./logs:/app/logs
       - ./conf.json:/app/conf.json
-      - C:\Users\yanis\Desktop\Git\The-Knowledge:/the-knowledge
-      - C:\Users\yanis\.ssh\github:/tmp/github_key:ro
+      - /home/ynsjk/git/priv_The-Knowledge:/the-knowledge
+      - /home/ynsjk/.ssh/github_key:/tmp/github_key:ro
 
     environment:
       - PYTHONUNBUFFERED=1
