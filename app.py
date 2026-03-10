@@ -273,10 +273,57 @@ def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
     return (0 if starts_with_digit else 1, title.casefold())
 
 
+def _parse_doc_date(value: str | None) -> datetime | None:
+    date_label = str(value or "").strip()
+    if not date_label or date_label.upper() == "N/A":
+        return None
+
+    for date_format in ("%d.%m.%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(date_label, date_format)
+        except ValueError:
+            continue
+
+    return None
+
+
+def _sort_docs(processed_docs: list[dict], sort_by: str) -> None:
+    if sort_by == "title_desc":
+        processed_docs.sort(key=_docs_alpha_sort_key, reverse=True)
+        return
+
+    if sort_by == "created_newest":
+        processed_docs.sort(
+            key=lambda doc: (_parse_doc_date(doc.get("created_at")) is None, _parse_doc_date(doc.get("created_at")) or datetime.min),
+            reverse=True,
+        )
+        return
+
+    if sort_by == "created_oldest":
+        processed_docs.sort(key=lambda doc: (_parse_doc_date(doc.get("created_at")) is None, _parse_doc_date(doc.get("created_at")) or datetime.max))
+        return
+
+    if sort_by == "changed_newest":
+        processed_docs.sort(
+            key=lambda doc: (_parse_doc_date(doc.get("changed_at")) is None, _parse_doc_date(doc.get("changed_at")) or datetime.min),
+            reverse=True,
+        )
+        return
+
+    if sort_by == "changed_oldest":
+        processed_docs.sort(key=lambda doc: (_parse_doc_date(doc.get("changed_at")) is None, _parse_doc_date(doc.get("changed_at")) or datetime.max))
+        return
+
+    processed_docs.sort(key=_docs_alpha_sort_key)
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
     query = request.args.get("q", "").strip()
+    sort_by = request.args.get("sort", "title_asc").strip()
+    if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
+        sort_by = "title_asc"
 
     database = db()
     docs = _load_docs(database, view, query)
@@ -292,11 +339,12 @@ def index():
         row["links_list"] = _to_display_list(row.get("links"))
         row["video_links_list"] = _to_display_list(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
+        row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
         row["compliance_tag_class"] = _compliance_tag_class(row)
         processed_docs.append(row)
 
-    processed_docs.sort(key=_docs_alpha_sort_key)
+    _sort_docs(processed_docs, sort_by)
     last_sync_time = database.get_last_sync_time()
 
     version_status = database.get_version_control_snapshot()
@@ -309,6 +357,7 @@ def index():
         incompliant_docs=incompliant_docs,
         selected_view=view,
         query=query,
+        selected_sort=sort_by,
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         has_git_changes=version_status.get("has_changes", False),

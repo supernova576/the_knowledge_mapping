@@ -74,6 +74,7 @@
                     <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
                 </select></div>
                 <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="id, file name, or #tag" /></div>
+                <input type="hidden" name="sort" value="{{ selected_sort }}" />
                 <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
             </form>
         </div></div>
@@ -87,9 +88,26 @@
             </form>
         </div></div>
 
-        <div class="card shadow-sm"><div class="card-body"><h2 class="h5">Documents overview</h2><div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>ID</th><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th></tr></thead><tbody>
-            {% for doc in docs %}<tr><td>{{ doc.id }}</td><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{{ doc.changed_at }}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
-            {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
+        <div class="card shadow-sm"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+                <h2 class="h5 mb-0">Documents overview</h2>
+                <form method="get" action="{{ url_for('index') }}" class="d-flex align-items-center gap-2">
+                    <input type="hidden" name="view" value="{{ selected_view }}" />
+                    <input type="hidden" name="q" value="{{ query }}" />
+                    <label class="form-label mb-0" for="sort">Sort by</label>
+                    <select id="sort" name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+                        <option value="title_asc" {% if selected_sort=='title_asc' %}selected{% endif %}>Title (A-Z)</option>
+                        <option value="title_desc" {% if selected_sort=='title_desc' %}selected{% endif %}>Title (Z-A)</option>
+                        <option value="created_newest" {% if selected_sort=='created_newest' %}selected{% endif %}>Created (newest)</option>
+                        <option value="created_oldest" {% if selected_sort=='created_oldest' %}selected{% endif %}>Created (oldest)</option>
+                        <option value="changed_newest" {% if selected_sort=='changed_newest' %}selected{% endif %}>Changed (newest)</option>
+                        <option value="changed_oldest" {% if selected_sort=='changed_oldest' %}selected{% endif %}>Changed (oldest)</option>
+                    </select>
+                </form>
+            </div>
+            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th></tr></thead><tbody>
+            {% for doc in docs %}<tr><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
+            {% else %}<tr><td colspan="8" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}
 </div>
