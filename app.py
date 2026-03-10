@@ -15,6 +15,7 @@ from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.logger import get_logger
+from src.timezone_utils import now_in_zurich
 
 
 app = Flask(__name__)
@@ -24,6 +25,27 @@ logger = get_logger(__name__)
 
 
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+
+
+def _sync_banner_state(sync_time: str | None) -> str:
+    sync_label = str(sync_time or "").strip()
+    if not sync_label or sync_label.lower() == "never":
+        return "danger"
+
+    try:
+        synced_at = datetime.strptime(sync_label, "%Y-%m-%d %H:%M:%S").replace(tzinfo=now_in_zurich().tzinfo)
+    except ValueError:
+        logger.warning("Unexpected sync timestamp format: %s", sync_label)
+        return "danger"
+
+    elapsed = now_in_zurich() - synced_at
+    if elapsed.total_seconds() < 0:
+        return "secondary"
+    if elapsed.days < 1:
+        return "secondary"
+    if elapsed.days < 7:
+        return "warning"
+    return "danger"
 
 
 def _render_hslu_inline_markdown(value: str) -> str:
@@ -261,6 +283,7 @@ def index():
         selected_view=view,
         query=query,
         last_sync_time=last_sync_time,
+        last_sync_alert=_sync_banner_state(last_sync_time),
         has_git_changes=version_status.get("has_changes", False),
     )
 
@@ -278,6 +301,7 @@ def version_control_overview():
         changes=version_status.get("changes", []),
         remote_status=remote_status,
         synced_at=version_status.get("synced_at", "Never"),
+        synced_at_alert=_sync_banner_state(version_status.get("synced_at", "Never")),
     )
 
 

@@ -47,7 +47,7 @@
             {% else %}
             Working tree is clean.
             {% endif %}
-            <div class="small mt-1"><strong>Last synced status:</strong> {{ synced_at }}</div>
+            <div class="small mt-1 alert alert-{{ synced_at_alert }} mb-0 py-1 px-2 d-inline-block"><strong>Last synced status:</strong> {{ synced_at }}</div>
         </div>
 
         {% if remote_status and remote_status.message %}
