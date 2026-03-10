@@ -40,24 +40,35 @@
         {% endif %}
         {% endwith %}
 
-        <div class="alert {% if has_changes %}alert-warning{% else %}alert-success{% endif %}" role="status">
-            <strong>Repository status:</strong>
-            {% if has_changes %}
-            Changes detected.
-            {% else %}
-            Working tree is clean.
-            {% endif %}
-            <div class="small mt-1 alert alert-{{ synced_at_alert }} mb-0 py-1 px-2 d-inline-block"><strong>Last synced status:</strong> {{ synced_at }}</div>
+        <div class="alert alert-{{ synced_at_alert }}" role="status">
+            <strong>Last synced status:</strong> {{ synced_at }}
         </div>
 
-        {% if remote_status and remote_status.message %}
-        <div class="alert {% if remote_status.has_remote_changes %}alert-warning{% else %}alert-info{% endif %}" role="status">
-            <strong>Remote status:</strong> {{ remote_status.message }}
-            {% if remote_status.upstream %}
-            <div class="small mt-1"><strong>Upstream:</strong> {{ remote_status.upstream }}</div>
-            {% endif %}
+        <div class="row g-3 mb-3">
+            <div class="col-12 col-md-6 d-flex">
+                <div class="alert {% if has_changes %}alert-warning{% else %}alert-success{% endif %} mb-0 w-100" role="status">
+                    <strong>Local status:</strong>
+                    {% if has_changes %}
+                    Changes detected.
+                    {% else %}
+                    Working tree is clean.
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-12 col-md-6 d-flex">
+                <div class="alert {% if remote_status and remote_status.has_remote_changes %}alert-warning{% else %}alert-info{% endif %} mb-0 w-100" role="status">
+                    <strong>Remote status:</strong>
+                    {% if remote_status and remote_status.message %}
+                    {{ remote_status.message }}
+                    {% else %}
+                    Remote status unavailable.
+                    {% endif %}
+                    {% if remote_status and remote_status.upstream %}
+                    <div class="small mt-1"><strong>Upstream:</strong> {{ remote_status.upstream }}</div>
+                    {% endif %}
+                </div>
+            </div>
         </div>
-        {% endif %}
 
         <div class="card shadow-sm">
             <div class="card-body">
