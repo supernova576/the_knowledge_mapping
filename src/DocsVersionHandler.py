@@ -389,8 +389,50 @@ class DocsVersionHandler:
         }
 
     def pull_latest(self) -> str:
+        blocking_changes = self.get_pull_blocking_changes()
+        if blocking_changes:
+            listed_files = ", ".join(blocking_changes[:10])
+            if len(blocking_changes) > 10:
+                listed_files = f"{listed_files}, ..."
+
+            raise RuntimeError(
+                "Local changes would be overwritten by pull. "
+                "Please commit, stash, or discard them first. "
+                f"Blocking files ({len(blocking_changes)}): {listed_files}"
+            )
+
         output = self._run_git_command(["pull"])
         return output or "Already up to date."
+
+    def get_pull_blocking_changes(self) -> list[str]:
+        porcelain_output = self._run_git_command([
+            "-c",
+            "core.quotepath=off",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+        ])
+
+        blocking_files: set[str] = set()
+        for row in porcelain_output.splitlines() if porcelain_output else []:
+            if len(row) < 3:
+                continue
+
+            status_code = row[:2]
+            file_path = self._extract_porcelain_path(row)
+            if not file_path:
+                continue
+
+            if status_code == "??":
+                # Untracked files can still collide with incoming files during pull.
+                blocking_files.add(file_path)
+                continue
+
+            if status_code.strip():
+                blocking_files.add(file_path)
+
+        return sorted(blocking_files, key=str.lower)
 
     def commit_and_push(self, message: str) -> str:
         commit_message = (message or "").strip()
