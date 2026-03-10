@@ -130,6 +130,7 @@ class db:
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     has_changes TEXT NOT NULL,
                     changes_json TEXT NOT NULL,
+                    untracked_files_json TEXT NOT NULL DEFAULT '[]',
                     remote_status_json TEXT NOT NULL DEFAULT '{}',
                     synced_at TEXT NOT NULL
                 )
@@ -322,6 +323,10 @@ class db:
 
             has_changes = "true" if bool(snapshot.get("has_changes")) else "false"
             changes_json = json.dumps(changes, ensure_ascii=False)
+            untracked_files = snapshot.get("untracked_files") if isinstance(snapshot, dict) else []
+            if not isinstance(untracked_files, list):
+                untracked_files = []
+            untracked_files_json = json.dumps(untracked_files, ensure_ascii=False)
             remote_status = snapshot.get("remote_status") if isinstance(snapshot, dict) else {}
             if not isinstance(remote_status, dict):
                 remote_status = {}
@@ -329,15 +334,16 @@ class db:
 
             self._execute(
                 """
-                INSERT INTO version_control_snapshots (id, has_changes, changes_json, remote_status_json, synced_at)
-                VALUES (1, ?, ?, ?, ?)
+                INSERT INTO version_control_snapshots (id, has_changes, changes_json, untracked_files_json, remote_status_json, synced_at)
+                VALUES (1, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     has_changes=excluded.has_changes,
                     changes_json=excluded.changes_json,
+                    untracked_files_json=excluded.untracked_files_json,
                     remote_status_json=excluded.remote_status_json,
                     synced_at=excluded.synced_at
                 """,
-                (has_changes, changes_json, remote_status_json, timestamp),
+                (has_changes, changes_json, untracked_files_json, remote_status_json, timestamp),
             )
             self._commit()
             return timestamp
@@ -348,12 +354,13 @@ class db:
     def get_version_control_snapshot(self) -> dict:
         try:
             row = self._fetch_one_dict(
-                "SELECT has_changes, changes_json, remote_status_json, synced_at FROM version_control_snapshots WHERE id = 1"
+                "SELECT has_changes, changes_json, untracked_files_json, remote_status_json, synced_at FROM version_control_snapshots WHERE id = 1"
             )
             if not row:
                 return {
                     "has_changes": False,
                     "changes": [],
+                    "untracked_files": [],
                     "remote_status": {},
                     "synced_at": "Never",
                 }
@@ -367,6 +374,15 @@ class db:
             if not isinstance(parsed_changes, list):
                 parsed_changes = []
 
+            raw_untracked_files = row.get("untracked_files_json", "[]")
+            try:
+                parsed_untracked_files = json.loads(raw_untracked_files)
+            except json.JSONDecodeError:
+                parsed_untracked_files = []
+
+            if not isinstance(parsed_untracked_files, list):
+                parsed_untracked_files = []
+
             raw_remote_status = row.get("remote_status_json", "{}")
             try:
                 parsed_remote_status = json.loads(raw_remote_status)
@@ -379,6 +395,7 @@ class db:
             return {
                 "has_changes": str(row.get("has_changes", "false")).lower() == "true",
                 "changes": parsed_changes,
+                "untracked_files": parsed_untracked_files,
                 "remote_status": parsed_remote_status,
                 "synced_at": row.get("synced_at", "Never") or "Never",
             }

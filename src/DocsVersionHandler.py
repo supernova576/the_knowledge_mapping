@@ -274,12 +274,52 @@ class DocsVersionHandler:
 
     def get_status_snapshot(self) -> dict:
         changes = self.get_line_change_summary()
+        untracked_files = self.get_new_and_deleted_files()
         remote_status = self.get_remote_update_status()
         return {
-            "has_changes": bool(changes),
+            "has_changes": bool(changes or untracked_files),
             "changes": changes,
+            "untracked_files": untracked_files,
             "remote_status": remote_status,
         }
+
+    def get_new_and_deleted_files(self) -> list[dict]:
+        porcelain_output = self._run_git_command([
+            "-c",
+            "core.quotepath=off",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+        ])
+
+        summaries: dict[str, dict] = {}
+
+        for row in porcelain_output.splitlines() if porcelain_output else []:
+            if len(row) < 3:
+                continue
+
+            status_code = row[:2]
+            file_path = self._extract_porcelain_path(row)
+            if not file_path:
+                continue
+
+            change_type = ""
+            if status_code == "??" or "A" in status_code:
+                change_type = "created"
+            elif "D" in status_code:
+                change_type = "deleted"
+
+            if not change_type:
+                continue
+
+            summaries[file_path] = {
+                "file_path": file_path,
+                "display_name": self._display_name(file_path),
+                "change_type": change_type,
+            }
+
+        return [summaries[path] for path in sorted(summaries.keys(), key=str.lower)]
 
     def get_remote_update_status(self) -> dict:
         upstream_code, upstream_stdout, _ = self._run_git_command_with_code(

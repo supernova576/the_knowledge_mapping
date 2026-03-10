@@ -326,6 +326,7 @@ def version_control_overview():
         "version_control.html",
         has_changes=version_status.get("has_changes", False),
         changes=version_status.get("changes", []),
+        untracked_files=version_status.get("untracked_files", []),
         remote_status=remote_status,
         synced_at=_format_sync_time_relative_to_now(version_status.get("synced_at", "Never")),
         synced_at_alert=_sync_banner_state(version_status.get("synced_at", "Never")),
@@ -339,11 +340,12 @@ def version_control_sync():
         version_handler = DocsVersionHandler()
         snapshot = version_handler.get_status_snapshot()
         change_count = len(snapshot.get("changes", []))
+        untracked_count = len(snapshot.get("untracked_files", []))
         synced_at = database.save_version_control_snapshot(snapshot)
         remote_status = snapshot.get("remote_status", {}) if isinstance(snapshot, dict) else {}
         remote_message = remote_status.get("message", "Remote status unavailable.") if isinstance(remote_status, dict) else "Remote status unavailable."
         flash(
-            f"Git status refreshed at {synced_at}. {change_count} changed files detected across the repository. {remote_message}",
+            f"Git status refreshed at {synced_at}. {change_count} changed files and {untracked_count} newly created/deleted files detected across the repository. {remote_message}",
             "success",
         )
     except Exception as exc:
@@ -404,7 +406,7 @@ def version_control_status_api():
         database = db()
         return jsonify(database.get_version_control_snapshot())
     except Exception as exc:
-        return jsonify({"has_changes": False, "changes": [], "synced_at": "Never", "error": str(exc)}), 500
+        return jsonify({"has_changes": False, "changes": [], "untracked_files": [], "synced_at": "Never", "error": str(exc)}), 500
 
 
 @app.route("/scan", methods=["POST"])

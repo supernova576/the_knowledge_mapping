@@ -106,6 +106,42 @@
                 </div>
             </div>
         </div>
+
+        <div class="card shadow-sm mt-3">
+            <div class="card-body">
+                <h2 class="h5">Newly created / deleted files</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file_change in untracked_files %}
+                            <tr>
+                                <td>{{ file_change.display_name or file_change.file_path }}</td>
+                                <td>
+                                    {% if file_change.change_type == 'created' %}
+                                    <span class="badge text-bg-success">Created</span>
+                                    {% elif file_change.change_type == 'deleted' %}
+                                    <span class="badge text-bg-danger">Deleted</span>
+                                    {% else %}
+                                    <span class="badge text-bg-secondary">Changed</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="2" class="text-center text-muted py-4">No newly created or deleted files found.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
             {% include '_footer.html' %}
 </div>
 
