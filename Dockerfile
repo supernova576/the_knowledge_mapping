@@ -12,8 +12,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
+
 COPY . .
 
 EXPOSE 5000
-
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
