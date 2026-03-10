@@ -1,13 +1,12 @@
 # the_knowledge_mapping
 
-Flask-based GUI for scanning docs, storing metadata in SQLite, checking compliance, searching/filtering entries, deleting entries, and exporting results as Markdown.
+Flask-based GUI for scanning docs, storing metadata in SQLite, checking compliance, searching/filtering entries and deleting entries.
 
 ## Features
 - Run full document scan from the web UI.
 - View an overview dashboard with compliance stats.
 - Search/filter by ID, name, tag, or incompliant status.
 - Delete entries by ID, by name, or all entries.
-- Export current filtered result set to Markdown.
 
 ## Run locally
 1. Create and activate a Python environment.

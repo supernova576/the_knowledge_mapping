@@ -6,11 +6,10 @@ from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
-from main import export_result_to_markdown
 from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
@@ -31,11 +30,16 @@ def _render_hslu_inline_markdown(value: str) -> str:
     text = str(value or "")
 
     def _render_fragment(fragment: str) -> str:
-        pattern = re.compile(r"(\*\*(.+?)\*\*|==(.+?)==)")
+        pattern = re.compile(r"(\*\*(.+?)\*\*|==(.+?)==|<br\s*/?>)", flags=re.IGNORECASE)
         parts: list[str] = []
         last_end = 0
         for match in pattern.finditer(fragment):
             parts.append(html.escape(fragment[last_end:match.start()]))
+            if re.fullmatch(r"<br\s*/?>", match.group(0), flags=re.IGNORECASE):
+                parts.append("<br>")
+                last_end = match.end()
+                continue
+
             bold_content = match.group(2)
             mark_content = match.group(3)
             if bold_content is not None:
@@ -396,17 +400,6 @@ def set_manual_compliance():
         flash("ID must be numeric.", "danger")
 
     return redirect(url_for("index"))
-
-
-@app.route("/export", methods=["GET"])
-def export_results():
-    view = request.args.get("view", "all")
-    query = request.args.get("q", "").strip()
-    database = db()
-    docs = _load_docs(database, view, query)
-
-    export_path = export_result_to_markdown(docs)
-    return send_file(export_path, as_attachment=True, download_name="results.md")
 
 
 @app.route("/history", methods=["GET"])
