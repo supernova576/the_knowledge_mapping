@@ -27,15 +27,42 @@ logger = get_logger(__name__)
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
 
 
+def _parse_sync_timestamp(sync_time: str | None) -> datetime | None:
+    sync_label = str(sync_time or "").strip()
+    if not sync_label or sync_label.lower() == "never":
+        return None
+
+    try:
+        return datetime.strptime(sync_label, "%Y-%m-%d %H:%M:%S").replace(tzinfo=now_in_zurich().tzinfo)
+    except ValueError:
+        logger.warning("Unexpected sync timestamp format: %s", sync_label)
+        return None
+
+
+def _format_sync_time_relative_to_now(sync_time: str | None) -> str:
+    sync_label = str(sync_time or "").strip()
+    synced_at = _parse_sync_timestamp(sync_label)
+    if synced_at is None:
+        return sync_label or "Never"
+
+    elapsed_seconds = int((now_in_zurich() - synced_at).total_seconds())
+    if elapsed_seconds < 0:
+        elapsed_seconds = 0
+
+    days, remainder = divmod(elapsed_seconds, 24 * 60 * 60)
+    hours, remainder = divmod(remainder, 60 * 60)
+    minutes, _ = divmod(remainder, 60)
+
+    return f"{sync_label} ({days} days, {hours} hours, {minutes} minutes ago)"
+
+
 def _sync_banner_state(sync_time: str | None) -> str:
     sync_label = str(sync_time or "").strip()
     if not sync_label or sync_label.lower() == "never":
         return "danger"
 
-    try:
-        synced_at = datetime.strptime(sync_label, "%Y-%m-%d %H:%M:%S").replace(tzinfo=now_in_zurich().tzinfo)
-    except ValueError:
-        logger.warning("Unexpected sync timestamp format: %s", sync_label)
+    synced_at = _parse_sync_timestamp(sync_label)
+    if synced_at is None:
         return "danger"
 
     elapsed = now_in_zurich() - synced_at
@@ -282,7 +309,7 @@ def index():
         incompliant_docs=incompliant_docs,
         selected_view=view,
         query=query,
-        last_sync_time=last_sync_time,
+        last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         has_git_changes=version_status.get("has_changes", False),
     )
@@ -300,7 +327,7 @@ def version_control_overview():
         has_changes=version_status.get("has_changes", False),
         changes=version_status.get("changes", []),
         remote_status=remote_status,
-        synced_at=version_status.get("synced_at", "Never"),
+        synced_at=_format_sync_time_relative_to_now(version_status.get("synced_at", "Never")),
         synced_at_alert=_sync_banner_state(version_status.get("synced_at", "Never")),
     )
 
