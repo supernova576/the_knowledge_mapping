@@ -130,6 +130,7 @@ class db:
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     has_changes TEXT NOT NULL,
                     changes_json TEXT NOT NULL,
+                    remote_status_json TEXT NOT NULL DEFAULT '{}',
                     synced_at TEXT NOT NULL
                 )
                 """
@@ -321,17 +322,22 @@ class db:
 
             has_changes = "true" if bool(snapshot.get("has_changes")) else "false"
             changes_json = json.dumps(changes, ensure_ascii=False)
+            remote_status = snapshot.get("remote_status") if isinstance(snapshot, dict) else {}
+            if not isinstance(remote_status, dict):
+                remote_status = {}
+            remote_status_json = json.dumps(remote_status, ensure_ascii=False)
 
             self._execute(
                 """
-                INSERT INTO version_control_snapshots (id, has_changes, changes_json, synced_at)
-                VALUES (1, ?, ?, ?)
+                INSERT INTO version_control_snapshots (id, has_changes, changes_json, remote_status_json, synced_at)
+                VALUES (1, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     has_changes=excluded.has_changes,
                     changes_json=excluded.changes_json,
+                    remote_status_json=excluded.remote_status_json,
                     synced_at=excluded.synced_at
                 """,
-                (has_changes, changes_json, timestamp),
+                (has_changes, changes_json, remote_status_json, timestamp),
             )
             self._commit()
             return timestamp
@@ -342,12 +348,13 @@ class db:
     def get_version_control_snapshot(self) -> dict:
         try:
             row = self._fetch_one_dict(
-                "SELECT has_changes, changes_json, synced_at FROM version_control_snapshots WHERE id = 1"
+                "SELECT has_changes, changes_json, remote_status_json, synced_at FROM version_control_snapshots WHERE id = 1"
             )
             if not row:
                 return {
                     "has_changes": False,
                     "changes": [],
+                    "remote_status": {},
                     "synced_at": "Never",
                 }
 
@@ -360,9 +367,19 @@ class db:
             if not isinstance(parsed_changes, list):
                 parsed_changes = []
 
+            raw_remote_status = row.get("remote_status_json", "{}")
+            try:
+                parsed_remote_status = json.loads(raw_remote_status)
+            except json.JSONDecodeError:
+                parsed_remote_status = {}
+
+            if not isinstance(parsed_remote_status, dict):
+                parsed_remote_status = {}
+
             return {
                 "has_changes": str(row.get("has_changes", "false")).lower() == "true",
                 "changes": parsed_changes,
+                "remote_status": parsed_remote_status,
                 "synced_at": row.get("synced_at", "Never") or "Never",
             }
         except Exception:

@@ -270,10 +270,13 @@ def version_control_overview():
     database = db()
     version_status = database.get_version_control_snapshot()
 
+    remote_status = version_status.get("remote_status", {})
+
     return render_template(
         "version_control.html",
         has_changes=version_status.get("has_changes", False),
         changes=version_status.get("changes", []),
+        remote_status=remote_status,
         synced_at=version_status.get("synced_at", "Never"),
     )
 
@@ -286,8 +289,10 @@ def version_control_sync():
         snapshot = version_handler.get_status_snapshot()
         change_count = len(snapshot.get("changes", []))
         synced_at = database.save_version_control_snapshot(snapshot)
+        remote_status = snapshot.get("remote_status", {}) if isinstance(snapshot, dict) else {}
+        remote_message = remote_status.get("message", "Remote status unavailable.") if isinstance(remote_status, dict) else "Remote status unavailable."
         flash(
-            f"Git status refreshed at {synced_at}. {change_count} changed files detected in /the-knowledge/02_DOCS.",
+            f"Git status refreshed at {synced_at}. {change_count} changed files detected across the repository. {remote_message}",
             "success",
         )
     except Exception as exc:

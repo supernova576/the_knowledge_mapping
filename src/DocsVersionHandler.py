@@ -274,9 +274,78 @@ class DocsVersionHandler:
 
     def get_status_snapshot(self) -> dict:
         changes = self.get_line_change_summary()
+        remote_status = self.get_remote_update_status()
         return {
             "has_changes": bool(changes),
             "changes": changes,
+            "remote_status": remote_status,
+        }
+
+    def get_remote_update_status(self) -> dict:
+        upstream_code, upstream_stdout, _ = self._run_git_command_with_code(
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        )
+        if upstream_code != 0:
+            return {
+                "has_remote_changes": False,
+                "message": "No upstream tracking branch configured.",
+                "upstream": "",
+            }
+
+        upstream_branch = upstream_stdout.strip()
+        fetch_code, _, fetch_stderr = self._run_git_command_with_code(["fetch", "--quiet"])
+        if fetch_code != 0:
+            return {
+                "has_remote_changes": False,
+                "message": f"Could not check remote updates: {fetch_stderr or 'git fetch failed'}",
+                "upstream": upstream_branch,
+            }
+
+        count_code, count_stdout, count_stderr = self._run_git_command_with_code(
+            ["rev-list", "--left-right", "--count", "@{u}...HEAD"]
+        )
+        if count_code != 0:
+            return {
+                "has_remote_changes": False,
+                "message": f"Could not compare with remote: {count_stderr or 'git rev-list failed'}",
+                "upstream": upstream_branch,
+            }
+
+        counts = count_stdout.split()
+        if len(counts) != 2:
+            return {
+                "has_remote_changes": False,
+                "message": "Could not parse remote comparison status.",
+                "upstream": upstream_branch,
+            }
+
+        behind_count = int(counts[0]) if counts[0].isdigit() else 0
+        ahead_count = int(counts[1]) if counts[1].isdigit() else 0
+
+        if behind_count > 0:
+            return {
+                "has_remote_changes": True,
+                "message": f"Remote has {behind_count} newer commit(s). Please run git pull.",
+                "upstream": upstream_branch,
+                "behind": behind_count,
+                "ahead": ahead_count,
+            }
+
+        if ahead_count > 0:
+            return {
+                "has_remote_changes": False,
+                "message": f"Local branch is ahead of remote by {ahead_count} commit(s).",
+                "upstream": upstream_branch,
+                "behind": behind_count,
+                "ahead": ahead_count,
+            }
+
+        return {
+            "has_remote_changes": False,
+            "message": "Local and remote are in sync.",
+            "upstream": upstream_branch,
+            "behind": behind_count,
+            "ahead": ahead_count,
         }
 
     def pull_latest(self) -> str:
@@ -313,7 +382,6 @@ class DocsVersionHandler:
             "--numstat",
             "HEAD",
             "--",
-            *self.docs_pathspecs,
         ])
 
         summaries: dict[str, FileChangeSummary] = {}
@@ -325,9 +393,6 @@ class DocsVersionHandler:
                     continue
 
                 additions_raw, deletions_raw, file_path = parts[0], parts[1], self._normalize_path(parts[2])
-                if not self._is_docs_file(file_path):
-                    continue
-
                 additions = int(additions_raw) if additions_raw.isdigit() else 0
                 deletions = int(deletions_raw) if deletions_raw.isdigit() else 0
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=additions, deletions=deletions)
@@ -339,14 +404,11 @@ class DocsVersionHandler:
             "--porcelain",
             "--untracked-files=all",
             "--",
-            *self.docs_pathspecs,
         ])
 
         for row in porcelain_output.splitlines() if porcelain_output else []:
             file_path = self._extract_porcelain_path(row)
             if not file_path:
-                continue
-            if not self._is_docs_file(file_path):
                 continue
             if file_path not in summaries:
                 summaries[file_path] = FileChangeSummary(file_path=file_path, additions=0, deletions=0)

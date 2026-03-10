@@ -19,11 +19,6 @@
 
         <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
             <h1 class="h3 mb-0">HSLU Semester Checklist</h1>
-            <form method="post" action="{{ url_for('hslu_semester_checklist_sync') }}" class="d-flex gap-2">
-                <input type="hidden" name="semester" value="{{ selected_semester }}" />
-                <input type="hidden" name="sw" value="{{ selected_sw }}" />
-                <button class="btn btn-primary">Sync now</button>
-            </form>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}

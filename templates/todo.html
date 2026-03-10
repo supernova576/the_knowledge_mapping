@@ -18,9 +18,6 @@
 
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="h3 mb-0">Todo Board</h1>
-            <form method="post" action="{{ url_for('sync_todos') }}">
-                <button class="btn btn-primary">Sync Todos</button>
-            </form>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}

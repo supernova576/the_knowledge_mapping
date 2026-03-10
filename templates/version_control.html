@@ -41,7 +41,7 @@
         {% endwith %}
 
         <div class="alert {% if has_changes %}alert-warning{% else %}alert-success{% endif %}" role="status">
-            <strong>Documentation status:</strong>
+            <strong>Repository status:</strong>
             {% if has_changes %}
             Changes detected.
             {% else %}
@@ -50,9 +50,18 @@
             <div class="small mt-1"><strong>Last synced status:</strong> {{ synced_at }}</div>
         </div>
 
+        {% if remote_status and remote_status.message %}
+        <div class="alert {% if remote_status.has_remote_changes %}alert-warning{% else %}alert-info{% endif %}" role="status">
+            <strong>Remote status:</strong> {{ remote_status.message }}
+            {% if remote_status.upstream %}
+            <div class="small mt-1"><strong>Upstream:</strong> {{ remote_status.upstream }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <div class="card shadow-sm">
             <div class="card-body">
-                <h2 class="h5">Changed documentation files (additions / deletions)</h2>
+                <h2 class="h5">Changed repository files (additions / deletions)</h2>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
