@@ -129,12 +129,11 @@ class DocsVersionHandler:
             self.git_executable,
             *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
-            f"--work-tree={self.work_tree}",
             *arguments,
         ]
 
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            completed = subprocess.run(command, capture_output=True, text=True, check=False, cwd=self.work_tree)
         except FileNotFoundError as exc:
             logger.error("Git executable not found: %s", self.git_executable)
             raise RuntimeError(f"Git executable not found: {self.git_executable}") from exc
@@ -171,7 +170,6 @@ class DocsVersionHandler:
             self.git_executable,
             *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
-            f"--work-tree={self.work_tree}",
             *fallback_arguments,
         ]
 
@@ -180,7 +178,7 @@ class DocsVersionHandler:
             " ".join([self.git_executable, *fallback_arguments]),
         )
 
-        fallback_completed = subprocess.run(fallback_command, capture_output=True, text=True, check=False)
+        fallback_completed = subprocess.run(fallback_command, capture_output=True, text=True, check=False, cwd=self.work_tree)
         return (
             fallback_completed.returncode,
             fallback_completed.stdout.strip(),
@@ -199,12 +197,11 @@ class DocsVersionHandler:
             self.git_executable,
             *self._build_git_identity_args(),
             f"--git-dir={self.git_dir}",
-            f"--work-tree={self.work_tree}",
             *arguments,
         ]
 
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            completed = subprocess.run(command, capture_output=True, text=True, check=False, cwd=self.work_tree)
         except FileNotFoundError as exc:
             logger.error("Git executable not found: %s", self.git_executable)
             raise RuntimeError(f"Git executable not found: {self.git_executable}") from exc
@@ -389,6 +386,7 @@ class DocsVersionHandler:
         }
 
     def pull_latest(self) -> str:
+
         blocking_changes = self.get_pull_blocking_changes()
         if blocking_changes:
             listed_files = ", ".join(blocking_changes[:10])
@@ -401,7 +399,7 @@ class DocsVersionHandler:
                 f"Blocking files ({len(blocking_changes)}): {listed_files}"
             )
 
-        output = self._run_git_command(["pull"])
+        output = self._run_git_command(["pull", "--autostash"])
         return output or "Already up to date."
 
     def get_pull_blocking_changes(self) -> list[str]:
