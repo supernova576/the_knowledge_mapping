@@ -213,10 +213,21 @@ def _load_template_options() -> dict[str, Path]:
     return templates
 
 
+def _render_doc_template(template_content: str) -> str:
+    today = _today_dd_mm_yyyy()
+    rendered = re.sub(r"\{\{\s*date\s*\}\}", today, template_content, flags=re.IGNORECASE)
+    rendered = re.sub(
+        r"(?im)^(>\s*Erstellt\s*:\s*)\{\{\s*date\s*\}\}\s*$",
+        rf"\1{today}",
+        rendered,
+    )
+    return rendered
+
+
 def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
     history_header = "#### Page History"
     tags_header = "#### Page Tags"
-    history_entry = f"> Überarbeitet am: {{{{ date: {_today_dd_mm_yyyy()} }}}} => {reason.strip()}"
+    history_entry = f"> Überarbeitet am: {_today_dd_mm_yyyy()} => {reason.strip()}"
 
     lines = content.splitlines()
     history_index = next((index for index, line in enumerate(lines) if line.strip() == history_header), -1)
@@ -242,16 +253,28 @@ def _insert_history_entry(content: str, reason: str, should_create_history: bool
     return updated_content, True
 
 
-def _set_todo_in_progress(todo_id: str) -> None:
+def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     parser = DocsParser()
     database = db()
     todos = database.get_all_todos()
 
+    matched_todo = False
+    target_stem = Path(file_name).stem.strip().casefold()
+
     for todo in todos:
-        if str(todo.get("id")) == str(todo_id):
+        todo_note = str(todo.get("note", "")).strip()
+        note_stem = Path(todo_note).stem.strip().casefold()
+        id_matches = str(todo.get("id")) == str(todo_id)
+        note_matches = bool(target_stem) and note_stem == target_stem
+
+        if id_matches or note_matches:
             todo["progress"] = "In Progress"
             todo["last_update"] = _today_dd_mm()
+            matched_todo = True
             break
+
+    if not matched_todo:
+        logger.warning("Could not match todo for progress update. todo_id=%s file_name=%s", todo_id, file_name)
 
     conf = _load_conf()
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
@@ -785,7 +808,7 @@ def create_doc_from_todo_template():
     target_path = docs_dir / normalized_file_name
 
     try:
-        template_content = template_path.read_text(encoding="utf-8")
+        template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
     except OSError:
         flash("Failed to read template file.", "danger")
         return redirect(url_for("todo_overview"))
@@ -797,7 +820,7 @@ def create_doc_from_todo_template():
 
         try:
             target_path.write_text(template_content, encoding="utf-8")
-            _set_todo_in_progress(todo_id)
+            _set_todo_in_progress(todo_id, normalized_file_name)
             flash("New note created from template successfully.", "success")
         except BaseException:
             flash("Failed to create note from template.", "danger")
@@ -834,7 +857,7 @@ def create_doc_from_todo_template():
     try:
         combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
         target_path.write_text(combined_content, encoding="utf-8")
-        _set_todo_in_progress(todo_id)
+        _set_todo_in_progress(todo_id, normalized_file_name)
         flash("Note updated from template successfully.", "success")
     except BaseException:
         flash("Failed to update note from template.", "danger")
