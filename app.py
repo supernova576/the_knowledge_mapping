@@ -179,6 +179,86 @@ def _today_dd_mm() -> str:
     return datetime.now().strftime("%d.%m")
 
 
+def _today_dd_mm_yyyy() -> str:
+    return datetime.now().strftime("%d.%m.%Y")
+
+
+def _normalize_md_filename(file_name: str) -> str:
+    sanitized = str(file_name or "").strip().replace("\\", "/")
+    if not sanitized:
+        return ""
+
+    if "/" in sanitized:
+        return ""
+
+    if not sanitized.lower().endswith(".md"):
+        sanitized = f"{sanitized}.md"
+
+    return sanitized
+
+
+def _load_template_options() -> dict[str, Path]:
+    template_dir = Path("/the-knowledge/03_TEMPLATES")
+    if not template_dir.exists():
+        return {}
+
+    templates: dict[str, Path] = {}
+    for template_path in template_dir.glob("0 -*.md"):
+        stem = template_path.stem.strip()
+        if stem == "0 - Vorlage Note (Neu)":
+            templates["new"] = template_path
+        elif stem == "0 - Vorlage Note (Ergänzung)":
+            templates["update"] = template_path
+
+    return templates
+
+
+def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
+    history_header = "#### Page History"
+    tags_header = "#### Page Tags"
+    history_entry = f"> Überarbeitet am: {{{{ date: {_today_dd_mm_yyyy()} }}}} => {reason.strip()}"
+
+    lines = content.splitlines()
+    history_index = next((index for index, line in enumerate(lines) if line.strip() == history_header), -1)
+
+    if history_index == -1:
+        if not should_create_history:
+            return None, False
+
+        tags_index = next((index for index, line in enumerate(lines) if line.strip() == tags_header), -1)
+        if tags_index == -1:
+            raise ValueError("Could not find '#### Page Tags' chapter in markdown file.")
+
+        lines.insert(tags_index, "")
+        lines.insert(tags_index + 1, history_header)
+        history_index = tags_index + 1
+
+    insert_index = history_index + 1
+    lines.insert(insert_index, history_entry)
+    updated_content = "\n".join(lines)
+    if content.endswith("\n"):
+        updated_content += "\n"
+
+    return updated_content, True
+
+
+def _set_todo_in_progress(todo_id: str) -> None:
+    parser = DocsParser()
+    database = db()
+    todos = database.get_all_todos()
+
+    for todo in todos:
+        if str(todo.get("id")) == str(todo_id):
+            todo["progress"] = "In Progress"
+            todo["last_update"] = _today_dd_mm()
+            break
+
+    conf = _load_conf()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    writer.write_todos_table(todos)
+    parser.sync_todos_to_db()
+
+
 def _normalize_todo_types(value):
     normalized = _normalize_value(value)
     if isinstance(normalized, list):
@@ -548,7 +628,31 @@ def todo_overview():
 
     database = db()
     todos = _load_todos(database, query)
-    return render_template("todo.html", todos=todos, query=query)
+
+    templates = _load_template_options()
+    template_labels = {
+        "new": "New",
+        "update": "Update",
+    }
+    template_options = [
+        {"key": key, "label": template_labels[key]}
+        for key in ["new", "update"]
+        if key in templates
+    ]
+
+    return render_template(
+        "todo.html",
+        todos=todos,
+        query=query,
+        template_options=template_options,
+        create_doc_state={
+            "missing_history": request.args.get("missing_history", "").strip() == "1",
+            "todo_id": request.args.get("todo_id", "").strip(),
+            "template_name": request.args.get("template_name", "").strip(),
+            "file_name": request.args.get("file_name", "").strip(),
+            "reason": request.args.get("reason", "").strip(),
+        },
+    )
 
 
 @app.route("/todo/sync", methods=["POST"])
@@ -649,6 +753,91 @@ def update_todo_progress():
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/create-doc", methods=["POST"])
+def create_doc_from_todo_template():
+    todo_id = request.form.get("todo_id", "").strip()
+    template_key = request.form.get("template_name", "").strip().lower()
+    file_name = request.form.get("file_name", "").strip()
+    reason = request.form.get("reason", "").strip()
+    create_history = request.form.get("create_history", "false").strip().lower() == "true"
+
+    if not todo_id or template_key not in {"new", "update"}:
+        flash("Invalid template action request.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    normalized_file_name = _normalize_md_filename(file_name)
+    if not normalized_file_name:
+        flash("Invalid file name. Please use a valid markdown file name.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    template_options = _load_template_options()
+    template_path = template_options.get(template_key)
+    if template_path is None or not template_path.exists():
+        flash("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    conf = _load_conf()
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    target_path = docs_dir / normalized_file_name
+
+    try:
+        template_content = template_path.read_text(encoding="utf-8")
+    except OSError:
+        flash("Failed to read template file.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    if template_key == "new":
+        if target_path.exists():
+            flash("A note with this file name already exists. Please choose another file name.", "danger")
+            return redirect(url_for("todo_overview"))
+
+        try:
+            target_path.write_text(template_content, encoding="utf-8")
+            _set_todo_in_progress(todo_id)
+            flash("New note created from template successfully.", "success")
+        except BaseException:
+            flash("Failed to create note from template.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    if not reason:
+        flash("Reason is required for update template.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    if not target_path.exists():
+        flash("Note file not found in 02_DOCS. Please provide an existing file name.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        current_content = target_path.read_text(encoding="utf-8")
+    except OSError:
+        flash("Failed to read the target note file.", "danger")
+        return redirect(url_for("todo_overview"))
+
+    updated_content, history_present = _insert_history_entry(current_content, reason, should_create_history=create_history)
+    if updated_content is None and not history_present:
+        flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
+        return redirect(
+            url_for(
+                "todo_overview",
+                missing_history="1",
+                todo_id=todo_id,
+                template_name=template_key,
+                file_name=normalized_file_name,
+                reason=reason,
+            )
+        )
+
+    try:
+        combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
+        target_path.write_text(combined_content, encoding="utf-8")
+        _set_todo_in_progress(todo_id)
+        flash("Note updated from template successfully.", "success")
+    except BaseException:
+        flash("Failed to update note from template.", "danger")
 
     return redirect(url_for("todo_overview"))
 
