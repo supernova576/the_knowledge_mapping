@@ -463,10 +463,7 @@ def index():
     last_sync_time = database.get_last_sync_time()
 
     version_status = database.get_version_control_snapshot()
-    under_construction_titles = sorted(
-        [str(item.get("title", "")).strip() for item in under_construction_docs.values() if str(item.get("title", "")).strip()],
-        key=lambda value: value.casefold(),
-    )
+    under_construction_count = len(under_construction_docs)
     manual_compliance_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
         key=lambda value: value["title"].casefold(),
@@ -484,7 +481,7 @@ def index():
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         has_git_changes=version_status.get("has_changes", False),
-        under_construction_titles=under_construction_titles,
+        under_construction_count=under_construction_count,
         manual_compliance_docs=manual_compliance_docs,
     )
 

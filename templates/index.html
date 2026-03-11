@@ -46,7 +46,7 @@
             <div class="col-lg col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
             <div class="col-lg col-md-6"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
             <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">In Construction</h2>{% if under_construction_titles %}<ul class="small mb-0 ps-3">{% for title in under_construction_titles %}<li>{{ title }}</li>{% endfor %}</ul>{% else %}<p class="mb-0 text-muted">No documents under construction.</p>{% endif %}</div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">Under Construction</h2><p class="display-6 text-info-emphasis mb-0">{{ under_construction_count }}</p></div></div></div>
             <div class="col-lg col-md-6">
                 <div id="git-change-banner" class="card shadow-sm h-100 {% if has_git_changes %}border-warning-subtle{% else %}border-success-subtle{% endif %}" role="status">
                     <div class="card-body">
