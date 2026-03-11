@@ -63,12 +63,11 @@
                     <div class="d-flex gap-2">
                         <form method="post" action="{{ url_for('update_todo_progress') }}" class="d-flex gap-2">
                             <input type="hidden" name="todo_id" value="{{ todo.id }}" />
-                            <select class="form-select form-select-sm" name="progress">
+                            <select class="form-select form-select-sm" name="progress" onchange="this.form.submit()">
                                 <option {% if todo.progress == 'Not Started' %}selected{% endif %}>Not Started</option>
                                 <option {% if todo.progress == 'In Progress' %}selected{% endif %}>In Progress</option>
                                 <option {% if todo.progress == 'Done' %}selected{% endif %}>Done</option>
                             </select>
-                            <button class="btn btn-outline-primary btn-sm">Update</button>
                         </form>
                         <form method="post" action="{{ url_for('delete_todo') }}">
                             <input type="hidden" name="todo_id" value="{{ todo.id }}" />
