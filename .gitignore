@@ -1,8 +1,13 @@
+# Client DB
 output/
-input/
 
+# Python specific
 src/__pycache__/
 __pycache__/
+
+# logging
+logs/
 logs/*.log
 
-logs/
+# Docker Compose File
+docker-compose.yml

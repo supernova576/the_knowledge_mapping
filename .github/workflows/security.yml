@@ -1,0 +1,256 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # GitHub Actions cron is UTC; run at 03:00 Europe/Zurich (Swiss time) year-round.
+    - cron: '0 2 * * 6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scheduled-security-scan:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, dev]
+
+    steps:
+      - name: Check Swiss local time gate
+        id: time-gate
+        run: |
+          HOUR=$(TZ=Europe/Zurich date +"%H")
+          DAY=$(TZ=Europe/Zurich date +"%u")
+          if [ "$DAY" = "6" ] && [ "$HOUR" = "03" ]; then
+            echo "run_scan=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Running scheduled Swiss-time scan (Saturday 03:00 Europe/Zurich)."
+          else
+            echo "run_scan=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ Skipping duplicate UTC schedule run."
+          fi
+
+      - name: Checkout code
+        if: steps.time-gate.outputs.run_scan == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup Python
+        if: steps.time-gate.outputs.run_scan == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies and scanners
+        if: steps.time-gate.outputs.run_scan == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit safety bandit
+
+      - name: Run dependency audits
+        if: steps.time-gate.outputs.run_scan == 'true'
+        id: dep-audit
+        continue-on-error: true
+        run: |
+          set +e
+
+          pip-audit -r requirements.txt --format=json --output=pip-audit.json
+          PIP_AUDIT_EXIT=$?
+
+          safety check -r requirements.txt --json > safety.json
+          SAFETY_EXIT=$?
+
+          if [ $PIP_AUDIT_EXIT -ne 0 ] || [ $SAFETY_EXIT -ne 0 ]; then
+            echo "has_vulnerabilities=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run code security scan (Bandit)
+        if: steps.time-gate.outputs.run_scan == 'true'
+        id: bandit
+        continue-on-error: true
+        run: |
+          bandit -r . -f json -o bandit.json
+
+      - name: Generate security report
+        if: steps.time-gate.outputs.run_scan == 'true'
+        run: |
+          python - << 'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import json
+
+          def load_json(path):
+              p = Path(path)
+              if not p.exists() or p.stat().st_size == 0:
+                  return None
+              try:
+                  return json.loads(p.read_text())
+              except Exception:
+                  return None
+
+          pip_audit = load_json('pip-audit.json')
+          safety = load_json('safety.json')
+          bandit = load_json('bandit.json')
+
+          pip_vulns = len(pip_audit.get('dependencies', [])) if isinstance(pip_audit, dict) else 0
+          # Count actual vulnerable dependencies/items where vulns list is non-empty
+          if isinstance(pip_audit, dict):
+              pip_vulns = sum(1 for d in pip_audit.get('dependencies', []) if d.get('vulns'))
+
+          safety_vulns = 0
+          if isinstance(safety, dict):
+              safety_vulns = len(safety.get('vulnerabilities', []))
+          elif isinstance(safety, list):
+              safety_vulns = len(safety)
+
+          bandit_issues = 0
+          if isinstance(bandit, dict):
+              bandit_issues = len(bandit.get('results', []))
+
+          report = [
+              '# Security Scan Report',
+              '',
+              f"**Date (UTC):** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+              f"**Branch:** {Path('.git/HEAD').read_text().strip() if Path('.git/HEAD').exists() else 'unknown'}",
+              '',
+              '## Summary',
+              f"- pip-audit vulnerable dependencies: **{pip_vulns}**",
+              f"- safety vulnerabilities: **{safety_vulns}**",
+              f"- bandit findings: **{bandit_issues}**",
+              '',
+              '## Status',
+              '- ✅ No known issues detected.' if (pip_vulns == 0 and safety_vulns == 0 and bandit_issues == 0) else '- ⚠️ Potential security issues were detected. Review attached artifacts.',
+          ]
+
+          Path('security-report.md').write_text('\n'.join(report) + '\n')
+          PY
+
+      - name: Upload security artifacts
+        if: always() && steps.time-gate.outputs.run_scan == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ matrix.branch }}
+          path: |
+            security-report.md
+            pip-audit.json
+            safety.json
+            bandit.json
+          retention-days: 30
+
+      - name: Notify via GitHub issue (always)
+        if: always() && steps.time-gate.outputs.run_scan == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('security-report.md')
+              ? fs.readFileSync('security-report.md', 'utf8')
+              : 'Security report could not be generated.';
+
+            const now = new Date().toISOString().replace('T', ' ').replace('Z', ' UTC');
+            const branch = '${{ matrix.branch }}';
+            const hasVulns = '${{ steps.dep-audit.outputs.has_vulnerabilities }}' === 'true';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔒 Security scan report (${branch}) - ${now}`,
+              body: `## Automated Security Notification\n\nThis notification is sent for every scheduled/manual security scan run.\n\n${report}\n\n### Result\n${hasVulns ? '⚠️ Vulnerabilities were detected. Please review and remediate.' : '✅ No vulnerabilities detected in dependency audits.'}\n\nWorkflow: ${context.workflow}`,
+              labels: ['security', 'dependencies', 'automated-scan']
+            });
+
+  main-push-security-scan:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies and scanners
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit safety bandit
+
+      - name: Run dependency audits
+        id: dep-audit
+        continue-on-error: true
+        run: |
+          set +e
+          pip-audit -r requirements.txt --format=json --output=pip-audit.json
+          PIP_AUDIT_EXIT=$?
+          safety check -r requirements.txt --json > safety.json
+          SAFETY_EXIT=$?
+
+          if [ $PIP_AUDIT_EXIT -ne 0 ] || [ $SAFETY_EXIT -ne 0 ]; then
+            echo "has_vulnerabilities=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run code security scan (Bandit)
+        id: bandit
+        continue-on-error: true
+        run: |
+          bandit -r . -f json -o bandit.json
+
+      - name: Generate security report
+        run: |
+          cat > security-report.md << 'EOFREP'
+          # Security Scan Report
+
+          Trigger: push to main
+
+          Scanners executed:
+          - pip-audit
+          - safety
+          - bandit
+          EOFREP
+
+      - name: Upload security artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-main-push
+          path: |
+            security-report.md
+            pip-audit.json
+            safety.json
+            bandit.json
+          retention-days: 30
+
+      - name: Notify via GitHub issue (always)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('security-report.md')
+              ? fs.readFileSync('security-report.md', 'utf8')
+              : 'Security report could not be generated.';
+            const hasVulns = '${{ steps.dep-audit.outputs.has_vulnerabilities }}' === 'true';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔒 Security scan report (main push) - ${new Date().toISOString()}`,
+              body: `## Automated Security Notification\n\nThis notification is sent for every push-triggered security scan run on main.\n\n${report}\n\n### Result\n${hasVulns ? '⚠️ Vulnerabilities were detected. Please review and remediate.' : '✅ No vulnerabilities detected in dependency audits.'}\n\nWorkflow: ${context.workflow}`,
+              labels: ['security', 'dependencies', 'automated-scan']
+            });
