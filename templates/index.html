@@ -43,10 +43,11 @@
         </div>
 
         <div class="row g-3 mb-4">
-            <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
-            <div class="col-md-3"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-md-3"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
-            <div class="col-md-3">
+            <div class="col-lg col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">In Construction</h2>{% if under_construction_titles %}<ul class="small mb-0 ps-3">{% for title in under_construction_titles %}<li>{{ title }}</li>{% endfor %}</ul>{% else %}<p class="mb-0 text-muted">No documents under construction.</p>{% endif %}</div></div></div>
+            <div class="col-lg col-md-6">
                 <div id="git-change-banner" class="card shadow-sm h-100 {% if has_git_changes %}border-warning-subtle{% else %}border-success-subtle{% endif %}" role="status">
                     <div class="card-body">
                         <h2 class="h6 text-muted mb-2">Version control (Docs)</h2>
@@ -83,7 +84,7 @@
         <div class="card shadow-sm mb-4"><div class="card-body">
             <h2 class="h5">Manual compliance</h2>
             <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
-                <div class="col-md-4"><label class="form-label">Document ID</label><input class="form-control" name="doc_id" placeholder="ID" required /></div>
+                <div class="col-md-4"><label class="form-label">Document name</label><select class="form-select" name="doc_title" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
                 <div class="col-md-4"><label class="form-label">Manual compliant override</label><select class="form-select" name="manual_compliant_override"><option value="true">true</option><option value="false" selected>false</option></select></div>
                 <div class="col-md-4 d-grid"><button class="btn btn-outline-success">Update manual compliance</button></div>
             </form>

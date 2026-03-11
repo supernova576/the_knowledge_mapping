@@ -436,6 +436,7 @@ def index():
 
     database = db()
     docs = _load_docs(database, view, query)
+    under_construction_docs = database.get_under_construction_docs()
 
     total_docs = len(docs)
     compliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "true"])
@@ -462,6 +463,14 @@ def index():
     last_sync_time = database.get_last_sync_time()
 
     version_status = database.get_version_control_snapshot()
+    under_construction_titles = sorted(
+        [str(item.get("title", "")).strip() for item in under_construction_docs.values() if str(item.get("title", "")).strip()],
+        key=lambda value: value.casefold(),
+    )
+    manual_compliance_docs = sorted(
+        [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
+        key=lambda value: value["title"].casefold(),
+    )
 
     return render_template(
         "index.html",
@@ -475,6 +484,8 @@ def index():
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         has_git_changes=version_status.get("has_changes", False),
+        under_construction_titles=under_construction_titles,
+        manual_compliance_docs=manual_compliance_docs,
     )
 
 
@@ -597,12 +608,8 @@ def scan_docs():
 @app.route("/compliance/manual", methods=["POST"])
 def set_manual_compliance():
     doc_id = request.form.get("doc_id", "").strip()
+    doc_title = request.form.get("doc_title", "").strip()
     manual_override = _normalize_manual_override(request.form.get("manual_compliant_override", "false"))
-
-    if not doc_id:
-        logger.warning("Manual compliance update requested without doc_id")
-        flash("Please provide a document ID.", "warning")
-        return redirect(url_for("index"))
 
     if manual_override not in ("true", "false"):
         logger.warning("Invalid manual compliance value for id=%s value=%s", doc_id, manual_override)
@@ -611,6 +618,18 @@ def set_manual_compliance():
 
     try:
         database = db()
+        if not doc_id and doc_title:
+            matched_docs = database.get_docs_by_name(doc_title)
+            if not matched_docs:
+                flash(f"Document title not found: {doc_title}", "warning")
+                return redirect(url_for("index"))
+            doc_id = str(next(iter(matched_docs.values())).get("id", "")).strip()
+
+        if not doc_id:
+            logger.warning("Manual compliance update requested without doc_id/doc_title")
+            flash("Please select a document.", "warning")
+            return redirect(url_for("index"))
+
         database.update_manual_compliance_by_id(int(doc_id), manual_override)
         if manual_override == "true":
             flash(f"Document id={doc_id} is now manually marked as compliant.", "success")
