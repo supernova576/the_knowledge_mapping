@@ -9,6 +9,7 @@ from .logger import get_logger
 from .timezone_utils import now_in_zurich_str
 logger = get_logger(__name__)
 class DocsParser:
+    UNDER_CONSTRUCTION_MARKER = "> ==unter Bearbeitung=="
     PROGRESS_ICON_TO_STATE = {
         "![[not started.png]]": "Not Started",
         "![[in progress.png]]": "In Progress",
@@ -100,6 +101,14 @@ class DocsParser:
             return title if title else "N/A"
         except Exception:
             logger.error("Failed to parse title from %s\n%s", file_name, traceback.format_exc())
+            adieu(1)
+    def __is_under_construction(self, doc_content: str) -> bool:
+        try:
+            normalized = str(doc_content or "").lstrip("\ufeff")
+            first_line = normalized.splitlines()[0].strip() if normalized else ""
+            return first_line == self.UNDER_CONSTRUCTION_MARKER
+        except Exception:
+            logger.error("Failed to detect under-construction marker\n%s", traceback.format_exc())
             adieu(1)
     def __parse_created_at_from_doc(self, doc_content: str) -> str:
         try:
@@ -195,7 +204,12 @@ class DocsParser:
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
-                is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents)
+                is_under_construction = self.__is_under_construction(file_contents)
+                if is_under_construction:
+                    is_compliant = "Not Determined"
+                    noncompliance_reason = "N/A"
+                else:
+                    is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents)
                 append_dict = {
                     "title": self.__parse_title_from_doc(doc_full_path),
                     "created_at": self.__parse_created_at_from_doc(file_contents),
@@ -206,6 +220,7 @@ class DocsParser:
                     "is_compliant": is_compliant,
                     "noncompliance_reason": noncompliance_reason,
                     "manual_compliant_override": "false",
+                    "is_under_construction": "true" if is_under_construction else "false",
                 }
                 scanned_doc_titles.add(append_dict.get("title", "N/A"))
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))

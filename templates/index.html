@@ -72,6 +72,7 @@
                     <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
                     <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
                     <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                    <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
                 </select></div>
                 <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="id, file name, or #tag" /></div>
                 <input type="hidden" name="sort" value="{{ selected_sort }}" />
@@ -106,7 +107,7 @@
                 </form>
             </div>
             <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th></tr></thead><tbody>
-            {% for doc in docs %}<tr><td>{{ doc.title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
+            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td></tr>
             {% else %}<tr><td colspan="8" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}

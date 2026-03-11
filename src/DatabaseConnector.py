@@ -48,7 +48,8 @@ class db:
                     tags TEXT,
                     is_compliant TEXT,
                     noncompliance_reason TEXT,
-                    manual_compliant_override TEXT
+                    manual_compliant_override TEXT,
+                    is_under_construction TEXT
                 )
                 """
             )
@@ -160,7 +161,7 @@ class db:
     def create_new_docs_entry(self, ndd: dict) -> None:
         try:
             self._execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -171,6 +172,7 @@ class db:
                     ndd.get("video_links", "N/A"),
                     ndd.get("noncompliance_reason", "N/A"),
                     ndd.get("manual_compliant_override", ""),
+                    ndd.get("is_under_construction", "false"),
                 ),
             )
             self._commit()
@@ -252,7 +254,7 @@ class db:
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
             self._execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ? WHERE id = ?",
+                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ? WHERE id = ?",
                 (
                     udd.get("title", "N/A"),
                     udd.get("created_at", "N/A"),
@@ -263,6 +265,7 @@ class db:
                     udd.get("video_links", "N/A"),
                     udd.get("noncompliance_reason", "N/A"),
                     udd.get("manual_compliant_override", ""),
+                    udd.get("is_under_construction", "false"),
                     id,
                 ),
             )
@@ -578,6 +581,20 @@ class db:
             return result
         except Exception:
             logger.error("sqlite_handler/get_compliant_docs failed\n%s", traceback.format_exc())
+            adieu(1)
+
+
+    def get_under_construction_docs(self) -> dict:
+        try:
+            rows = self._fetch_all_dict("SELECT * FROM docs WHERE is_under_construction = ?", ("true",))
+            result = {}
+
+            for row_dict in rows:
+                result[row_dict.get("id")] = row_dict
+
+            return result
+        except Exception:
+            logger.error("sqlite_handler/get_under_construction_docs failed\n%s", traceback.format_exc())
             adieu(1)
 
     def check_if_doc_is_already_in_db(self, file_name: str) -> dict:

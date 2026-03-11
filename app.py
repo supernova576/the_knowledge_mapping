@@ -134,6 +134,9 @@ def _normalize_manual_override(value: str | None) -> str:
 
 
 def _compliance_tag_class(doc: dict) -> str:
+    if str(doc.get("is_under_construction", "false")).lower() == "true":
+        return "text-bg-info"
+
     is_compliant = doc.get("is_compliant") == "true"
     manual_override = _normalize_manual_override(doc.get("manual_compliant_override")) == "true"
 
@@ -141,7 +144,7 @@ def _compliance_tag_class(doc: dict) -> str:
         return "compliance-tag-manual"
     if is_compliant:
         return "compliance-tag-compliant"
-    
+
     return "compliance-tag-not-compliant"
 
 def _load_docs(database: db, view: str, query: str) -> dict:
@@ -165,6 +168,9 @@ def _load_docs(database: db, view: str, query: str) -> dict:
 
     if view == "compliant":
         return database.get_compliant_docs()
+
+    if view == "under_construction":
+        return database.get_under_construction_docs()
 
     return database.get_all_docs()
 
@@ -444,6 +450,11 @@ def index():
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
+        row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
+        row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
+        if row["is_under_construction"] == "true":
+            row["is_compliant"] = "Not Determined"
+            row["noncompliance_reason_list"] = []
         row["compliance_tag_class"] = _compliance_tag_class(row)
         processed_docs.append(row)
 
