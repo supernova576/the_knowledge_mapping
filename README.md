@@ -73,3 +73,11 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 
 - The docs path must be accessible from where the app runs (host/container).
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
+
+## Features to implement
+- add/delete Link / Video / Tag directly to File from Tool
+- document exporter
+  - export by Tag / Name
+  - convert exported doc to pdf
+  - generate table of contents
+  - display with PICTURES
