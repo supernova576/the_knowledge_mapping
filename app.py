@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
@@ -918,6 +918,14 @@ def create_doc_from_todo_template():
         reason=reason,
         create_history=create_history,
     )
+    if not success and from_index and "#### Page History" in missing_sections:
+        success, missing_sections = writer.prepend_template_to_existing_note(
+            target_path=target_path,
+            template_content=template_content,
+            reason=reason,
+            create_history=True,
+        )
+
     if not success and "#### Page History" in missing_sections:
         flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
         return redirect(
@@ -960,6 +968,7 @@ def edit_doc_resources(doc_id: int):
 
     doc = next(iter(doc_map.values()))
     all_tags = database.get_all_tags()
+    pending_resource_updates = session.pop(f"pending_doc_resource_updates_{doc_id}", None)
 
     return render_template(
         "doc_edit.html",
@@ -972,6 +981,7 @@ def edit_doc_resources(doc_id: int):
         },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
+            "pending_updates": pending_resource_updates or {},
         },
     )
 
@@ -1014,6 +1024,14 @@ def save_doc_resources(doc_id: int):
     )
 
     if not success:
+        session[f"pending_doc_resource_updates_{doc_id}"] = {
+            "tags_to_add": request.form.get("tags_to_add", ""),
+            "tags_to_remove": request.form.get("tags_to_remove", ""),
+            "links_to_add": request.form.get("links_to_add", ""),
+            "links_to_remove": request.form.get("links_to_remove", ""),
+            "video_links_to_add": request.form.get("video_links_to_add", ""),
+            "video_links_to_remove": request.form.get("video_links_to_remove", ""),
+        }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",
             "warning",
