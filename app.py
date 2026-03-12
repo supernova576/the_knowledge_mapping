@@ -1,6 +1,8 @@
 import html
 import json
+import os
 import re
+import stat
 import traceback
 from urllib.parse import urlencode
 from datetime import datetime
@@ -228,6 +230,15 @@ def _render_doc_template(template_content: str) -> str:
         rendered,
     )
     return rendered
+
+
+def _set_rw_permissions_for_all_users(path: Path) -> None:
+    if os.name == "nt":
+        # On Windows, chmod mainly controls read-only flag.
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        return
+
+    os.chmod(path, 0o666)
 
 
 def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
@@ -847,6 +858,7 @@ def create_doc_from_todo_template():
 
         try:
             target_path.write_text(template_content, encoding="utf-8")
+            _set_rw_permissions_for_all_users(target_path)
             _set_todo_in_progress(todo_id, normalized_file_name)
             flash("New note created from template successfully.", "success")
         except BaseException:
@@ -884,6 +896,7 @@ def create_doc_from_todo_template():
     try:
         combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
         target_path.write_text(combined_content, encoding="utf-8")
+        _set_rw_permissions_for_all_users(target_path)
         _set_todo_in_progress(todo_id, normalized_file_name)
         flash("Note updated from template successfully.", "success")
     except BaseException:
