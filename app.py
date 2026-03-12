@@ -1004,11 +1004,11 @@ def save_doc_resources(doc_id: int):
         return redirect(url_for("edit_doc_resources", doc_id=doc_id))
 
     tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
-    tags_to_remove = _parse_multiline_tags(request.form.get("tags_to_remove", ""))
+    tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
     links_to_add = _parse_multiline_values(request.form.get("links_to_add", ""))
-    links_to_remove = _parse_multiline_values(request.form.get("links_to_remove", ""))
+    links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_links_to_remove")))
     video_links_to_add = _parse_multiline_values(request.form.get("video_links_to_add", ""))
-    video_links_to_remove = _parse_multiline_values(request.form.get("video_links_to_remove", ""))
+    video_links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_video_links_to_remove")))
     create_missing_sections = request.form.get("create_missing_sections", "false").strip().lower() == "true"
 
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
@@ -1026,11 +1026,11 @@ def save_doc_resources(doc_id: int):
     if not success:
         session[f"pending_doc_resource_updates_{doc_id}"] = {
             "tags_to_add": request.form.get("tags_to_add", ""),
-            "tags_to_remove": request.form.get("tags_to_remove", ""),
+            "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
             "links_to_add": request.form.get("links_to_add", ""),
-            "links_to_remove": request.form.get("links_to_remove", ""),
+            "links_to_remove": "\n".join(request.form.getlist("selected_links_to_remove")),
             "video_links_to_add": request.form.get("video_links_to_add", ""),
-            "video_links_to_remove": request.form.get("video_links_to_remove", ""),
+            "video_links_to_remove": "\n".join(request.form.getlist("selected_video_links_to_remove")),
         }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",

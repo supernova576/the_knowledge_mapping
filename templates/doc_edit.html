@@ -75,8 +75,12 @@
                         <textarea class="form-control" rows="6" name="tags_to_add" placeholder="#new-tag">{{ edit_state.pending_updates.tags_to_add or "" }}</textarea>
                     </div>
                     <div class="col-lg-6">
-                        <label class="form-label">Remove tags (one per line)</label>
-                        <textarea class="form-control" rows="6" name="tags_to_remove" placeholder="#old-tag">{{ edit_state.pending_updates.tags_to_remove or "" }}</textarea>
+                        <label class="form-label">Remove tags (select one or multiple)</label>
+                        <select class="form-select" name="selected_tags_to_remove" multiple size="6">
+                            {% for tag in current_resources.tags %}
+                            <option value="{{ tag }}">{{ tag }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
 
                     <div class="col-12">
@@ -95,8 +99,12 @@
                         <textarea class="form-control" rows="5" name="links_to_add" placeholder="https://example.com">{{ edit_state.pending_updates.links_to_add or "" }}</textarea>
                     </div>
                     <div class="col-lg-6">
-                        <label class="form-label">Remove external links (one per line)</label>
-                        <textarea class="form-control" rows="5" name="links_to_remove" placeholder="https://example.com">{{ edit_state.pending_updates.links_to_remove or "" }}</textarea>
+                        <label class="form-label">Remove external links (select one or multiple)</label>
+                        <select class="form-select" name="selected_links_to_remove" multiple size="5">
+                            {% for link in current_resources.links %}
+                            <option value="{{ link }}">{{ link }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
 
                     <div class="col-lg-6">
@@ -104,8 +112,12 @@
                         <textarea class="form-control" rows="5" name="video_links_to_add" placeholder="https://video.com/watch">{{ edit_state.pending_updates.video_links_to_add or "" }}</textarea>
                     </div>
                     <div class="col-lg-6">
-                        <label class="form-label">Remove video links (one per line)</label>
-                        <textarea class="form-control" rows="5" name="video_links_to_remove" placeholder="https://video.com/watch">{{ edit_state.pending_updates.video_links_to_remove or "" }}</textarea>
+                        <label class="form-label">Remove video links (select one or multiple)</label>
+                        <select class="form-select" name="selected_video_links_to_remove" multiple size="5">
+                            {% for link in current_resources.video_links %}
+                            <option value="{{ link }}">{{ link }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
 
                     <div class="col-12 d-flex justify-content-end gap-2">

@@ -224,21 +224,25 @@ class DocsWriter:
 
         section_end = self._section_end_index(lines, section_idx)
         block = lines[section_idx + 1:section_end]
-        cleaned_block: list[str] = []
+        existing_links: list[str] = []
         for line in block:
             stripped = line.strip()
-            matched_url = re.search(r"\((https?://[^)]+)\)", stripped)
-            plain_url_match = re.search(r"https?://\S+", stripped)
+            matched_url = re.search(r"\((https?://[^)\s]+)\)", stripped)
+            plain_url_match = re.search(r"^https?://\S+$", stripped)
             url_value = matched_url.group(1) if matched_url else (plain_url_match.group(0) if plain_url_match else "")
-            if url_value and url_value in remove_items:
-                continue
-            cleaned_block.append(line)
+            if url_value and url_value not in existing_links:
+                existing_links.append(url_value)
 
+        kept_links = [link for link in existing_links if link not in remove_items]
         for item in add_items:
-            if not any(item in line for line in cleaned_block):
-                cleaned_block.append(f"[{item}]({item})")
+            if item not in kept_links:
+                kept_links.append(item)
 
-        lines[section_idx + 1:section_end] = cleaned_block
+        replacement = [f"[{link}]({link})" for link in kept_links]
+        if not replacement:
+            replacement = [""]
+
+        lines[section_idx + 1:section_end] = replacement
         return lines
 
     def _update_tags_section(self, lines: list[str], tags_to_add: list[str], tags_to_remove: list[str]) -> list[str]:

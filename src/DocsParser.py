@@ -68,7 +68,7 @@ class DocsParser:
     def __extract_subsection_block(self, doc_content: str, subsection_name: str) -> str:
         try:
             match = re.search(
-                rf"(?ims)^####\s+{re.escape(subsection_name)}\s*$\n(.*?)(?=^####\s+|^##\s+|\Z)",
+                rf"(?ims)^####\s+{re.escape(subsection_name)}\s*$\n(.*?)(?=^#{{1,6}}\s+|\Z)",
                 doc_content,
             )
             return match.group(1).strip() if match else ""
@@ -77,8 +77,10 @@ class DocsParser:
             adieu(1)
     def __extract_markdown_links(self, text: str) -> list[str]:
         try:
-            links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", text)
-            links.extend(re.findall(r"(?<!\()\bhttps?://[^\s)>]+", text))
+            markdown_links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", text)
+            remaining_text = re.sub(r"\[[^\]]+\]\(https?://[^)\s]+\)", "", text)
+            plain_links = re.findall(r"\bhttps?://[^\s)>]+", remaining_text)
+            links = [*markdown_links, *plain_links]
             deduped: list[str] = []
             for link in links:
                 if link not in deduped:
@@ -142,8 +144,12 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
-            links = self.__extract_markdown_links(video_block) if video_block else []
-            return self.__to_db_text(links)
+            links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", video_block) if video_block else []
+            deduped_links: list[str] = []
+            for link in links:
+                if link not in deduped_links:
+                    deduped_links.append(link)
+            return self.__to_db_text(deduped_links)
         except Exception:
             logger.error("Failed to parse video links\n%s", traceback.format_exc())
             adieu(1)
