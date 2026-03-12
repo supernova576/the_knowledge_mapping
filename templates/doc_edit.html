@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edit document resources</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+
+<body>
+    <div class="container py-4">
+        {% set active_page = 'index' %}
+        {% include '_navbar.html' %}
+
+        <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
+            <h1 class="h3 mb-0">Edit resources: {{ doc.title }}</h1>
+            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="mb-3">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mb-2" role="alert">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+
+                <div class="row g-3 mb-4">
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current tags</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for tag in current_resources.tags %}
+                            <span class="badge text-bg-secondary me-1 mb-1">{{ tag }}</span>
+                            {% else %}
+                            <span class="text-muted small">No tags available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current links</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for link in current_resources.links %}
+                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% else %}
+                            <span class="text-muted small">No links available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current video links</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for link in current_resources.video_links %}
+                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% else %}
+                            <span class="text-muted small">No video links available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <form method="post" action="{{ url_for('save_doc_resources', doc_id=doc.id) }}" id="editResourcesForm" class="row g-3">
+                    <input type="hidden" name="create_missing_sections" id="createMissingSections" value="false" />
+
+                    <div class="col-lg-6">
+                        <label class="form-label">Add tags (one per line)</label>
+                        <textarea class="form-control" rows="6" name="tags_to_add" placeholder="#new-tag">{{ edit_state.pending_updates.tags_to_add or "" }}</textarea>
+                    </div>
+                    <div class="col-lg-6">
+                        <label class="form-label">Remove tags (select one or multiple)</label>
+                        <select class="form-select" name="selected_tags_to_remove" multiple size="6">
+                            {% for tag in current_resources.tags %}
+                            <option value="{{ tag }}">{{ tag }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Tag inventory</label>
+                        <input type="text" class="form-control mb-2" id="tagFilter" placeholder="Filter tags" />
+                        <div class="d-flex flex-wrap gap-2" id="tagInventory">
+                            {% for tag in all_tags %}
+                            <button type="button" class="btn btn-outline-secondary btn-sm tag-chip" data-tag="{{ tag }}">{{ tag }}</button>
+                            {% endfor %}
+                        </div>
+                        <div class="form-text">Click a tag to add it in the "Add tags" field.</div>
+                    </div>
+
+                    <div class="col-lg-6">
+                        <label class="form-label">Add external links (one per line)</label>
+                        <textarea class="form-control" rows="5" name="links_to_add" placeholder="https://example.com">{{ edit_state.pending_updates.links_to_add or "" }}</textarea>
+                    </div>
+                    <div class="col-lg-6">
+                        <label class="form-label">Remove external links (select one or multiple)</label>
+                        <select class="form-select" name="selected_links_to_remove" multiple size="5">
+                            {% for link in current_resources.links %}
+                            <option value="{{ link }}">{{ link }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-lg-6">
+                        <label class="form-label">Add video links (one per line)</label>
+                        <textarea class="form-control" rows="5" name="video_links_to_add" placeholder="https://video.com/watch">{{ edit_state.pending_updates.video_links_to_add or "" }}</textarea>
+                    </div>
+                    <div class="col-lg-6">
+                        <label class="form-label">Remove video links (select one or multiple)</label>
+                        <select class="form-select" name="selected_video_links_to_remove" multiple size="5">
+                            {% for link in current_resources.video_links %}
+                            <option value="{{ link }}">{{ link }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-12 d-flex justify-content-end gap-2">
+                        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% include '_footer.html' %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    {% include '_theme_toggle_script.html' %}
+    <script>
+        (function () {
+            const filterInput = document.getElementById("tagFilter");
+            const chips = Array.from(document.querySelectorAll(".tag-chip"));
+            const tagsToAdd = document.querySelector('textarea[name="tags_to_add"]');
+            const createMissingSectionsField = document.getElementById("createMissingSections");
+
+            filterInput.addEventListener("input", function () {
+                const query = filterInput.value.trim().toLowerCase();
+                chips.forEach((chip) => {
+                    const isVisible = chip.dataset.tag.toLowerCase().includes(query);
+                    chip.classList.toggle("d-none", !isVisible);
+                });
+            });
+
+            chips.forEach((chip) => {
+                chip.addEventListener("click", function () {
+                    const value = chip.dataset.tag;
+                    if (!tagsToAdd.value.includes(value)) {
+                        tagsToAdd.value = `${tagsToAdd.value.trim()}\n${value}`.trim();
+                    }
+                });
+            });
+
+            {% if edit_state.missing_sections %}
+            const missingSections = "{{ edit_state.missing_sections }}".split("|").filter(Boolean);
+            if (confirm(`Missing chapter(s): ${missingSections.join(", ")}. Create them automatically?`) === true) {
+                createMissingSectionsField.value = "true";
+                document.getElementById("editResourcesForm").submit();
+            }
+            {% endif %}
+        })();
+    </script>
+</body>
+
+</html>

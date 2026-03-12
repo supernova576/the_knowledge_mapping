@@ -1,12 +1,14 @@
 import html
 import json
+import os
 import re
+import stat
 import traceback
 from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
@@ -203,6 +205,31 @@ def _normalize_md_filename(file_name: str) -> str:
     return sanitized
 
 
+
+
+def _normalize_tag_value(tag: str) -> str:
+    cleaned = str(tag or "").strip()
+    if not cleaned:
+        return ""
+    return cleaned if cleaned.startswith("#") else f"#{cleaned}"
+
+
+def _parse_multiline_values(value: str) -> list[str]:
+    values: list[str] = []
+    for line in str(value or "").splitlines():
+        item = line.strip()
+        if item:
+            values.append(item)
+    return values
+
+
+def _parse_multiline_tags(value: str) -> list[str]:
+    parsed: list[str] = []
+    for line in str(value or "").splitlines():
+        normalized = _normalize_tag_value(line)
+        if normalized:
+            parsed.append(normalized)
+    return parsed
 def _load_template_options() -> dict[str, Path]:
     template_dir = Path("/the-knowledge/03_TEMPLATES")
     if not template_dir.exists():
@@ -228,6 +255,15 @@ def _render_doc_template(template_content: str) -> str:
         rendered,
     )
     return rendered
+
+
+def _set_rw_permissions_for_all_users(path: Path) -> None:
+    if os.name == "nt":
+        # On Windows, chmod mainly controls read-only flag.
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        return
+
+    os.chmod(path, 0o666)
 
 
 def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
@@ -281,6 +317,24 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
 
     if not matched_todo:
         logger.warning("Could not match todo for progress update. todo_id=%s file_name=%s", todo_id, file_name)
+
+    conf = _load_conf()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    writer.write_todos_table(todos)
+    parser.sync_todos_to_db()
+
+
+def _append_todo(note: str, todo_type: str, progress: str) -> None:
+    parser = DocsParser()
+    todos = parser.parse_todos_from_markdown()
+    todos.append(
+        {
+            "note": note,
+            "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
+            "progress": progress,
+            "last_update": _today_dd_mm(),
+        }
+    )
 
     conf = _load_conf()
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
@@ -678,6 +732,7 @@ def todo_overview():
 
     database = db()
     todos = _load_todos(database, query)
+    all_tags = database.get_all_tags()
 
     templates = _load_template_options()
     template_labels = {
@@ -695,6 +750,7 @@ def todo_overview():
         todos=todos,
         query=query,
         template_options=template_options,
+        all_tags=all_tags,
         create_doc_state={
             "missing_history": request.args.get("missing_history", "").strip() == "1",
             "todo_id": request.args.get("todo_id", "").strip(),
@@ -731,21 +787,7 @@ def add_todo():
         return redirect(url_for("todo_overview"))
 
     try:
-        parser = DocsParser()
-        todos = parser.parse_todos_from_markdown()
-        todos.append(
-            {
-                "note": note,
-                "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
-                "progress": progress,
-                "last_update": _today_dd_mm(),
-            }
-        )
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(todos)
-        parser.sync_todos_to_db()
+        _append_todo(note=note, todo_type=todo_type, progress=progress)
         flash("Todo added successfully.", "success")
     except BaseException:
         flash("Failed to add todo. Check logs and markdown format.", "danger")
@@ -815,30 +857,38 @@ def create_doc_from_todo_template():
     reason = request.form.get("reason", "").strip()
     create_history = request.form.get("create_history", "false").strip().lower() == "true"
 
-    if not todo_id or template_key not in {"new", "update"}:
+    from_index = request.form.get("from_index", "false").strip().lower() == "true"
+    selected_doc = request.form.get("selected_doc", "").strip()
+
+    if from_index:
+        template_key = "update"
+        file_name = selected_doc
+
+    if template_key not in {"new", "update"}:
         flash("Invalid template action request.", "warning")
         return redirect(url_for("todo_overview"))
 
     normalized_file_name = _normalize_md_filename(file_name)
     if not normalized_file_name:
         flash("Invalid file name. Please use a valid markdown file name.", "danger")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     template_options = _load_template_options()
     template_path = template_options.get(template_key)
     if template_path is None or not template_path.exists():
         flash("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.", "danger")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     conf = _load_conf()
     docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
     target_path = docs_dir / normalized_file_name
 
     try:
         template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
     except OSError:
         flash("Failed to read template file.", "danger")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     if template_key == "new":
         if target_path.exists():
@@ -846,7 +896,8 @@ def create_doc_from_todo_template():
             return redirect(url_for("todo_overview"))
 
         try:
-            target_path.write_text(template_content, encoding="utf-8")
+            writer.create_note_from_template(target_path, template_content)
+            _set_rw_permissions_for_all_users(target_path)
             _set_todo_in_progress(todo_id, normalized_file_name)
             flash("New note created from template successfully.", "success")
         except BaseException:
@@ -855,20 +906,27 @@ def create_doc_from_todo_template():
 
     if not reason:
         flash("Reason is required for update template.", "warning")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     if not target_path.exists():
         flash("Note file not found in 02_DOCS. Please provide an existing file name.", "danger")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
-    try:
-        current_content = target_path.read_text(encoding="utf-8")
-    except OSError:
-        flash("Failed to read the target note file.", "danger")
-        return redirect(url_for("todo_overview"))
+    success, missing_sections = writer.prepend_template_to_existing_note(
+        target_path=target_path,
+        template_content=template_content,
+        reason=reason,
+        create_history=create_history,
+    )
+    if not success and from_index and "#### Page History" in missing_sections:
+        success, missing_sections = writer.prepend_template_to_existing_note(
+            target_path=target_path,
+            template_content=template_content,
+            reason=reason,
+            create_history=True,
+        )
 
-    updated_content, history_present = _insert_history_entry(current_content, reason, should_create_history=create_history)
-    if updated_content is None and not history_present:
+    if not success and "#### Page History" in missing_sections:
         flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
         return redirect(
             url_for(
@@ -882,14 +940,113 @@ def create_doc_from_todo_template():
         )
 
     try:
-        combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
-        target_path.write_text(combined_content, encoding="utf-8")
+        _set_rw_permissions_for_all_users(target_path)
+        if from_index:
+            _append_todo(
+                note=f"{Path(normalized_file_name).stem} ({reason})",
+                todo_type="Update",
+                progress="In Progress",
+            )
+            flash("Update note request created and todo added.", "success")
+            return redirect(url_for("index"))
+
         _set_todo_in_progress(todo_id, normalized_file_name)
         flash("Note updated from template successfully.", "success")
     except BaseException:
         flash("Failed to update note from template.", "danger")
 
-    return redirect(url_for("todo_overview"))
+    return redirect(url_for("index") if from_index else url_for("todo_overview"))
+
+
+@app.route("/docs/<int:doc_id>/edit", methods=["GET"])
+def edit_doc_resources(doc_id: int):
+    database = db()
+    doc_map = database.get_docs_by_id(doc_id)
+    if not doc_map:
+        flash("Document not found.", "warning")
+        return redirect(url_for("index"))
+
+    doc = next(iter(doc_map.values()))
+    all_tags = database.get_all_tags()
+    pending_resource_updates = session.pop(f"pending_doc_resource_updates_{doc_id}", None)
+
+    return render_template(
+        "doc_edit.html",
+        doc=doc,
+        all_tags=all_tags,
+        current_resources={
+            "tags": _to_display_list(doc.get("tags")),
+            "links": _to_display_list(doc.get("links")),
+            "video_links": _to_display_list(doc.get("video_links")),
+        },
+        edit_state={
+            "missing_sections": request.args.get("missing_sections", "").strip(),
+            "pending_updates": pending_resource_updates or {},
+        },
+    )
+
+
+@app.route("/docs/<int:doc_id>/edit", methods=["POST"])
+def save_doc_resources(doc_id: int):
+    database = db()
+    doc_map = database.get_docs_by_id(doc_id)
+    if not doc_map:
+        flash("Document not found.", "warning")
+        return redirect(url_for("index"))
+
+    doc = next(iter(doc_map.values()))
+    doc_title = str(doc.get("title", "")).strip()
+    conf = _load_conf()
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    doc_path = docs_dir / f"{doc_title}.md"
+    if not doc_path.exists():
+        flash("Markdown file for selected document was not found.", "danger")
+        return redirect(url_for("edit_doc_resources", doc_id=doc_id))
+
+    tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
+    tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
+    links_to_add = _parse_multiline_values(request.form.get("links_to_add", ""))
+    links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_links_to_remove")))
+    video_links_to_add = _parse_multiline_values(request.form.get("video_links_to_add", ""))
+    video_links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_video_links_to_remove")))
+    create_missing_sections = request.form.get("create_missing_sections", "false").strip().lower() == "true"
+
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    success, missing_sections = writer.update_doc_resources(
+        doc_path=doc_path,
+        tags_to_add=tags_to_add,
+        tags_to_remove=tags_to_remove,
+        links_to_add=links_to_add,
+        links_to_remove=links_to_remove,
+        video_links_to_add=video_links_to_add,
+        video_links_to_remove=video_links_to_remove,
+        create_missing_sections=create_missing_sections,
+    )
+
+    if not success:
+        session[f"pending_doc_resource_updates_{doc_id}"] = {
+            "tags_to_add": request.form.get("tags_to_add", ""),
+            "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
+            "links_to_add": request.form.get("links_to_add", ""),
+            "links_to_remove": "\n".join(request.form.getlist("selected_links_to_remove")),
+            "video_links_to_add": request.form.get("video_links_to_add", ""),
+            "video_links_to_remove": "\n".join(request.form.getlist("selected_video_links_to_remove")),
+        }
+        flash(
+            f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",
+            "warning",
+        )
+        return redirect(url_for("edit_doc_resources", doc_id=doc_id, missing_sections="|".join(missing_sections)))
+
+    try:
+        _set_rw_permissions_for_all_users(doc_path)
+        parser = DocsParser()
+        parser.parse_and_add_ALL_docs_to_db()
+        flash("Document resources updated successfully.", "success")
+    except BaseException:
+        flash("Document was updated but sync failed. Please run a full scan.", "warning")
+
+    return redirect(url_for("index"))
 
 
 @app.errorhandler(404)

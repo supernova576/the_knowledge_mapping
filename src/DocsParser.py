@@ -68,7 +68,7 @@ class DocsParser:
     def __extract_subsection_block(self, doc_content: str, subsection_name: str) -> str:
         try:
             match = re.search(
-                rf"(?ims)^####\s+{re.escape(subsection_name)}\s*$\n(.*?)(?=^####\s+|^##\s+|\Z)",
+                rf"(?ims)^####\s+{re.escape(subsection_name)}\s*$\n(.*?)(?=^#{{1,6}}\s+|\Z)",
                 doc_content,
             )
             return match.group(1).strip() if match else ""
@@ -77,8 +77,10 @@ class DocsParser:
             adieu(1)
     def __extract_markdown_links(self, text: str) -> list[str]:
         try:
-            links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", text)
-            links.extend(re.findall(r"(?<!\()\bhttps?://[^\s)>]+", text))
+            markdown_links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", text)
+            remaining_text = re.sub(r"\[[^\]]+\]\(https?://[^)\s]+\)", "", text)
+            plain_links = re.findall(r"\bhttps?://[^\s)>]+", remaining_text)
+            links = [*markdown_links, *plain_links]
             deduped: list[str] = []
             for link in links:
                 if link not in deduped:
@@ -142,8 +144,12 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
-            links = self.__extract_markdown_links(video_block) if video_block else []
-            return self.__to_db_text(links)
+            links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", video_block) if video_block else []
+            deduped_links: list[str] = []
+            for link in links:
+                if link not in deduped_links:
+                    deduped_links.append(link)
+            return self.__to_db_text(deduped_links)
         except Exception:
             logger.error("Failed to parse video links\n%s", traceback.format_exc())
             adieu(1)
@@ -201,6 +207,7 @@ class DocsParser:
             sync_time = now_in_zurich_str()
             logger.info("Starting full docs sync at %s", sync_time)
             scanned_doc_titles: set[str] = set()
+            collected_tags: set[str] = set()
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
@@ -222,6 +229,17 @@ class DocsParser:
                     "manual_compliant_override": "false",
                     "is_under_construction": "true" if is_under_construction else "false",
                 }
+                raw_tags = append_dict.get("tags", "N/A")
+                if isinstance(raw_tags, str) and raw_tags.startswith("[") and raw_tags.endswith("]"):
+                    try:
+                        parsed_tags = json.loads(raw_tags)
+                        if isinstance(parsed_tags, list):
+                            for tag in parsed_tags:
+                                tag_value = str(tag).strip()
+                                if tag_value:
+                                    collected_tags.add(tag_value)
+                    except json.JSONDecodeError:
+                        pass
                 scanned_doc_titles.add(append_dict.get("title", "N/A"))
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
@@ -236,6 +254,7 @@ class DocsParser:
                 if existing_title not in scanned_doc_titles and isinstance(existing_id, int):
                     db_object.delete_docs_by_id(existing_id)
                     logger.info("Deleted stale docs entry id=%s title=%s", existing_id, existing_title)
+            db_object.replace_all_tags(list(collected_tags))
             db_object.update_last_sync_time(sync_time)
             db_object.trim_old_change_versions(10)
             logger.info("Full docs sync completed")

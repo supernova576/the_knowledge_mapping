@@ -56,6 +56,15 @@ class db:
 
             self.cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS changes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     file_name TEXT,
@@ -609,6 +618,26 @@ class db:
 
         except Exception:
             logger.error("sqlite_handler/check_if_doc_is_already_in_db failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def replace_all_tags(self, tags: list[str]) -> None:
+        try:
+            normalized = sorted({str(tag).strip() for tag in tags if str(tag).strip()}, key=lambda value: value.casefold())
+            self._execute("DELETE FROM tags")
+            for tag in normalized:
+                self._execute("INSERT INTO tags (name) VALUES (?)", (tag,))
+            self._commit()
+            logger.info("Replaced tags table with %s entries", len(normalized))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_tags failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_tags(self) -> list[str]:
+        try:
+            rows = self._fetch_all_dict("SELECT name FROM tags ORDER BY name COLLATE NOCASE ASC")
+            return [row.get("name", "") for row in rows if row.get("name")]
+        except Exception:
+            logger.error("sqlite_handler/get_all_tags failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_todos(self, todos: list[dict]) -> None:
