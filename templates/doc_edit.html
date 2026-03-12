@@ -34,6 +34,39 @@
 
         <div class="card shadow-sm">
             <div class="card-body">
+
+                <div class="row g-3 mb-4">
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current tags</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for tag in current_resources.tags %}
+                            <span class="badge text-bg-secondary me-1 mb-1">{{ tag }}</span>
+                            {% else %}
+                            <span class="text-muted small">No tags available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current links</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for link in current_resources.links %}
+                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% else %}
+                            <span class="text-muted small">No links available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <h2 class="h6">Current video links</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for link in current_resources.video_links %}
+                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% else %}
+                            <span class="text-muted small">No video links available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
                 <form method="post" action="{{ url_for('save_doc_resources', doc_id=doc.id) }}" id="editResourcesForm" class="row g-3">
                     <input type="hidden" name="create_missing_sections" id="createMissingSections" value="false" />
 

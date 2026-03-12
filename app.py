@@ -324,6 +324,24 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     parser.sync_todos_to_db()
 
 
+def _append_todo(note: str, todo_type: str, progress: str) -> None:
+    parser = DocsParser()
+    todos = parser.parse_todos_from_markdown()
+    todos.append(
+        {
+            "note": note,
+            "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
+            "progress": progress,
+            "last_update": _today_dd_mm(),
+        }
+    )
+
+    conf = _load_conf()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    writer.write_todos_table(todos)
+    parser.sync_todos_to_db()
+
+
 def _normalize_todo_types(value):
     normalized = _normalize_value(value)
     if isinstance(normalized, list):
@@ -769,21 +787,7 @@ def add_todo():
         return redirect(url_for("todo_overview"))
 
     try:
-        parser = DocsParser()
-        todos = parser.parse_todos_from_markdown()
-        todos.append(
-            {
-                "note": note,
-                "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
-                "progress": progress,
-                "last_update": _today_dd_mm(),
-            }
-        )
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(todos)
-        parser.sync_todos_to_db()
+        _append_todo(note=note, todo_type=todo_type, progress=progress)
         flash("Todo added successfully.", "success")
     except BaseException:
         flash("Failed to add todo. Check logs and markdown format.", "danger")
@@ -859,7 +863,6 @@ def create_doc_from_todo_template():
     if from_index:
         template_key = "update"
         file_name = selected_doc
-        reason = f"Update requested from index dashboard on {_today_dd_mm_yyyy()}"
 
     if template_key not in {"new", "update"}:
         flash("Invalid template action request.", "warning")
@@ -903,7 +906,7 @@ def create_doc_from_todo_template():
 
     if not reason:
         flash("Reason is required for update template.", "warning")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     if not target_path.exists():
         flash("Note file not found in 02_DOCS. Please provide an existing file name.", "danger")
@@ -930,19 +933,12 @@ def create_doc_from_todo_template():
 
     try:
         _set_rw_permissions_for_all_users(target_path)
-        parser = DocsParser()
         if from_index:
-            todos = parser.parse_todos_from_markdown()
-            todos.append(
-                {
-                    "note": Path(normalized_file_name).stem,
-                    "type": json.dumps(["Update"], ensure_ascii=False),
-                    "progress": "In Progress",
-                    "last_update": _today_dd_mm(),
-                }
+            _append_todo(
+                note=f"{Path(normalized_file_name).stem} ({reason})",
+                todo_type="Update",
+                progress="In Progress",
             )
-            writer.write_todos_table(todos)
-            parser.sync_todos_to_db()
             flash("Update note request created and todo added.", "success")
             return redirect(url_for("index"))
 
@@ -969,6 +965,11 @@ def edit_doc_resources(doc_id: int):
         "doc_edit.html",
         doc=doc,
         all_tags=all_tags,
+        current_resources={
+            "tags": _to_display_list(doc.get("tags")),
+            "links": _to_display_list(doc.get("links")),
+            "video_links": _to_display_list(doc.get("video_links")),
+        },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
         },

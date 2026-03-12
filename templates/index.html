@@ -98,6 +98,7 @@
                     <form method="post" action="{{ url_for('create_doc_from_todo_template') }}" class="row g-2 align-items-end">
                         <input type="hidden" name="from_index" value="true" />
                         <div class="col-md-12"><label class="form-label">Select document</label><select class="form-select" name="selected_doc" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
+                        <div class="col-md-12"><label class="form-label">Reason for update</label><input class="form-control" name="reason" placeholder="Why should this note be updated?" required /></div>
                         <br>
                         <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Update Note</button></div>
                     </form>
