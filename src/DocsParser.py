@@ -201,6 +201,7 @@ class DocsParser:
             sync_time = now_in_zurich_str()
             logger.info("Starting full docs sync at %s", sync_time)
             scanned_doc_titles: set[str] = set()
+            collected_tags: set[str] = set()
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
@@ -222,6 +223,17 @@ class DocsParser:
                     "manual_compliant_override": "false",
                     "is_under_construction": "true" if is_under_construction else "false",
                 }
+                raw_tags = append_dict.get("tags", "N/A")
+                if isinstance(raw_tags, str) and raw_tags.startswith("[") and raw_tags.endswith("]"):
+                    try:
+                        parsed_tags = json.loads(raw_tags)
+                        if isinstance(parsed_tags, list):
+                            for tag in parsed_tags:
+                                tag_value = str(tag).strip()
+                                if tag_value:
+                                    collected_tags.add(tag_value)
+                    except json.JSONDecodeError:
+                        pass
                 scanned_doc_titles.add(append_dict.get("title", "N/A"))
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
@@ -236,6 +248,7 @@ class DocsParser:
                 if existing_title not in scanned_doc_titles and isinstance(existing_id, int):
                     db_object.delete_docs_by_id(existing_id)
                     logger.info("Deleted stale docs entry id=%s title=%s", existing_id, existing_title)
+            db_object.replace_all_tags(list(collected_tags))
             db_object.update_last_sync_time(sync_time)
             db_object.trim_old_change_versions(10)
             logger.info("Full docs sync completed")
