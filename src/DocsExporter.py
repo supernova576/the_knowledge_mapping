@@ -93,6 +93,15 @@ class DocsExporter:
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
         return text.strip()
 
+    def _multi_cell_line(self, pdf, height: int | float, text: str, align: str = "L") -> None:
+        """Write a full-width text line and reset cursor to the left margin.
+
+        fpdf2 `multi_cell` advances X to the right edge by default, which can leave no
+        horizontal space for subsequent `w=0` calls. For line-oriented output we always
+        want the next line to start at the left margin.
+        """
+        pdf.multi_cell(0, height, text, align=align, new_x="LMARGIN", new_y="NEXT")
+
     def export_docs_to_pdf(self, export_title: str, docs: list[dict]) -> Path:
         try:
             from fpdf import FPDF
@@ -112,7 +121,7 @@ class DocsExporter:
         pdf.set_font("Helvetica", "B", 28)
         pdf.rect(10, 20, 190, 40, "F")
         pdf.set_xy(14, 32)
-        pdf.multi_cell(182, 10, export_title.strip() or "Documentation Export", align="C")
+        pdf.multi_cell(182, 10, export_title.strip() or "Documentation Export", align="C", new_x="LMARGIN", new_y="NEXT")
 
         toc_sections: list[tuple[str, list[tuple[int, str]]]] = []
         body_docs: list[dict] = []
@@ -142,11 +151,11 @@ class DocsExporter:
 
         for doc_title, sections in toc_sections:
             pdf.set_font("Helvetica", "B", 12)
-            pdf.multi_cell(0, 7, f"- {doc_title}")
+            self._multi_cell_line(pdf, 7, f"- {doc_title}")
             pdf.set_font("Helvetica", size=11)
             for level, section_title in sections:
                 indent = "  " * max(level - 1, 1)
-                pdf.multi_cell(0, 6, f"{indent}- {section_title}")
+                self._multi_cell_line(pdf, 6, f"{indent}- {section_title}")
 
         for doc_data in body_docs:
             pdf.add_page()
@@ -166,7 +175,7 @@ class DocsExporter:
                     text = self._to_display_line(heading_match.group(2))
                     size = max(11, 20 - level * 2)
                     pdf.set_font("Helvetica", "B", size)
-                    pdf.multi_cell(0, 8, text)
+                    self._multi_cell_line(pdf, 8, text)
                     pdf.set_font("Helvetica", size=11)
                     continue
 
@@ -187,16 +196,16 @@ class DocsExporter:
                 text = self._to_display_line(stripped)
                 if text:
                     pdf.set_font("Helvetica", size=11)
-                    pdf.multi_cell(0, 6, text)
+                    self._multi_cell_line(pdf, 6, text)
 
             used_images = self._extract_obsidian_images(doc_data["content"])
             if used_images:
                 pdf.ln(2)
                 pdf.set_font("Helvetica", "B", 12)
-                pdf.multi_cell(0, 7, "Used pictures")
+                self._multi_cell_line(pdf, 7, "Used pictures")
                 pdf.set_font("Helvetica", size=10)
                 for img in used_images:
-                    pdf.multi_cell(0, 6, f"- {img}")
+                    self._multi_cell_line(pdf, 6, f"- {img}")
 
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 18)
@@ -211,9 +220,9 @@ class DocsExporter:
             links = all_links.get(title, [])
             for link in links:
                 page_links_found = True
-                pdf.multi_cell(0, 6, f"- {title} => {link}")
+                self._multi_cell_line(pdf, 6, f"- {title} => {link}")
         if not page_links_found:
-            pdf.multi_cell(0, 6, "NONE")
+            self._multi_cell_line(pdf, 6, "NONE")
 
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 14)
@@ -224,9 +233,9 @@ class DocsExporter:
             links = all_video_links.get(title, [])
             for link in links:
                 video_links_found = True
-                pdf.multi_cell(0, 6, f"- {title} => {link}")
+                self._multi_cell_line(pdf, 6, f"- {title} => {link}")
         if not video_links_found:
-            pdf.multi_cell(0, 6, "NONE")
+            self._multi_cell_line(pdf, 6, "NONE")
 
         pdf.output(str(output_path))
         return output_path
