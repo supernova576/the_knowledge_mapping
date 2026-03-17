@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
@@ -16,6 +16,7 @@ from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
+from src.DocsExporter import DocsExporter
 from src.logger import get_logger
 from src.timezone_utils import now_in_zurich
 
@@ -230,6 +231,31 @@ def _parse_multiline_tags(value: str) -> list[str]:
         if normalized:
             parsed.append(normalized)
     return parsed
+
+
+def _parse_json_array(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    raw = str(value or "").strip()
+    if not raw or raw == "N/A":
+        return []
+
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            return []
+
+    return [raw]
+
+
+def _normalize_export_title(raw_title: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(raw_title or "").strip())
+    return cleaned[:150]
+
 def _load_template_options() -> dict[str, Path]:
     template_dir = Path("/the-knowledge/03_TEMPLATES")
     if not template_dir.exists():
@@ -579,6 +605,76 @@ def version_control_status_api():
         return jsonify(database.get_version_control_snapshot())
     except Exception as exc:
         return jsonify({"has_changes": False, "changes": [], "untracked_files": [], "synced_at": "Never", "error": str(exc)}), 500
+
+
+@app.route("/export", methods=["GET"])
+def export_page():
+    database = db()
+    docs = sorted(database.get_all_docs().values(), key=lambda row: str(row.get("title", "")).casefold())
+    tags = database.get_all_tags()
+    return render_template("export.html", docs=docs, tags=tags)
+
+
+@app.route("/export", methods=["POST"])
+def export_docs_pdf():
+    export_title = _normalize_export_title(request.form.get("title", ""))
+    export_mode = str(request.form.get("export_mode", "")).strip().lower()
+
+    if not export_title:
+        flash("A title is required for the export.", "danger")
+        return redirect(url_for("export_page"))
+
+    if export_mode not in {"name", "tag"}:
+        flash("Export mode must be either 'name' or 'tag'.", "danger")
+        return redirect(url_for("export_page"))
+
+    database = db()
+    selected_docs: dict[int, dict] = {}
+
+    if export_mode == "name":
+        selected_titles = [str(value).strip() for value in request.form.getlist("selected_docs") if str(value).strip()]
+        if not selected_titles:
+            flash("Please select at least one document.", "warning")
+            return redirect(url_for("export_page"))
+
+        allowed_titles = {str(doc.get("title", "")).strip() for doc in database.get_all_docs().values()}
+        valid_titles = [title for title in selected_titles if title in allowed_titles]
+        if len(valid_titles) != len(selected_titles):
+            flash("One or more selected documents are invalid.", "danger")
+            return redirect(url_for("export_page"))
+
+        for title in valid_titles:
+            docs_by_name = database.get_docs_by_name(title, exact_match=True)
+            selected_docs.update(docs_by_name)
+    else:
+        selected_tags = [_normalize_tag_value(tag) for tag in request.form.getlist("selected_tags")]
+        selected_tags = [tag for tag in selected_tags if tag]
+
+        if not selected_tags:
+            flash("Please select at least one tag.", "warning")
+            return redirect(url_for("export_page"))
+
+        allowed_tags = set(database.get_all_tags())
+        if any(tag not in allowed_tags for tag in selected_tags):
+            flash("One or more selected tags are invalid.", "danger")
+            return redirect(url_for("export_page"))
+
+        for tag in selected_tags:
+            selected_docs.update(database.get_docs_by_tag(tag))
+
+    if not selected_docs:
+        flash("No matching documents found for export.", "warning")
+        return redirect(url_for("export_page"))
+
+    try:
+        exporter = DocsExporter()
+        output_pdf = exporter.export_docs_to_pdf(export_title=export_title, docs=list(selected_docs.values()))
+    except Exception as exc:
+        logger.error("Failed to create export PDF\n%s", traceback.format_exc())
+        flash(f"Export failed: {exc}", "danger")
+        return redirect(url_for("export_page"))
+
+    return send_file(output_pdf, as_attachment=True, download_name=output_pdf.name, mimetype="application/pdf")
 
 
 @app.route("/scan", methods=["POST"])

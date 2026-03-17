@@ -17,6 +17,10 @@
                     <a class="nav-link {% if active_page == 'version_control' %}active{% endif %}"
                         href="{{ url_for('version_control_overview') }}">Version control</a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_page == 'export' %}active{% endif %}"
+                        href="{{ url_for('export_page') }}">Export</a>
+                </li>
             </ul>
 
             <!-- RIGHT SIDE -->
