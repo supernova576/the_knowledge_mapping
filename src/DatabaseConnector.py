@@ -65,20 +65,6 @@ class db:
 
             self.cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS changes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_name TEXT,
-                    sync_time TEXT,
-                    has_links_changed TEXT,
-                    has_video_links_changed TEXT,
-                    has_tags_changed TEXT,
-                    has_compliance_changed TEXT
-                )
-                """
-            )
-
-            self.cursor.execute(
-                """
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT,
@@ -200,9 +186,12 @@ class db:
             logger.error("sqlite_handler/get_docs_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
-    def get_docs_by_name(self, file_name: str) -> dict:
+    def get_docs_by_name(self, file_name: str, exact_match: bool = True) -> dict:
         try:
-            rows = self._fetch_all_dict("SELECT * FROM docs WHERE title = ?", (file_name,))
+            if exact_match:
+                rows = self._fetch_all_dict("SELECT * FROM docs WHERE title = ?", (file_name,))
+            else:
+                rows = self._fetch_all_dict("SELECT * FROM docs WHERE lower(title) LIKE lower(?)", (f"%{file_name}%",))
             result = {}
 
             for row in rows:
@@ -415,103 +404,6 @@ class db:
             logger.error("sqlite_handler/get_version_control_snapshot failed\n%s", traceback.format_exc())
             adieu(1)
 
-    def log_change_if_needed(self, previous_doc: dict | None, current_doc: dict, sync_time: str) -> None:
-        try:
-            if not current_doc:
-                return
-
-            previous = previous_doc or {}
-            changed = {
-                "has_links_changed": "true" if previous.get("links") != current_doc.get("links") else "false",
-                "has_video_links_changed": "true" if previous.get("video_links") != current_doc.get("video_links") else "false",
-                "has_tags_changed": "true" if previous.get("tags") != current_doc.get("tags") else "false",
-                "has_compliance_changed": "true"
-                if (
-                    previous.get("is_compliant") != current_doc.get("is_compliant")
-                    or previous.get("noncompliance_reason") != current_doc.get("noncompliance_reason")
-                )
-                else "false",
-            }
-
-            if all(value == "false" for value in changed.values()):
-                logger.info("No content changes detected for title=%s", current_doc.get("title", "N/A"))
-                return
-
-            self._execute(
-                """
-                INSERT INTO changes
-                (file_name, sync_time, has_links_changed, has_video_links_changed, has_tags_changed, has_compliance_changed)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    current_doc.get("title", "N/A"),
-                    sync_time,
-                    changed["has_links_changed"],
-                    changed["has_video_links_changed"],
-                    changed["has_tags_changed"],
-                    changed["has_compliance_changed"],
-                ),
-            )
-            self._commit()
-            logger.info("Logged changes for title=%s at sync_time=%s", current_doc.get("title", "N/A"), sync_time)
-        except Exception:
-            logger.error("sqlite_handler/log_change_if_needed failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def get_latest_change_versions(self, limit: int = 10) -> list[str]:
-        try:
-            rows = self._fetch_all_dict(
-                """
-                SELECT sync_time FROM changes
-                GROUP BY sync_time
-                ORDER BY sync_time DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
-            return [row.get("sync_time") for row in rows if row.get("sync_time")]
-        except Exception:
-            logger.error("sqlite_handler/get_latest_change_versions failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def get_changes_by_version(self, sync_time: str) -> list[dict]:
-        try:
-            return self._fetch_all_dict(
-                """
-                SELECT * FROM changes
-                WHERE sync_time = ?
-                ORDER BY id ASC
-                """,
-                (sync_time,),
-            )
-        except Exception:
-            logger.error("sqlite_handler/get_changes_by_version failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def trim_old_change_versions(self, keep: int = 10) -> None:
-        try:
-            self._execute(
-                """
-                DELETE FROM changes
-                WHERE sync_time NOT IN (
-                    SELECT sync_time
-                    FROM (
-                        SELECT sync_time
-                        FROM changes
-                        GROUP BY sync_time
-                        ORDER BY sync_time DESC
-                        LIMIT ?
-                    )
-                )
-                """,
-                (keep,),
-            )
-            self._commit()
-            logger.info("Trimmed old change versions; keeping latest=%s", keep)
-        except Exception:
-            logger.error("sqlite_handler/trim_old_change_versions failed\n%s", traceback.format_exc())
-            adieu(1)
-
     def delete_docs_by_id(self, id: int) -> None:
         try:
             self._execute("DELETE FROM docs WHERE id = ?", (id,))
@@ -537,15 +429,6 @@ class db:
             logger.warning("Deleted all docs from database")
         except Exception:
             logger.error("sqlite_handler/delete_all_docs failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def delete_all_changes(self) -> None:
-        try:
-            self._execute("DELETE FROM changes")
-            self._commit()
-            logger.warning("Deleted all changes from database")
-        except Exception:
-            logger.error("sqlite_handler/delete_all_changes failed\n%s", traceback.format_exc())
             adieu(1)
 
     def update_manual_compliance_by_id(self, id: int, manual_override: str) -> None:

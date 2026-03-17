@@ -362,7 +362,7 @@ class DocsVersionHandler:
         if behind_count > 0:
             return {
                 "has_remote_changes": True,
-                "message": f"Remote has {behind_count} newer commit(s). Please run git pull.",
+                "message": f"Remote has {behind_count} newer commit(s). Please synchronize your repository outside this tool.",
                 "upstream": upstream_branch,
                 "behind": behind_count,
                 "ahead": ahead_count,
@@ -384,74 +384,6 @@ class DocsVersionHandler:
             "behind": behind_count,
             "ahead": ahead_count,
         }
-
-    def pull_latest(self) -> str:
-
-        blocking_changes = self.get_pull_blocking_changes()
-        if blocking_changes:
-            listed_files = ", ".join(blocking_changes[:10])
-            if len(blocking_changes) > 10:
-                listed_files = f"{listed_files}, ..."
-
-            raise RuntimeError(
-                "Local changes would be overwritten by pull. "
-                "Please commit, stash, or discard them first. "
-                f"Blocking files ({len(blocking_changes)}): {listed_files}"
-            )
-
-        output = self._run_git_command(["pull", "--autostash"])
-        return output or "Already up to date."
-
-    def get_pull_blocking_changes(self) -> list[str]:
-        porcelain_output = self._run_git_command([
-            "-c",
-            "core.quotepath=off",
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--",
-        ])
-
-        blocking_files: set[str] = set()
-        for row in porcelain_output.splitlines() if porcelain_output else []:
-            if len(row) < 3:
-                continue
-
-            status_code = row[:2]
-            file_path = self._extract_porcelain_path(row)
-            if not file_path:
-                continue
-
-            if status_code == "??":
-                # Untracked files can still collide with incoming files during pull.
-                blocking_files.add(file_path)
-                continue
-
-            if status_code.strip():
-                blocking_files.add(file_path)
-
-        return sorted(blocking_files, key=str.lower)
-
-    def commit_and_push(self, message: str) -> str:
-        commit_message = (message or "").strip()
-        if not commit_message:
-            raise ValueError("commit message is required")
-
-        self._run_git_command(["add", "-A"])
-
-        commit_code, commit_stdout, commit_stderr = self._run_git_command_with_code(["commit", "-m", commit_message])
-        if commit_code != 0:
-            combined_output = "\n".join(value for value in [commit_stdout, commit_stderr] if value).strip()
-            no_changes_messages = ["nothing to commit", "no changes added to commit"]
-            if any(message in combined_output.lower() for message in no_changes_messages):
-                raise RuntimeError("No changes to commit.")
-            raise RuntimeError(commit_stderr or commit_stdout or "failed to commit changes")
-
-        push_output = self._run_git_command(["push"])
-        commit_summary = commit_stdout or "Commit created successfully."
-        if push_output:
-            return f"{commit_summary}\n{push_output}"
-        return commit_summary
 
     def get_line_change_summary(self) -> list[dict]:
         numstat_output = self._run_git_command([

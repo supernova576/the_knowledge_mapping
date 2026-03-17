@@ -167,6 +167,10 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
+            created_at = self.__parse_created_at_from_doc(cleaned)
+            created_at_ok = created_at != "N/A"
+            if not created_at_ok:
+                noncompliance_reasons.append("Erstelldatum: Nicht vorhanden")
             beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
             beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
@@ -196,7 +200,7 @@ class DocsParser:
                     )
             else:
                 video_ok = True
-            is_compliant = "true" if (beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
+            is_compliant = "true" if (created_at_ok and beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
             return is_compliant, self.__to_db_text(noncompliance_reasons)
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
@@ -244,7 +248,6 @@ class DocsParser:
                 existing_docs = db_object.get_docs_by_name(append_dict.get("title", "N/A"))
                 if existing_docs:
                     first_existing = next(iter(existing_docs.values()))
-                    db_object.log_change_if_needed(first_existing, append_dict, sync_time)
                     db_object.update_docs_by_id(append_dict, first_existing.get("id", "N/A"))
                 else:
                     db_object.create_new_docs_entry(append_dict)
@@ -256,7 +259,6 @@ class DocsParser:
                     logger.info("Deleted stale docs entry id=%s title=%s", existing_id, existing_title)
             db_object.replace_all_tags(list(collected_tags))
             db_object.update_last_sync_time(sync_time)
-            db_object.trim_old_change_versions(10)
             logger.info("Full docs sync completed")
         except Exception:
             logger.error("Full docs sync failed\n%s", traceback.format_exc())

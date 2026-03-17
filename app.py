@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
@@ -16,6 +16,7 @@ from src.DatabaseConnector import db
 from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
+from src.DocsExporter import DocsExporter
 from src.logger import get_logger
 from src.timezone_utils import now_in_zurich
 
@@ -160,7 +161,7 @@ def _load_docs(database: db, view: str, query: str) -> dict:
             return database.get_all_docs()
 
     if view == "name" and query:
-        return database.get_docs_by_name(query)
+        return database.get_docs_by_name(query, exact_match=False)
 
     if view == "tag" and query:
         return database.get_docs_by_tag(query)
@@ -230,6 +231,36 @@ def _parse_multiline_tags(value: str) -> list[str]:
         if normalized:
             parsed.append(normalized)
     return parsed
+
+
+def _parse_json_array(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    raw = str(value or "").strip()
+    if not raw or raw == "N/A":
+        return []
+
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            return []
+
+    return [raw]
+
+
+def _normalize_export_title(raw_title: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(raw_title or "").strip())
+    return cleaned[:150]
+
+
+def _normalize_export_description(raw_description: str) -> str:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_description or "")).strip()
+    return cleaned[:500]
+
 def _load_template_options() -> dict[str, Path]:
     template_dir = Path("/the-knowledge/03_TEMPLATES")
     if not template_dir.exists():
@@ -254,9 +285,16 @@ def _render_doc_template(template_content: str) -> str:
         rf"\1{today}",
         rendered,
     )
+    rendered = re.sub(
+        r"(?im)^(>\s*Erstellt\s*:\s*)$",
+        rf"\1{today}",
+        rendered,
+    )
+    if not re.search(r"(?im)^>\s*Erstellt\s*:\s*\d{2}\.\d{2}\.\d{4}\s*$", rendered):
+        if rendered and not rendered.endswith("\n"):
+            rendered += "\n"
+        rendered += f"> Erstellt: {today}\n"
     return rendered
-
-
 def _set_rw_permissions_for_all_users(path: Path) -> None:
     if os.name == "nt":
         # On Windows, chmod mainly controls read-only flag.
@@ -264,35 +302,6 @@ def _set_rw_permissions_for_all_users(path: Path) -> None:
         return
 
     os.chmod(path, 0o666)
-
-
-def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
-    history_header = "#### Page History"
-    tags_header = "#### Page Tags"
-    history_entry = f"> Überarbeitet am: {_today_dd_mm_yyyy()} => {reason.strip()}"
-
-    lines = content.splitlines()
-    history_index = next((index for index, line in enumerate(lines) if line.strip() == history_header), -1)
-
-    if history_index == -1:
-        if not should_create_history:
-            return None, False
-
-        tags_index = next((index for index, line in enumerate(lines) if line.strip() == tags_header), -1)
-        if tags_index == -1:
-            raise ValueError("Could not find '#### Page Tags' chapter in markdown file.")
-
-        lines.insert(tags_index, "")
-        lines.insert(tags_index + 1, history_header)
-        history_index = tags_index + 1
-
-    insert_index = history_index + 1
-    lines.insert(insert_index, history_entry)
-    updated_content = "\n".join(lines)
-    if content.endswith("\n"):
-        updated_content += "\n"
-
-    return updated_content, True
 
 
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
@@ -516,7 +525,6 @@ def index():
     _sort_docs(processed_docs, sort_by)
     last_sync_time = database.get_last_sync_time()
 
-    version_status = database.get_version_control_snapshot()
     under_construction_count = len(under_construction_docs)
     manual_compliance_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
@@ -534,7 +542,6 @@ def index():
         selected_sort=sort_by,
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
-        has_git_changes=version_status.get("has_changes", False),
         under_construction_count=under_construction_count,
         manual_compliance_docs=manual_compliance_docs,
     )
@@ -596,35 +603,6 @@ def version_control_revert_file():
     return redirect(url_for("version_control_overview"))
 
 
-@app.route("/version_control/pull", methods=["POST"])
-def version_control_pull():
-    try:
-        version_handler = DocsVersionHandler()
-        output = version_handler.pull_latest()
-        flash(f"Git pull completed successfully. {output}", "success")
-    except Exception as exc:
-        flash(f"Failed to pull changes: {exc}", "danger")
-
-    return redirect(url_for("version_control_overview"))
-
-
-@app.route("/version_control/push", methods=["POST"])
-def version_control_push():
-    commit_message = request.form.get("commit_message", "").strip()
-    if not commit_message:
-        flash("Commit message is required before pushing.", "warning")
-        return redirect(url_for("version_control_overview"))
-
-    try:
-        version_handler = DocsVersionHandler()
-        output = version_handler.commit_and_push(commit_message)
-        flash(f"Commit and push completed successfully. {output}", "success")
-    except Exception as exc:
-        flash(f"Failed to commit/push changes: {exc}", "danger")
-
-    return redirect(url_for("version_control_overview"))
-
-
 @app.route("/api/version_control/status", methods=["GET"])
 def version_control_status_api():
     try:
@@ -632,6 +610,81 @@ def version_control_status_api():
         return jsonify(database.get_version_control_snapshot())
     except Exception as exc:
         return jsonify({"has_changes": False, "changes": [], "untracked_files": [], "synced_at": "Never", "error": str(exc)}), 500
+
+
+@app.route("/export", methods=["GET"])
+def export_page():
+    database = db()
+    docs = sorted(database.get_all_docs().values(), key=lambda row: str(row.get("title", "")).casefold())
+    tags = database.get_all_tags()
+    return render_template("export.html", docs=docs, tags=tags)
+
+
+@app.route("/export", methods=["POST"])
+def export_docs_pdf():
+    export_title = _normalize_export_title(request.form.get("title", ""))
+    export_description = _normalize_export_description(request.form.get("description", ""))
+    export_mode = str(request.form.get("export_mode", "")).strip().lower()
+
+    if not export_title:
+        flash("A title is required for the export.", "danger")
+        return redirect(url_for("export_page"))
+
+    if export_mode not in {"name", "tag"}:
+        flash("Export mode must be either 'name' or 'tag'.", "danger")
+        return redirect(url_for("export_page"))
+
+    database = db()
+    selected_docs: dict[int, dict] = {}
+
+    if export_mode == "name":
+        selected_titles = [str(value).strip() for value in request.form.getlist("selected_docs") if str(value).strip()]
+        if not selected_titles:
+            flash("Please select at least one document.", "warning")
+            return redirect(url_for("export_page"))
+
+        allowed_titles = {str(doc.get("title", "")).strip() for doc in database.get_all_docs().values()}
+        valid_titles = [title for title in selected_titles if title in allowed_titles]
+        if len(valid_titles) != len(selected_titles):
+            flash("One or more selected documents are invalid.", "danger")
+            return redirect(url_for("export_page"))
+
+        for title in valid_titles:
+            docs_by_name = database.get_docs_by_name(title, exact_match=True)
+            selected_docs.update(docs_by_name)
+    else:
+        selected_tags = [_normalize_tag_value(tag) for tag in request.form.getlist("selected_tags")]
+        selected_tags = [tag for tag in selected_tags if tag]
+
+        if not selected_tags:
+            flash("Please select at least one tag.", "warning")
+            return redirect(url_for("export_page"))
+
+        allowed_tags = set(database.get_all_tags())
+        if any(tag not in allowed_tags for tag in selected_tags):
+            flash("One or more selected tags are invalid.", "danger")
+            return redirect(url_for("export_page"))
+
+        for tag in selected_tags:
+            selected_docs.update(database.get_docs_by_tag(tag))
+
+    if not selected_docs:
+        flash("No matching documents found for export.", "warning")
+        return redirect(url_for("export_page"))
+
+    try:
+        exporter = DocsExporter()
+        output_pdf = exporter.export_docs_to_pdf(
+            export_title=export_title,
+            docs=list(selected_docs.values()),
+            user_description=export_description,
+        )
+    except Exception as exc:
+        logger.error("Failed to create export PDF\n%s", traceback.format_exc())
+        flash(f"Export failed: {exc}", "danger")
+        return redirect(url_for("export_page"))
+
+    return send_file(output_pdf, as_attachment=True, download_name=output_pdf.name, mimetype="application/pdf")
 
 
 @app.route("/scan", methods=["POST"])
@@ -670,7 +723,7 @@ def set_manual_compliance():
     try:
         database = db()
         if not doc_id and doc_title:
-            matched_docs = database.get_docs_by_name(doc_title)
+            matched_docs = database.get_docs_by_name(doc_title, exact_match=True)
             if not matched_docs:
                 flash(f"Document title not found: {doc_title}", "warning")
                 return redirect(url_for("index"))
@@ -691,30 +744,6 @@ def set_manual_compliance():
         flash("ID must be numeric.", "danger")
 
     return redirect(url_for("index"))
-
-
-@app.route("/history", methods=["GET"])
-def version_history():
-    database = db()
-    versions = database.get_latest_change_versions(10)
-    selected_version = request.args.get("version", "").strip()
-
-    if not selected_version and versions:
-        selected_version = versions[0]
-
-    if selected_version and selected_version not in versions:
-        logger.warning("Requested unavailable change version: %s", selected_version)
-        flash("Selected version is not available anymore.", "warning")
-        selected_version = versions[0] if versions else ""
-
-    changes = database.get_changes_by_version(selected_version) if selected_version else []
-
-    return render_template(
-        "history.html",
-        versions=versions,
-        selected_version=selected_version,
-        changes=changes,
-    )
 
 
 @app.route("/todo", methods=["GET"])
