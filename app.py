@@ -160,7 +160,7 @@ def _load_docs(database: db, view: str, query: str) -> dict:
             return database.get_all_docs()
 
     if view == "name" and query:
-        return database.get_docs_by_name(query)
+        return database.get_docs_by_name(query, exact_match=False)
 
     if view == "tag" and query:
         return database.get_docs_by_tag(query)
@@ -254,9 +254,16 @@ def _render_doc_template(template_content: str) -> str:
         rf"\1{today}",
         rendered,
     )
+    rendered = re.sub(
+        r"(?im)^(>\s*Erstellt\s*:\s*)$",
+        rf"\1{today}",
+        rendered,
+    )
+    if not re.search(r"(?im)^>\s*Erstellt\s*:\s*\d{2}\.\d{2}\.\d{4}\s*$", rendered):
+        if rendered and not rendered.endswith("\n"):
+            rendered += "\n"
+        rendered += f"> Erstellt: {today}\n"
     return rendered
-
-
 def _set_rw_permissions_for_all_users(path: Path) -> None:
     if os.name == "nt":
         # On Windows, chmod mainly controls read-only flag.
@@ -264,35 +271,6 @@ def _set_rw_permissions_for_all_users(path: Path) -> None:
         return
 
     os.chmod(path, 0o666)
-
-
-def _insert_history_entry(content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
-    history_header = "#### Page History"
-    tags_header = "#### Page Tags"
-    history_entry = f"> Überarbeitet am: {_today_dd_mm_yyyy()} => {reason.strip()}"
-
-    lines = content.splitlines()
-    history_index = next((index for index, line in enumerate(lines) if line.strip() == history_header), -1)
-
-    if history_index == -1:
-        if not should_create_history:
-            return None, False
-
-        tags_index = next((index for index, line in enumerate(lines) if line.strip() == tags_header), -1)
-        if tags_index == -1:
-            raise ValueError("Could not find '#### Page Tags' chapter in markdown file.")
-
-        lines.insert(tags_index, "")
-        lines.insert(tags_index + 1, history_header)
-        history_index = tags_index + 1
-
-    insert_index = history_index + 1
-    lines.insert(insert_index, history_entry)
-    updated_content = "\n".join(lines)
-    if content.endswith("\n"):
-        updated_content += "\n"
-
-    return updated_content, True
 
 
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
@@ -516,7 +494,6 @@ def index():
     _sort_docs(processed_docs, sort_by)
     last_sync_time = database.get_last_sync_time()
 
-    version_status = database.get_version_control_snapshot()
     under_construction_count = len(under_construction_docs)
     manual_compliance_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
@@ -534,7 +511,6 @@ def index():
         selected_sort=sort_by,
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
-        has_git_changes=version_status.get("has_changes", False),
         under_construction_count=under_construction_count,
         manual_compliance_docs=manual_compliance_docs,
     )
@@ -596,35 +572,6 @@ def version_control_revert_file():
     return redirect(url_for("version_control_overview"))
 
 
-@app.route("/version_control/pull", methods=["POST"])
-def version_control_pull():
-    try:
-        version_handler = DocsVersionHandler()
-        output = version_handler.pull_latest()
-        flash(f"Git pull completed successfully. {output}", "success")
-    except Exception as exc:
-        flash(f"Failed to pull changes: {exc}", "danger")
-
-    return redirect(url_for("version_control_overview"))
-
-
-@app.route("/version_control/push", methods=["POST"])
-def version_control_push():
-    commit_message = request.form.get("commit_message", "").strip()
-    if not commit_message:
-        flash("Commit message is required before pushing.", "warning")
-        return redirect(url_for("version_control_overview"))
-
-    try:
-        version_handler = DocsVersionHandler()
-        output = version_handler.commit_and_push(commit_message)
-        flash(f"Commit and push completed successfully. {output}", "success")
-    except Exception as exc:
-        flash(f"Failed to commit/push changes: {exc}", "danger")
-
-    return redirect(url_for("version_control_overview"))
-
-
 @app.route("/api/version_control/status", methods=["GET"])
 def version_control_status_api():
     try:
@@ -670,7 +617,7 @@ def set_manual_compliance():
     try:
         database = db()
         if not doc_id and doc_title:
-            matched_docs = database.get_docs_by_name(doc_title)
+            matched_docs = database.get_docs_by_name(doc_title, exact_match=True)
             if not matched_docs:
                 flash(f"Document title not found: {doc_title}", "warning")
                 return redirect(url_for("index"))
@@ -691,30 +638,6 @@ def set_manual_compliance():
         flash("ID must be numeric.", "danger")
 
     return redirect(url_for("index"))
-
-
-@app.route("/history", methods=["GET"])
-def version_history():
-    database = db()
-    versions = database.get_latest_change_versions(10)
-    selected_version = request.args.get("version", "").strip()
-
-    if not selected_version and versions:
-        selected_version = versions[0]
-
-    if selected_version and selected_version not in versions:
-        logger.warning("Requested unavailable change version: %s", selected_version)
-        flash("Selected version is not available anymore.", "warning")
-        selected_version = versions[0] if versions else ""
-
-    changes = database.get_changes_by_version(selected_version) if selected_version else []
-
-    return render_template(
-        "history.html",
-        versions=versions,
-        selected_version=selected_version,
-        changes=changes,
-    )
 
 
 @app.route("/todo", methods=["GET"])

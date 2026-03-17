@@ -14,9 +14,7 @@ Web application for scanning Markdown documents, storing metadata in SQLite, and
   - Set a manual compliance override for selected documents.
 - **Version control view** (`/version_control`)
   - Inspect documentation repo change state.
-  - Sync status snapshots and run revert/pull/push actions.
-- **History view** (`/history`)
-  - Review history table entries parsed from docs.
+  - Sync status snapshots and run file revert actions.
 - **TODO view** (`/todo`)
   - Inspect TODO entries, sync TODO file to DB, add/delete TODOs, and update progress.
   - Create docs from templates and optionally write page history entries.
