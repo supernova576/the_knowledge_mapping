@@ -256,6 +256,11 @@ def _normalize_export_title(raw_title: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(raw_title or "").strip())
     return cleaned[:150]
 
+
+def _normalize_export_description(raw_description: str) -> str:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_description or "")).strip()
+    return cleaned[:500]
+
 def _load_template_options() -> dict[str, Path]:
     template_dir = Path("/the-knowledge/03_TEMPLATES")
     if not template_dir.exists():
@@ -618,6 +623,7 @@ def export_page():
 @app.route("/export", methods=["POST"])
 def export_docs_pdf():
     export_title = _normalize_export_title(request.form.get("title", ""))
+    export_description = _normalize_export_description(request.form.get("description", ""))
     export_mode = str(request.form.get("export_mode", "")).strip().lower()
 
     if not export_title:
@@ -668,7 +674,11 @@ def export_docs_pdf():
 
     try:
         exporter = DocsExporter()
-        output_pdf = exporter.export_docs_to_pdf(export_title=export_title, docs=list(selected_docs.values()))
+        output_pdf = exporter.export_docs_to_pdf(
+            export_title=export_title,
+            docs=list(selected_docs.values()),
+            user_description=export_description,
+        )
     except Exception as exc:
         logger.error("Failed to create export PDF\n%s", traceback.format_exc())
         flash(f"Export failed: {exc}", "danger")
