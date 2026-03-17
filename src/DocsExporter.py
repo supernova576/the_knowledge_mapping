@@ -13,6 +13,21 @@ logger = get_logger(__name__)
 
 class DocsExporter:
     IGNORE_SECTION_HEADING = "## Zusätzliche Ressourcen"
+    PDF_TEXT_REPLACEMENTS = str.maketrans(
+        {
+            "•": "-",
+            "‣": "-",
+            "◦": "-",
+            "☐": "[ ]",
+            "☑": "[x]",
+            "✓": "x",
+            "✔": "x",
+            "–": "-",
+            "—": "-",
+            "…": "...",
+            "\u00a0": " ",
+        }
+    )
 
     def __init__(self) -> None:
         try:
@@ -86,14 +101,26 @@ class DocsExporter:
         return deduped
 
     def _multi_cell_line(self, pdf, height: int | float, text: str, align: str = "L") -> None:
-        pdf.multi_cell(0, height, text, align=align, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, height, self._sanitize_pdf_text(text), align=align, new_x="LMARGIN", new_y="NEXT")
+
+    def _sanitize_pdf_text(self, text: str) -> str:
+        sanitized = str(text or "").translate(self.PDF_TEXT_REPLACEMENTS)
+        return sanitized.encode("latin-1", errors="replace").decode("latin-1")
 
     def _to_plain_text(self, markdown_line: str) -> str:
         text = str(markdown_line or "")
         text = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", text)
         text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
-        return text.strip()
+        return self._sanitize_pdf_text(text.strip())
+
+    def _strip_inline_markdown(self, text: str) -> str:
+        plain = self._to_plain_text(text)
+        plain = re.sub(r"\*\*(.+?)\*\*", r"\1", plain)
+        plain = re.sub(r"==(.+?)==", r"\1", plain)
+        plain = re.sub(r"`([^`]+)`", r"\1", plain)
+        plain = re.sub(r"\$([^$\n]+)\$", r"\1", plain)
+        return self._sanitize_pdf_text(plain)
 
     def _inline_to_html(self, text: str) -> str:
         escaped = (
@@ -105,11 +132,7 @@ class DocsExporter:
         escaped = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", escaped)
         escaped = re.sub(r"\[\[([^\]]+)\]\]", r"\1", escaped)
         escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
-        escaped = re.sub(
-            r"==(.+?)==",
-            r'<b><font color="#FFFFFF" bgcolor="#D4B039">\1</font></b>',
-            escaped,
-        )
+        escaped = re.sub(r"==(.+?)==", r"<b>\1</b>", escaped)
         escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
         escaped = re.sub(r"\$([^$\n]+)\$", r"<i>\1</i>", escaped)
         return escaped
@@ -131,7 +154,7 @@ class DocsExporter:
         index = start
         while index < len(lines):
             current = lines[index]
-            if current.strip() == delimiter:
+            if current.strip().startswith(delimiter):
                 return collected, index + 1
             collected.append(current.rstrip("\n"))
             index += 1
@@ -145,8 +168,44 @@ class DocsExporter:
         return all(re.fullmatch(r":?-{3,}:?", cell or "") for cell in cells if cell != "")
 
     def _parse_table_row(self, line: str) -> list[str]:
-        row = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        return [self._to_plain_text(cell) for cell in row]
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+
+        cells: list[str] = []
+        current: list[str] = []
+        bracket_depth = 0
+        paren_depth = 0
+        escape_next = False
+
+        for char in stripped:
+            if escape_next:
+                current.append(char)
+                escape_next = False
+                continue
+            if char == "\\":
+                escape_next = True
+                current.append(char)
+                continue
+            if char == "[":
+                bracket_depth += 1
+            elif char == "]" and bracket_depth > 0:
+                bracket_depth -= 1
+            elif char == "(":
+                paren_depth += 1
+            elif char == ")" and paren_depth > 0:
+                paren_depth -= 1
+
+            if char == "|" and bracket_depth == 0 and paren_depth == 0:
+                cells.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+
+        cells.append("".join(current).strip())
+        return [self._strip_inline_markdown(cell) for cell in cells]
 
     def _render_table(self, pdf, table_lines: list[str]) -> None:
         if len(table_lines) < 2:
@@ -156,26 +215,83 @@ class DocsExporter:
         rows = [self._parse_table_row(line) for line in table_lines[2:] if line.strip()]
         col_count = max(1, len(header))
         col_width = (pdf.w - pdf.l_margin - pdf.r_margin) / col_count
-        row_height = 8
-        required_height = row_height * (1 + len(rows)) + 4
-        self._ensure_space(pdf, required_height)
+        col_widths = [col_width] * col_count
 
-        pdf.set_font("Helvetica", "B", 11)
-        for col in range(col_count):
-            pdf.cell(col_width, row_height, header[col] if col < len(header) else "", border=1)
-        pdf.ln(row_height)
-
-        pdf.set_font("Helvetica", size=10)
+        self._render_table_row(pdf, header, col_widths, font_style="B", font_size=11)
         for row in rows:
-            for col in range(col_count):
-                pdf.cell(col_width, row_height, row[col] if col < len(row) else "", border=1)
-            pdf.ln(row_height)
+            self._render_table_row(pdf, row, col_widths, font_style="", font_size=10)
         pdf.ln(2)
+
+    def _estimate_wrapped_line_count(self, pdf, text: str, width: float) -> int:
+        usable_width = max(width - 2, 1)
+        paragraphs = str(text or "").splitlines() or [""]
+        line_count = 0
+
+        for paragraph in paragraphs:
+            if not paragraph:
+                line_count += 1
+                continue
+
+            current_width = 0.0
+            current_has_content = False
+            for chunk in re.findall(r"\S+\s*", paragraph):
+                chunk_width = pdf.get_string_width(chunk)
+                if current_has_content and current_width + chunk_width > usable_width:
+                    line_count += 1
+                    current_width = chunk_width
+                else:
+                    current_width += chunk_width
+                current_has_content = True
+
+            if current_has_content:
+                line_count += 1
+
+        return max(line_count, 1)
+
+    def _render_table_row(
+        self,
+        pdf,
+        cells: list[str],
+        col_widths: list[float],
+        font_style: str,
+        font_size: int,
+    ) -> None:
+        pdf.set_font("Helvetica", font_style, font_size)
+        line_height = 6
+        padded_cells = [
+            self._sanitize_pdf_text(cells[idx] if idx < len(cells) else "")
+            for idx in range(len(col_widths))
+        ]
+        line_counts = [
+            self._estimate_wrapped_line_count(pdf, cell_text, col_widths[idx])
+            for idx, cell_text in enumerate(padded_cells)
+        ]
+        row_height = max(line_counts) * line_height + 2
+        self._ensure_space(pdf, row_height + 1)
+
+        start_x = pdf.get_x()
+        start_y = pdf.get_y()
+        current_x = start_x
+
+        for width, cell_text in zip(col_widths, padded_cells):
+            pdf.rect(current_x, start_y, width, row_height)
+            pdf.set_xy(current_x + 1, start_y + 1)
+            pdf.multi_cell(
+                width - 2,
+                line_height,
+                cell_text,
+                border=0,
+                new_x="LEFT",
+                new_y="TOP",
+            )
+            current_x += width
+
+        pdf.set_xy(start_x, start_y + row_height)
 
     def _render_code_block(self, pdf, lines: list[str]) -> None:
         if not lines:
             return
-        block = "\n".join(lines)
+        block = self._sanitize_pdf_text("\n".join(lines))
         line_count = max(1, len(lines))
         self._ensure_space(pdf, line_count * 6 + 6)
         pdf.set_font("Courier", size=10)
@@ -185,7 +301,7 @@ class DocsExporter:
         pdf.set_font("Helvetica", size=11)
 
     def _render_latex_block(self, pdf, lines: list[str]) -> None:
-        formula = "\n".join(lines).strip()
+        formula = self._sanitize_pdf_text("\n".join(lines).strip())
         if not formula:
             return
         self._ensure_space(pdf, 14)
@@ -209,25 +325,71 @@ class DocsExporter:
         pdf.alias_nb_pages()
         pdf.set_auto_page_break(auto=True, margin=15)
 
-        pdf.add_page()
-        pdf.set_fill_color(25, 135, 84)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 28)
-        pdf.rect(10, 20, 190, 40, "F")
-        pdf.set_xy(14, 32)
-        pdf.multi_cell(182, 10, export_title.strip() or "Documentation Export", align="C", new_x="LMARGIN", new_y="NEXT")
+        exported_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        safe_export_title = self._sanitize_pdf_text(export_title.strip() or "Documentation Export")
+        safe_user_description = self._sanitize_pdf_text(user_description or "N/A")
 
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Helvetica", size=12)
-        pdf.ln(5)
-        pdf.multi_cell(0, 7, f"Description: {user_description or 'N/A'}", new_x="LMARGIN", new_y="NEXT")
-        pdf.multi_cell(0, 7, f"Date and time of export: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", new_x="LMARGIN", new_y="NEXT")
-        pdf.multi_cell(0, 7, "Amount of pages: {nb}", new_x="LMARGIN", new_y="NEXT")
+        pdf.add_page()
+        pdf.set_fill_color(33, 37, 41)
+        pdf.rect(0, 0, pdf.w, pdf.h, "F")
+
+        pdf.set_fill_color(43, 48, 53)
+        pdf.set_draw_color(73, 80, 87)
+        pdf.rect(12, 18, 186, 84, "FD")
+        pdf.set_fill_color(25, 135, 84)
+        pdf.rect(20, 84, 170, 2.5, "F")
+
+        pdf.set_text_color(173, 181, 189)
+        pdf.set_font("Helvetica", size=11)
+        pdf.set_xy(24, 30)
+        pdf.cell(0, 6, "DOCUMENTATION EXPORT", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_text_color(248, 249, 250)
+        pdf.set_font("Helvetica", "B", 28)
+        pdf.set_xy(24, 44)
+        pdf.multi_cell(152, 12, safe_export_title, new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_text_color(173, 181, 189)
+        pdf.set_font("Helvetica", size=11)
+        pdf.set_xy(24, 70)
+        pdf.multi_cell(152, 7, self._sanitize_pdf_text(f"Generated on {exported_at}"), new_x="LMARGIN", new_y="NEXT")
+
+        details_x = 24
+        details_y = pdf.h - 78
+        details_w = 164
+        details_inner_x = details_x + 8
+
+        pdf.set_fill_color(43, 48, 53)
+        pdf.set_draw_color(73, 80, 87)
+        pdf.rect(details_x, details_y, details_w, 54, "FD")
+        pdf.set_fill_color(25, 135, 84)
+        pdf.rect(details_x, details_y, 5, 54, "F")
+
+        pdf.set_text_color(248, 249, 250)
+        pdf.set_xy(details_inner_x, details_y + 8)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.multi_cell(0, 8, "EXPORT DETAILS", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_text_color(173, 181, 189)
+        pdf.set_font("Helvetica", size=11)
+        pdf.set_x(details_inner_x)
+        pdf.multi_cell(details_w - 14, 7, f"Description: {safe_user_description}", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_x(details_inner_x)
+        pdf.multi_cell(
+            details_w - 14,
+            7,
+            self._sanitize_pdf_text(f"Date and time of export: {exported_at}"),
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
+        pdf.set_x(details_inner_x)
+        pdf.multi_cell(details_w - 14, 7, "Amount of pages: {nb}", new_x="LMARGIN", new_y="NEXT")
 
         toc_sections: list[tuple[str, list[tuple[int, str]]]] = []
         body_docs: list[dict] = []
         all_links: dict[str, list[str]] = {}
         all_video_links: dict[str, list[str]] = {}
+        all_used_images: dict[str, list[str]] = {}
 
         for doc in ordered_docs:
             title = str(doc.get("title", "")).strip()
@@ -242,6 +404,7 @@ class DocsExporter:
             body_docs.append({"title": title, "content": cleaned_content})
             all_links[title] = self._parse_db_array(doc.get("links", "N/A"))
             all_video_links[title] = self._parse_db_array(doc.get("video_links", "N/A"))
+            all_used_images[title] = self._extract_obsidian_images(cleaned_content)
 
         pdf.add_page()
         pdf.set_text_color(0, 0, 0)
@@ -261,7 +424,7 @@ class DocsExporter:
         for doc_data in body_docs:
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 18)
-            pdf.cell(0, 10, doc_data["title"], new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 10, self._sanitize_pdf_text(doc_data["title"]), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 
             lines = doc_data["content"].splitlines()
@@ -275,7 +438,7 @@ class DocsExporter:
                     idx += 1
                     continue
 
-                if stripped == "```":
+                if stripped.startswith("```"):
                     block, idx = self._collect_fenced_block(lines, idx + 1, "```")
                     self._render_code_block(pdf, block)
                     continue
@@ -323,28 +486,19 @@ class DocsExporter:
 
                 checklist_match = re.match(r"^[-*]\s+\[( |x|X)\]\s+(.+)$", stripped)
                 if checklist_match:
-                    marker = "☐" if checklist_match.group(1).strip() == "" else "☑"
+                    marker = "[ ]" if checklist_match.group(1).strip() == "" else "[x]"
                     self._render_text_line(pdf, f"{marker} {checklist_match.group(2)}")
                     idx += 1
                     continue
 
                 bullet_match = re.match(r"^[-*]\s+(.+)$", stripped)
                 if bullet_match:
-                    self._render_text_line(pdf, f"• {bullet_match.group(1)}")
+                    self._render_text_line(pdf, f"- {bullet_match.group(1)}")
                     idx += 1
                     continue
 
                 self._render_text_line(pdf, stripped)
                 idx += 1
-
-            used_images = self._extract_obsidian_images(doc_data["content"])
-            if used_images:
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 12)
-                self._multi_cell_line(pdf, 7, "Used pictures")
-                pdf.set_font("Helvetica", size=10)
-                for img in used_images:
-                    self._multi_cell_line(pdf, 6, f"- {img}")
 
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 18)
@@ -374,6 +528,19 @@ class DocsExporter:
                 video_links_found = True
                 self._multi_cell_line(pdf, 6, f"- {title} => {link}")
         if not video_links_found:
+            self._multi_cell_line(pdf, 6, "NONE")
+
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.cell(0, 8, "Pictures Used", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", size=11)
+        images_found = False
+        for title in sorted(all_used_images.keys(), key=str.casefold):
+            images = all_used_images.get(title, [])
+            for image in images:
+                images_found = True
+                self._multi_cell_line(pdf, 6, f"- {title} => {image}")
+        if not images_found:
             self._multi_cell_line(pdf, 6, "NONE")
 
         pdf.output(str(output_path))
