@@ -89,6 +89,9 @@ jobs:
           from pathlib import Path
           import json
 
+          def md_escape(value):
+              return str(value).replace('|', '\\|').replace('\n', ' ').strip()
+
           def load_json(path):
               p = Path(path)
               if not p.exists() or p.stat().st_size == 0:
@@ -129,8 +132,90 @@ jobs:
               f"- bandit findings: **{bandit_issues}**",
               '',
               '## Status',
-              '- ✅ No known issues detected.' if (pip_vulns == 0 and safety_vulns == 0 and bandit_issues == 0) else '- ⚠️ Potential security issues were detected. Review attached artifacts.',
+              '- ✅ No known issues detected.' if (pip_vulns == 0 and safety_vulns == 0 and bandit_issues == 0) else '- ⚠️ Potential security issues were detected.',
           ]
+
+          if isinstance(pip_audit, dict):
+              detailed = []
+              for dep in pip_audit.get('dependencies', []):
+                  vulns = dep.get('vulns') or []
+                  for vuln in vulns:
+                      aliases = vuln.get('aliases') or []
+                      fix_versions = vuln.get('fix_versions') or []
+                      detailed.append([
+                          dep.get('name', 'unknown'),
+                          dep.get('version', 'unknown'),
+                          vuln.get('id', 'unknown'),
+                          ', '.join(aliases) if aliases else '-',
+                          ', '.join(fix_versions) if fix_versions else '-',
+                          vuln.get('description', '-'),
+                      ])
+
+              report.extend(['', '## pip-audit findings'])
+              if detailed:
+                  report.extend([
+                      '| Package | Version | Vulnerability ID | Aliases | Fix Versions | Description |',
+                      '|---|---|---|---|---|---|',
+                  ])
+                  for row in detailed:
+                      report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+              else:
+                  report.append('- No pip-audit vulnerabilities found.')
+
+          safety_vuln_rows = []
+          if isinstance(safety, dict):
+              safety_items = safety.get('vulnerabilities', [])
+          elif isinstance(safety, list):
+              safety_items = safety
+          else:
+              safety_items = []
+
+          for vuln in safety_items:
+              safety_vuln_rows.append([
+                  vuln.get('package_name', vuln.get('package', 'unknown')),
+                  vuln.get('affected_version', vuln.get('installed_version', '-')),
+                  vuln.get('vulnerability_id', vuln.get('id', '-')),
+                  vuln.get('severity', '-'),
+                  vuln.get('fixed_version', vuln.get('fixed_versions', '-')),
+                  vuln.get('advisory', vuln.get('description', '-')),
+              ])
+
+          report.extend(['', '## safety findings'])
+          if safety_vuln_rows:
+              report.extend([
+                  '| Package | Affected Version | Vulnerability ID | Severity | Fixed Version(s) | Advisory |',
+                  '|---|---|---|---|---|---|',
+              ])
+              for row in safety_vuln_rows:
+                  report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+          else:
+              report.append('- No safety vulnerabilities found.')
+
+          bandit_rows = []
+          if isinstance(bandit, dict):
+              for issue in bandit.get('results', []):
+                  cwe = issue.get('issue_cwe', {}) if isinstance(issue.get('issue_cwe'), dict) else {}
+                  bandit_rows.append([
+                      issue.get('filename', '-'),
+                      issue.get('line_number', '-'),
+                      issue.get('test_id', '-'),
+                      issue.get('issue_severity', '-'),
+                      issue.get('issue_confidence', '-'),
+                      cwe.get('id', '-'),
+                      issue.get('issue_text', '-'),
+                      issue.get('code', '-'),
+                  ])
+
+          report.extend(['', '## Bandit findings'])
+          if bandit_rows:
+              report.extend([
+                  '| File | Line | Test ID | Severity | Confidence | CWE | Issue | Code |',
+                  '|---|---|---|---|---|---|---|---|',
+              ])
+              for row in bandit_rows:
+                  report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+          else:
+              report.append('- No Bandit findings found.')
 
           Path('security-report.md').write_text('\n'.join(report) + '\n')
           PY
@@ -213,16 +298,140 @@ jobs:
 
       - name: Generate security report
         run: |
-          cat > security-report.md << 'EOFREP'
-          # Security Scan Report
+          python - << 'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import json
 
-          Trigger: push to main
+          def md_escape(value):
+              return str(value).replace('|', '\\|').replace('\n', ' ').strip()
 
-          Scanners executed:
-          - pip-audit
-          - safety
-          - bandit
-          EOFREP
+          def load_json(path):
+              p = Path(path)
+              if not p.exists() or p.stat().st_size == 0:
+                  return None
+              try:
+                  return json.loads(p.read_text())
+              except Exception:
+                  return None
+
+          pip_audit = load_json('pip-audit.json')
+          safety = load_json('safety.json')
+          bandit = load_json('bandit.json')
+
+          pip_vulns = len(pip_audit.get('dependencies', [])) if isinstance(pip_audit, dict) else 0
+          if isinstance(pip_audit, dict):
+              pip_vulns = sum(1 for d in pip_audit.get('dependencies', []) if d.get('vulns'))
+
+          safety_vulns = 0
+          if isinstance(safety, dict):
+              safety_vulns = len(safety.get('vulnerabilities', []))
+          elif isinstance(safety, list):
+              safety_vulns = len(safety)
+
+          bandit_issues = 0
+          if isinstance(bandit, dict):
+              bandit_issues = len(bandit.get('results', []))
+
+          report = [
+              '# Security Scan Report',
+              '',
+              f"**Date (UTC):** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+              '**Branch:** refs/heads/main',
+              '',
+              '## Summary',
+              f"- pip-audit vulnerable dependencies: **{pip_vulns}**",
+              f"- safety vulnerabilities: **{safety_vulns}**",
+              f"- bandit findings: **{bandit_issues}**",
+              '',
+              '## Status',
+              '- ✅ No known issues detected.' if (pip_vulns == 0 and safety_vulns == 0 and bandit_issues == 0) else '- ⚠️ Potential security issues were detected.',
+          ]
+
+          if isinstance(pip_audit, dict):
+              detailed = []
+              for dep in pip_audit.get('dependencies', []):
+                  vulns = dep.get('vulns') or []
+                  for vuln in vulns:
+                      aliases = vuln.get('aliases') or []
+                      fix_versions = vuln.get('fix_versions') or []
+                      detailed.append([
+                          dep.get('name', 'unknown'),
+                          dep.get('version', 'unknown'),
+                          vuln.get('id', 'unknown'),
+                          ', '.join(aliases) if aliases else '-',
+                          ', '.join(fix_versions) if fix_versions else '-',
+                          vuln.get('description', '-'),
+                      ])
+
+              report.extend(['', '## pip-audit findings'])
+              if detailed:
+                  report.extend([
+                      '| Package | Version | Vulnerability ID | Aliases | Fix Versions | Description |',
+                      '|---|---|---|---|---|---|',
+                  ])
+                  for row in detailed:
+                      report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+              else:
+                  report.append('- No pip-audit vulnerabilities found.')
+
+          safety_vuln_rows = []
+          if isinstance(safety, dict):
+              safety_items = safety.get('vulnerabilities', [])
+          elif isinstance(safety, list):
+              safety_items = safety
+          else:
+              safety_items = []
+
+          for vuln in safety_items:
+              safety_vuln_rows.append([
+                  vuln.get('package_name', vuln.get('package', 'unknown')),
+                  vuln.get('affected_version', vuln.get('installed_version', '-')),
+                  vuln.get('vulnerability_id', vuln.get('id', '-')),
+                  vuln.get('severity', '-'),
+                  vuln.get('fixed_version', vuln.get('fixed_versions', '-')),
+                  vuln.get('advisory', vuln.get('description', '-')),
+              ])
+
+          report.extend(['', '## safety findings'])
+          if safety_vuln_rows:
+              report.extend([
+                  '| Package | Affected Version | Vulnerability ID | Severity | Fixed Version(s) | Advisory |',
+                  '|---|---|---|---|---|---|',
+              ])
+              for row in safety_vuln_rows:
+                  report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+          else:
+              report.append('- No safety vulnerabilities found.')
+
+          bandit_rows = []
+          if isinstance(bandit, dict):
+              for issue in bandit.get('results', []):
+                  cwe = issue.get('issue_cwe', {}) if isinstance(issue.get('issue_cwe'), dict) else {}
+                  bandit_rows.append([
+                      issue.get('filename', '-'),
+                      issue.get('line_number', '-'),
+                      issue.get('test_id', '-'),
+                      issue.get('issue_severity', '-'),
+                      issue.get('issue_confidence', '-'),
+                      cwe.get('id', '-'),
+                      issue.get('issue_text', '-'),
+                      issue.get('code', '-'),
+                  ])
+
+          report.extend(['', '## Bandit findings'])
+          if bandit_rows:
+              report.extend([
+                  '| File | Line | Test ID | Severity | Confidence | CWE | Issue | Code |',
+                  '|---|---|---|---|---|---|---|---|',
+              ])
+              for row in bandit_rows:
+                  report.append('| ' + ' | '.join(md_escape(c) for c in row) + ' |')
+          else:
+              report.append('- No Bandit findings found.')
+
+          Path('security-report.md').write_text('\n'.join(report) + '\n')
+          PY
 
       - name: Upload security artifacts
         if: always()
