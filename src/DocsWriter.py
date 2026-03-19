@@ -113,7 +113,10 @@ class DocsWriter:
             if updated_content is None and not history_present:
                 return False, ["#### Page History"]
 
-            combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
+            template_prefix = self._strip_resources_section(template_content).rstrip()
+            combined_content = updated_content.lstrip()
+            if template_prefix:
+                combined_content = f"{template_prefix}\n\n{combined_content}"
             target_path.write_text(combined_content, encoding="utf-8")
             return True, []
         except Exception:
@@ -186,6 +189,18 @@ class DocsWriter:
 
     def _find_section_index(self, lines: list[str], section_header: str) -> int:
         return next((i for i, line in enumerate(lines) if line.strip() == section_header), -1)
+
+    def _strip_resources_section(self, content: str) -> str:
+        lines = content.splitlines()
+        resources_idx = self._find_section_index(lines, "## Zusätzliche Ressourcen")
+        if resources_idx == -1:
+            return content
+
+        trimmed = lines[:resources_idx]
+        result = "\n".join(trimmed).rstrip()
+        if content.endswith("\n") and result:
+            result += "\n"
+        return result
 
     def _section_end_index(self, lines: list[str], section_start: int) -> int:
         for index in range(section_start + 1, len(lines)):

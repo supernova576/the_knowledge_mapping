@@ -281,13 +281,13 @@ def _render_doc_template(template_content: str) -> str:
     today = _today_dd_mm_yyyy()
     rendered = re.sub(r"\{\{\s*date\s*\}\}", today, template_content, flags=re.IGNORECASE)
     rendered = re.sub(
-        r"(?im)^(>\s*Erstellt\s*:\s*)\{\{\s*date\s*\}\}\s*$",
-        rf"\1{today}",
+        r"(?im)^(>[^\S\r\n]*Erstellt[^\S\r\n]*:[^\S\r\n]*)\{\{[^\S\r\n]*date[^\S\r\n]*\}\}[^\S\r\n]*$",
+        lambda match: f"{match.group(1).rstrip()} {today}",
         rendered,
     )
     rendered = re.sub(
-        r"(?im)^(>\s*Erstellt\s*:\s*)$",
-        rf"\1{today}",
+        r"(?im)^(>[^\S\r\n]*Erstellt[^\S\r\n]*:[^\S\r\n]*)$",
+        lambda match: f"{match.group(1).rstrip()} {today}",
         rendered,
     )
     if not re.search(r"(?im)^>\s*Erstellt\s*:\s*\d{2}\.\d{2}\.\d{4}\s*$", rendered):
