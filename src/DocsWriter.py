@@ -267,7 +267,16 @@ class DocsWriter:
 
         section_end = self._section_end_index(lines, section_idx)
         block = lines[section_idx + 1:section_end]
-        existing_tags = re.findall(r"(?<!\w)#[-\w]+", "\n".join(block))
+        editable_block = block
+        preserved_suffix: list[str] = []
+
+        for index, line in enumerate(block):
+            if line.strip().startswith(">"):
+                editable_block = block[:index]
+                preserved_suffix = block[index:]
+                break
+
+        existing_tags = re.findall(r"(?<!\w)#[-\w]+", "\n".join(editable_block))
         deduped_existing = list(dict.fromkeys(existing_tags))
 
         kept_tags = [tag for tag in deduped_existing if tag not in tags_to_remove]
@@ -276,5 +285,6 @@ class DocsWriter:
                 kept_tags.append(tag)
 
         replacement = [" ".join(kept_tags).strip()] if kept_tags else [""]
+        replacement.extend(preserved_suffix)
         lines[section_idx + 1:section_end] = replacement
         return lines
