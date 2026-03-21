@@ -133,6 +133,19 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    path_to_feedback TEXT NOT NULL UNIQUE,
+                    creation_date TEXT NOT NULL
+                )
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
@@ -578,6 +591,63 @@ class db:
             logger.info("Deleted todo id=%s", todo_id)
         except Exception:
             logger.error("sqlite_handler/delete_todo_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def replace_all_ai_feedback(self, rows: list[dict]) -> None:
+        try:
+            self._execute("DELETE FROM ai_feedback")
+            for row in rows:
+                self._execute(
+                    """
+                    INSERT INTO ai_feedback (file_name, version, score, path_to_feedback, creation_date)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(row.get("file_name", "N/A")).strip(),
+                        int(row.get("version", 1)),
+                        float(row.get("score", 0)),
+                        str(row.get("path_to_feedback", "")).strip(),
+                        str(row.get("creation_date", "N/A")).strip(),
+                    ),
+                )
+            self._commit()
+            logger.info("Replaced ai_feedback table with %s entries", len(rows))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_ai_feedback failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_ai_feedback(self) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM ai_feedback
+                ORDER BY lower(file_name) ASC, version DESC, id DESC
+                """
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_all_ai_feedback failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_ai_feedback_by_id(self, feedback_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM ai_feedback WHERE id = ?", (feedback_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_ai_feedback_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_latest_ai_feedback_for_file(self, file_name: str) -> dict | None:
+        try:
+            return self._fetch_one_dict(
+                """
+                SELECT * FROM ai_feedback
+                WHERE lower(file_name) = lower(?)
+                ORDER BY version DESC, id DESC
+                LIMIT 1
+                """,
+                (file_name,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_latest_ai_feedback_for_file failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:

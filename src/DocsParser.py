@@ -31,6 +31,7 @@ class DocsParser:
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
                 self.todo_file_path: str = j.get("todo", {}).get("full_path_to_todo_file", False)
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
+                self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
             logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
@@ -616,6 +617,76 @@ class DocsParser:
         except Exception:
             logger.error("Failed to update HSLU checklist status in markdown\n%s", traceback.format_exc())
             adieu(1)
+
+    def parse_ai_feedback_file(self, file_path: str | Path) -> dict:
+        try:
+            target_path = Path(file_path).resolve()
+            content = target_path.read_text(encoding="utf-8")
+
+            note_name_match = re.search(r"(?ims)^##\s+Note Name\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            version_match = re.search(r"(?ims)^##\s+Version\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            score_match = re.search(r"(?ims)^##\s+Score\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            feedback_match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", content)
+
+            note_name = note_name_match.group(1).strip() if note_name_match else target_path.stem.strip()
+            version_line = version_match.group(1).strip() if version_match else ""
+            score_line = score_match.group(1).strip() if score_match else ""
+            feedback_text = feedback_match.group(1).strip() if feedback_match else ""
+
+            version_number = 1
+            creation_date = "N/A"
+            if version_line:
+                version_parts = [part.strip() for part in version_line.split("/", 1)]
+                if version_parts and version_parts[0].isdigit():
+                    version_number = int(version_parts[0])
+                if len(version_parts) > 1 and version_parts[1]:
+                    creation_date = version_parts[1]
+
+            score_match_numeric = re.search(r"-?\d+(?:\.\d+)?", score_line)
+            if not score_match_numeric:
+                raise ValueError(f"AI feedback score missing or invalid in {target_path.name}")
+
+            return {
+                "file_name": note_name,
+                "version": version_number,
+                "score": float(score_match_numeric.group(0)),
+                "path_to_feedback": str(target_path),
+                "creation_date": creation_date,
+                "feedback": feedback_text,
+            }
+        except Exception:
+            logger.error("Failed to parse AI feedback file %s\n%s", file_path, traceback.format_exc())
+            raise
+
+    def parse_ai_feedback_files(self) -> list[dict]:
+        try:
+            if not self.ai_feedback_path:
+                raise ValueError("AI feedback path missing in conf.json")
+
+            feedback_dir = Path(self.ai_feedback_path)
+            if not feedback_dir.exists():
+                logger.info("AI feedback directory does not exist yet: %s", feedback_dir)
+                return []
+
+            rows: list[dict] = []
+            for file_path in sorted(feedback_dir.rglob("*.md"), key=lambda item: str(item).casefold()):
+                rows.append(self.parse_ai_feedback_file(file_path))
+
+            return rows
+        except Exception:
+            logger.error("Failed to parse AI feedback files\n%s", traceback.format_exc())
+            raise
+
+    def sync_ai_feedback_to_db(self) -> list[dict]:
+        try:
+            rows = self.parse_ai_feedback_files()
+            db().replace_all_ai_feedback(rows)
+            logger.info("AI feedback sync completed with %s entries", len(rows))
+            return rows
+        except Exception:
+            logger.error("AI feedback sync failed\n%s", traceback.format_exc())
+            raise
+
     def parse_todos_from_markdown(self) -> list[dict]:
         try:
             if not self.todo_file_path:

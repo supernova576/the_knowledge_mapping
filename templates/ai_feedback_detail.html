@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Feedback Detail</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+
+<body>
+    <div class="container py-4">
+        {% set active_page = 'ai_feedback' %}
+        {% include '_navbar.html' %}
+
+        <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
+            <div>
+                <h1 class="h3 mb-1">AI Feedback Detail</h1>
+                <p class="text-muted mb-0">{{ feedback.file_name }}</p>
+            </div>
+            <a class="btn btn-outline-secondary" href="{{ url_for('ai_feedback_overview') }}">Back to AI Feedback</a>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body">
+                        <h2 class="h6 text-muted">Created</h2>
+                        <p class="fs-4 mb-0">{{ feedback.creation_date }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body">
+                        <h2 class="h6 text-muted">Version</h2>
+                        <p class="fs-4 mb-0">{{ feedback.version }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm border-success-subtle h-100">
+                    <div class="card-body">
+                        <h2 class="h6 text-muted">Score</h2>
+                        <p class="fs-4 text-success mb-0">{{ feedback.score_display }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h2 class="h5">Feedback</h2>
+                <pre class="km-feedback-markdown mb-0">{{ feedback.feedback_text }}</pre>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h2 class="h6 text-muted">Source file</h2>
+                <p class="mb-0">{{ feedback.path_to_feedback }}</p>
+            </div>
+        </div>
+
+        {% include '_footer.html' %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    {% include '_theme_toggle_script.html' %}
+</body>
+
+</html>

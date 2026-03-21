@@ -13,6 +13,7 @@ from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
 from src.DatabaseConnector import db
+from src.DocsAIFeedback import DocsAIFeedback
 from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
@@ -487,6 +488,62 @@ def _sort_docs(processed_docs: list[dict], sort_by: str) -> None:
         return
 
     processed_docs.sort(key=_docs_alpha_sort_key)
+
+
+def _parse_feedback_score(value) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if score != score:
+        return None
+    return score
+
+
+def _format_feedback_score(value) -> str:
+    score = _parse_feedback_score(value)
+    if score is None:
+        return "N/A"
+    if score.is_integer():
+        return str(int(score))
+    return f"{score:.2f}".rstrip("0").rstrip(".")
+
+
+def _extract_feedback_body(content: str) -> str:
+    match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", str(content or ""))
+    return match.group(1).strip() if match else str(content or "").strip()
+
+
+def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> list[dict]:
+    name_filter = str(name_query or "").strip().casefold()
+    score_filter = str(score_query or "").strip()
+    filtered_rows: list[dict] = []
+
+    for row in database.get_all_ai_feedback():
+        prepared = dict(row)
+        prepared["score_value"] = _parse_feedback_score(prepared.get("score"))
+        prepared["score_display"] = _format_feedback_score(prepared.get("score"))
+        prepared["version_display"] = str(prepared.get("version", "N/A"))
+        prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
+
+        file_name = str(prepared.get("file_name", "")).strip()
+        if name_filter and name_filter not in file_name.casefold():
+            continue
+
+        if score_filter:
+            try:
+                target_score = int(score_filter)
+            except ValueError:
+                continue
+
+            rounded_score = round(prepared["score_value"]) if prepared["score_value"] is not None else None
+            if rounded_score != target_score:
+                continue
+
+        filtered_rows.append(prepared)
+
+    return filtered_rows
 
 
 @app.route("/", methods=["GET"])
@@ -1078,6 +1135,127 @@ def save_doc_resources(doc_id: int):
     return redirect(url_for("index"))
 
 
+@app.route("/ai_feedback", methods=["GET"])
+def ai_feedback_overview():
+    database = db()
+    name_query = request.args.get("name", "").strip()
+    score_query = request.args.get("score", "").strip()
+    all_feedback_rows = _load_ai_feedback_rows(database, "", "")
+    feedback_rows = _load_ai_feedback_rows(database, name_query, score_query)
+
+    feedback_docs_present = {
+        str(row.get("file_name", "")).strip().casefold()
+        for row in all_feedback_rows
+        if str(row.get("file_name", "")).strip()
+    }
+
+    available_docs = sorted(
+        [
+            {
+                "id": str(item.get("id", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+                "has_feedback": str(item.get("title", "")).strip().casefold() in feedback_docs_present,
+            }
+            for item in database.get_all_docs().values()
+            if str(item.get("title", "")).strip()
+        ],
+        key=lambda item: item["title"].casefold(),
+    )
+
+    scores = [row["score_value"] for row in all_feedback_rows if row.get("score_value") is not None]
+    average_score = sum(scores) / len(scores) if scores else None
+
+    return render_template(
+        "ai_feedback.html",
+        feedback_rows=feedback_rows,
+        total_reports=len(all_feedback_rows),
+        average_score=_format_feedback_score(average_score) if average_score is not None else "N/A",
+        selected_name=name_query,
+        selected_score=score_query,
+        available_docs=available_docs,
+    )
+
+
+@app.route("/ai_feedback/sync", methods=["POST"])
+def ai_feedback_sync():
+    try:
+        parser = DocsParser()
+        synced_rows = parser.sync_ai_feedback_to_db()
+        flash(f"Synced {len(synced_rows)} AI feedback file(s).", "success")
+        return redirect(url_for("ai_feedback_overview"))
+    except Exception as exc:
+        logger.error("AI feedback sync failed\n%s", traceback.format_exc())
+        return render_template("500.html", error_message=str(exc)), 500
+
+
+@app.route("/ai_feedback/generate", methods=["POST"])
+def generate_ai_feedback():
+    selected_doc = request.form.get("selected_doc", "").strip()
+    if not selected_doc:
+        flash("Please select a document for AI feedback.", "warning")
+        return redirect(url_for("ai_feedback_overview"))
+
+    try:
+        conf = _load_conf()
+        parser = DocsParser()
+        parser.sync_ai_feedback_to_db()
+        ai_feedback_service = DocsAIFeedback(conf)
+        feedback_payload = ai_feedback_service.generate_feedback(selected_doc)
+
+        database = db()
+        latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
+        next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
+
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        rendered_feedback = writer.render_ai_feedback_template(
+            template_content=feedback_payload["feedback_template"],
+            note_name=feedback_payload["note_name"],
+            version=next_version,
+            creation_date=feedback_payload["creation_date"],
+            score=_format_feedback_score(feedback_payload["score"]),
+            feedback=feedback_payload["feedback"],
+        )
+        output_path = writer.write_ai_feedback_file(
+            output_dir=ai_feedback_service.output_path,
+            note_name=feedback_payload["note_name"],
+            version=next_version,
+            rendered_content=rendered_feedback,
+        )
+        _set_rw_permissions_for_all_users(output_path)
+
+        parser.sync_ai_feedback_to_db()
+        flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
+        return redirect(url_for("ai_feedback_overview"))
+    except Exception as exc:
+        logger.error("AI feedback generation failed\n%s", traceback.format_exc())
+        return render_template("500.html", error_message=str(exc)), 500
+
+
+@app.route("/ai_feedback/<int:feedback_id>", methods=["GET"])
+def ai_feedback_detail(feedback_id: int):
+    database = db()
+    feedback_row = database.get_ai_feedback_by_id(feedback_id)
+    if not feedback_row:
+        flash("AI feedback entry not found.", "warning")
+        return redirect(url_for("ai_feedback_overview"))
+
+    feedback_path = Path(str(feedback_row.get("path_to_feedback", "")).strip())
+    if not feedback_path.exists() or not feedback_path.is_file():
+        return render_template("500.html", error_message=f"Feedback markdown file not found: {feedback_path}"), 500
+
+    try:
+        feedback_content = feedback_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return render_template("500.html", error_message=str(exc)), 500
+
+    prepared_feedback = dict(feedback_row)
+    prepared_feedback["score_display"] = _format_feedback_score(prepared_feedback.get("score"))
+    prepared_feedback["feedback_text"] = _extract_feedback_body(feedback_content)
+    prepared_feedback["path_to_feedback"] = str(feedback_path)
+
+    return render_template("ai_feedback_detail.html", feedback=prepared_feedback)
+
+
 @app.errorhandler(404)
 def handle_not_found_error(error):
     logger.info("Page not found: %s", request.path)
@@ -1093,10 +1271,12 @@ def handle_not_found_error(error):
 @app.errorhandler(500)
 def handle_internal_server_error(error):
     logger.error("Internal server error on %s\n%s", request.path, traceback.format_exc())
+    original_error = getattr(error, "original_exception", None)
+    error_message = str(original_error or error or "Something went wrong while loading this page. Please try again.")
     return (
         render_template(
             "500.html",
-            error_message="Something went wrong while loading this page. Please try again.",
+            error_message=error_message,
         ),
         500,
     )
@@ -1111,7 +1291,7 @@ def handle_unexpected_error(error):
     return (
         render_template(
             "500.html",
-            error_message="Something went wrong while loading this page. Please try again.",
+            error_message=str(error) or "Something went wrong while loading this page. Please try again.",
         ),
         500,
     )

@@ -96,6 +96,50 @@ class DocsWriter:
             logger.error("Failed to create markdown note %s\n%s", target_path, traceback.format_exc())
             adieu(1)
 
+    def render_ai_feedback_template(
+        self,
+        template_content: str,
+        note_name: str,
+        version: int,
+        creation_date: str,
+        score: str,
+        feedback: str,
+    ) -> str:
+        try:
+            rendered = str(template_content)
+            replacements = {
+                "{{ name_of_controlled_note }}": str(note_name).strip(),
+                "{{ version }}": str(version),
+                "{{ creation_date }}": str(creation_date).strip(),
+                "{{ score }}": str(score).strip(),
+                "{{ feedback }}": str(feedback).strip(),
+            }
+
+            for placeholder, value in replacements.items():
+                rendered = rendered.replace(placeholder, value)
+
+            return rendered
+        except Exception:
+            logger.error("Failed to render AI feedback template\n%s", traceback.format_exc())
+            raise
+
+    def write_ai_feedback_file(self, output_dir: Path, note_name: str, version: int, rendered_content: str) -> Path:
+        try:
+            safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(note_name).strip()).strip(" ._")
+            if not safe_name:
+                raise ValueError("Invalid note name for AI feedback output file.")
+
+            output_dir.mkdir(parents=True, exist_ok=True)
+            target_path = output_dir / f"{safe_name} - AI Feedback v{int(version)}.md"
+            if target_path.exists():
+                raise FileExistsError(f"AI feedback file already exists: {target_path}")
+
+            target_path.write_text(rendered_content.rstrip() + "\n", encoding="utf-8")
+            return target_path
+        except Exception:
+            logger.error("Failed to write AI feedback markdown file\n%s", traceback.format_exc())
+            raise
+
     def prepend_template_to_existing_note(
         self,
         target_path: Path,
