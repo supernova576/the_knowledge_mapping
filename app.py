@@ -116,6 +116,174 @@ def _render_hslu_inline_markdown(value: str) -> str:
     return _render_fragment(text)
 
 
+def _render_ai_feedback_markdown(value: str) -> str:
+    raw_markdown = str(value or "").strip()
+    if not raw_markdown:
+        return ""
+
+    def _escape_inline(text: str) -> str:
+        return html.escape(str(text or ""))
+
+    def _safe_href(raw_href: str) -> str:
+        candidate = str(raw_href or "").strip()
+        if re.match(r"^(https?://|mailto:)", candidate, flags=re.IGNORECASE):
+            return html.escape(candidate, quote=True)
+        return ""
+
+    def _render_inline(text: str) -> str:
+        rendered = _escape_inline(text)
+        rendered = re.sub(r"`([^`]+)`", lambda match: f"<code>{match.group(1)}</code>", rendered)
+        rendered = re.sub(r"\*\*([^*]+)\*\*", lambda match: f"<strong>{match.group(1)}</strong>", rendered)
+        rendered = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", lambda match: f"<em>{match.group(1)}</em>", rendered)
+        rendered = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            lambda match: (
+                f'<a href="{safe_href}" target="_blank" rel="noopener noreferrer nofollow">{match.group(1)}</a>'
+                if (safe_href := _safe_href(match.group(2)))
+                else match.group(1)
+            ),
+            rendered,
+        )
+        return rendered
+
+    def _render_table(block_lines: list[str]) -> str | None:
+        if len(block_lines) < 2:
+            return None
+
+        def _split_row(row: str) -> list[str]:
+            stripped = row.strip()
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                return []
+            return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+        header = _split_row(block_lines[0])
+        separator = _split_row(block_lines[1])
+        if not header or len(header) != len(separator):
+            return None
+        if not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in separator):
+            return None
+
+        body_rows: list[list[str]] = []
+        for line in block_lines[2:]:
+            cells = _split_row(line)
+            if len(cells) != len(header):
+                return None
+            body_rows.append(cells)
+
+        head_html = "".join(f"<th>{_render_inline(cell)}</th>" for cell in header)
+        body_html = "".join(
+            "<tr>" + "".join(f"<td>{_render_inline(cell)}</td>" for cell in row) + "</tr>"
+            for row in body_rows
+        )
+        return f"<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"
+
+    lines = raw_markdown.splitlines()
+    blocks: list[str] = []
+    paragraph_buffer: list[str] = []
+    list_stack: list[str] = []
+    table_buffer: list[str] = []
+    in_code_block = False
+    code_lines: list[str] = []
+
+    def _flush_paragraph() -> None:
+        nonlocal paragraph_buffer
+        if paragraph_buffer:
+            blocks.append(f"<p>{'<br>'.join(_render_inline(line) for line in paragraph_buffer)}</p>")
+            paragraph_buffer = []
+
+    def _flush_lists() -> None:
+        nonlocal list_stack
+        while list_stack:
+            blocks.append(f"</{list_stack.pop()}>")
+
+    def _flush_table() -> None:
+        nonlocal table_buffer
+        if not table_buffer:
+            return
+        table_html = _render_table(table_buffer)
+        if table_html is None:
+            for row in table_buffer:
+                paragraph_buffer.append(row)
+            _flush_paragraph()
+        else:
+            blocks.append(table_html)
+        table_buffer = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            _flush_paragraph()
+            _flush_table()
+            _flush_lists()
+            if in_code_block:
+                blocks.append(f"<pre><code>{_escape_inline(chr(10).join(code_lines))}</code></pre>")
+                code_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            _flush_paragraph()
+            _flush_lists()
+            table_buffer.append(line)
+            continue
+        _flush_table()
+
+        if not stripped:
+            _flush_paragraph()
+            _flush_lists()
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading_match:
+            _flush_paragraph()
+            _flush_lists()
+            level = len(heading_match.group(1))
+            blocks.append(f"<h{level}>{_render_inline(heading_match.group(2))}</h{level}>")
+            continue
+
+        if re.fullmatch(r"---+|\*\*\*+", stripped):
+            _flush_paragraph()
+            _flush_lists()
+            blocks.append("<hr>")
+            continue
+
+        blockquote_match = re.match(r"^>\s?(.*)$", stripped)
+        if blockquote_match:
+            _flush_paragraph()
+            _flush_lists()
+            blocks.append(f"<blockquote><p>{_render_inline(blockquote_match.group(1))}</p></blockquote>")
+            continue
+
+        ordered_match = re.match(r"^\d+\.\s+(.*)$", stripped)
+        unordered_match = re.match(r"^[-*]\s+(.*)$", stripped)
+        if ordered_match or unordered_match:
+            _flush_paragraph()
+            list_tag = "ol" if ordered_match else "ul"
+            if not list_stack or list_stack[-1] != list_tag:
+                _flush_lists()
+                blocks.append(f"<{list_tag}>")
+                list_stack.append(list_tag)
+            item_content = ordered_match.group(1) if ordered_match else unordered_match.group(1)
+            blocks.append(f"<li>{_render_inline(item_content)}</li>")
+            continue
+
+        paragraph_buffer.append(line)
+
+    if in_code_block:
+        blocks.append(f"<pre><code>{_escape_inline(chr(10).join(code_lines))}</code></pre>")
+    _flush_paragraph()
+    _flush_table()
+    _flush_lists()
+    return "\n".join(blocks)
+
+
 def _normalize_value(value):
     if isinstance(value, str):
         stripped = value.strip()
@@ -542,6 +710,18 @@ def _format_feedback_score(value) -> str:
 def _extract_feedback_body(content: str) -> str:
     match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", str(content or ""))
     return match.group(1).strip() if match else str(content or "").strip()
+
+
+def _ensure_doc_can_receive_ai_feedback(database: db, selected_doc: str) -> None:
+    matching_docs = database.get_docs_by_name(selected_doc, exact_match=True)
+    if not matching_docs:
+        return
+
+    doc_row = next(iter(matching_docs.values()))
+    if str(doc_row.get("is_under_construction", "false")).lower() == "true":
+        raise ValueError(
+            "The note is under construction. The feedback was thus not requested. Change the note status and try again."
+        )
 
 
 def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> list[dict]:
@@ -1223,12 +1403,13 @@ def generate_ai_feedback():
 
     try:
         conf = _load_conf()
+        database = db()
+        _ensure_doc_can_receive_ai_feedback(database, selected_doc)
         parser = DocsParser()
         parser.sync_ai_feedback_to_db()
         ai_feedback_service = DocsAIFeedback(conf)
         feedback_payload = ai_feedback_service.generate_feedback(selected_doc)
 
-        database = db()
         latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
         next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
 
@@ -1535,6 +1716,11 @@ def hslu_semester_checklist_sync():
 @app.template_filter("render_hslu_inline_markdown")
 def render_hslu_inline_markdown_filter(value: str) -> Markup:
     return Markup(_render_hslu_inline_markdown(value))
+
+
+@app.template_filter("render_ai_feedback_markdown")
+def render_ai_feedback_markdown_filter(value: str) -> Markup:
+    return Markup(_render_ai_feedback_markdown(value))
 
 
 if __name__ == "__main__":

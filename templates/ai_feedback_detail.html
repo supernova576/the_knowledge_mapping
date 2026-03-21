@@ -55,7 +55,7 @@
         <div class="card shadow-sm mb-4">
             <div class="card-body">
                 <h2 class="h5">Feedback</h2>
-                <pre class="km-feedback-markdown mb-0">{{ feedback.feedback_text }}</pre>
+                <div class="km-feedback-markdown mb-0">{{ feedback.feedback_text|render_ai_feedback_markdown }}</div>
             </div>
         </div>
 
