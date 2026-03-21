@@ -11,3 +11,6 @@ logs/*.log
 
 # Docker Compose File
 docker-compose.yml
+
+# Config
+conf.json
