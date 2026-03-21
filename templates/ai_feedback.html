@@ -137,6 +137,13 @@
                                     <a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('ai_feedback_detail', feedback_id=row.id) }}">
                                         Show Feedback
                                     </a>
+                                    <form method="post" action="{{ url_for('ai_feedback_delete', feedback_id=row.id) }}" class="d-inline-block ai-feedback-delete-form">
+                                        <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}">
+                                        <input type="hidden" name="feedback_name" value="{{ row.path_to_feedback.split('/')[-1] if row.path_to_feedback else row.file_name }}">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                                            Delete
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
                             {% else %}
@@ -153,6 +160,27 @@
         {% include '_footer.html' %}
     </div>
 
+    <div class="modal fade" id="aiFeedbackDeleteModal" tabindex="-1" aria-labelledby="aiFeedbackDeleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title fs-5" id="aiFeedbackDeleteModalLabel">Delete AI Feedback</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-0" id="ai-feedback-delete-message"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <form method="post" id="ai-feedback-delete-confirm-form" class="m-0">
+                        <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}">
+                        <button type="submit" class="btn btn-outline-danger" id="ai-feedback-delete-confirm-submit">Yes, delete the Feedback</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
@@ -163,6 +191,10 @@
             const syncForm = document.getElementById("ai-feedback-sync-form");
             const generateForm = document.getElementById("ai-feedback-generate-form");
             const generateSubmit = document.getElementById("ai-feedback-generate-submit");
+            const deleteModalElement = document.getElementById("aiFeedbackDeleteModal");
+            const deleteMessage = document.getElementById("ai-feedback-delete-message");
+            const deleteConfirmForm = document.getElementById("ai-feedback-delete-confirm-form");
+            const deleteConfirmSubmit = document.getElementById("ai-feedback-delete-confirm-submit");
 
             function showWaitingOverlay(button, label) {
                 if (waitingOverlay) {
@@ -183,6 +215,28 @@
             if (generateForm) {
                 generateForm.addEventListener("submit", function () {
                     showWaitingOverlay(generateSubmit, "Waiting...");
+                });
+            }
+
+            if (deleteModalElement && deleteMessage && deleteConfirmForm && deleteConfirmSubmit) {
+                const deleteModal = new bootstrap.Modal(deleteModalElement);
+
+                document.querySelectorAll(".ai-feedback-delete-form").forEach(function (form) {
+                    form.addEventListener("submit", function (event) {
+                        event.preventDefault();
+                        const feedbackNameInput = form.querySelector('input[name="feedback_name"]');
+                        const feedbackName = feedbackNameInput ? feedbackNameInput.value : "this feedback";
+                        deleteConfirmForm.action = form.action;
+                        deleteMessage.textContent = "Are you sure you want to delete " + feedbackName;
+                        deleteConfirmSubmit.disabled = false;
+                        deleteConfirmSubmit.textContent = "Yes, delete the Feedback";
+                        deleteModal.show();
+                    });
+                });
+
+                deleteConfirmForm.addEventListener("submit", function () {
+                    deleteConfirmSubmit.disabled = true;
+                    deleteConfirmSubmit.textContent = "Deleting...";
                 });
             }
         })();

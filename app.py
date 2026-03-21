@@ -79,6 +79,13 @@ def _sync_banner_state(sync_time: str | None) -> str:
     return "danger"
 
 
+def _safe_redirect_target(target: str | None, fallback_endpoint: str) -> str:
+    redirect_target = str(target or "").strip()
+    if redirect_target.startswith("/"):
+        return redirect_target
+    return url_for(fallback_endpoint)
+
+
 def _render_hslu_inline_markdown(value: str) -> str:
     text = str(value or "")
 
@@ -1191,9 +1198,10 @@ def ai_feedback_sync():
 @app.route("/ai_feedback/generate", methods=["POST"])
 def generate_ai_feedback():
     selected_doc = request.form.get("selected_doc", "").strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
     if not selected_doc:
         flash("Please select a document for AI feedback.", "warning")
-        return redirect(url_for("ai_feedback_overview"))
+        return redirect(redirect_to)
 
     try:
         conf = _load_conf()
@@ -1225,7 +1233,7 @@ def generate_ai_feedback():
 
         parser.sync_ai_feedback_to_db()
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
-        return redirect(url_for("ai_feedback_overview"))
+        return redirect(redirect_to)
     except Exception as exc:
         logger.error("AI feedback generation failed\n%s", traceback.format_exc())
         return render_template("500.html", error_message=str(exc)), 500
@@ -1254,6 +1262,36 @@ def ai_feedback_detail(feedback_id: int):
     prepared_feedback["path_to_feedback"] = str(feedback_path)
 
     return render_template("ai_feedback_detail.html", feedback=prepared_feedback)
+
+
+@app.route("/ai_feedback/<int:feedback_id>/delete", methods=["POST"])
+def ai_feedback_delete(feedback_id: int):
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    database = db()
+    feedback_row = database.get_ai_feedback_by_id(feedback_id)
+    if not feedback_row:
+        flash("AI feedback entry not found.", "warning")
+        return redirect(redirect_to)
+
+    feedback_path = Path(str(feedback_row.get("path_to_feedback", "")).strip())
+    feedback_name = feedback_path.name or str(feedback_row.get("file_name") or "the feedback").strip()
+
+    try:
+        if feedback_path.exists():
+            if not feedback_path.is_file():
+                raise ValueError(f"Feedback path is not a file: {feedback_path}")
+            feedback_path.unlink()
+        else:
+            flash(f"Feedback file was already missing: {feedback_name}. Removed database entry.", "warning")
+
+        database.delete_ai_feedback_by_id(feedback_id)
+        parser = DocsParser()
+        parser.sync_ai_feedback_to_db()
+        flash(f"AI feedback deleted successfully: {feedback_name}.", "success")
+        return redirect(redirect_to)
+    except Exception as exc:
+        logger.error("AI feedback delete failed\n%s", traceback.format_exc())
+        return render_template("500.html", error_message=str(exc)), 500
 
 
 @app.errorhandler(404)

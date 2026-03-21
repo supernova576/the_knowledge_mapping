@@ -635,6 +635,14 @@ class db:
             logger.error("sqlite_handler/get_ai_feedback_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def delete_ai_feedback_by_id(self, feedback_id: int) -> None:
+        try:
+            self._execute("DELETE FROM ai_feedback WHERE id = ?", (feedback_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_ai_feedback_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def get_latest_ai_feedback_for_file(self, file_name: str) -> dict | None:
         try:
             return self._fetch_one_dict(
