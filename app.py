@@ -19,7 +19,7 @@ from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.DocsExporter import DocsExporter
 from src.logger import get_logger
-from src.timezone_utils import now_in_zurich
+from src.timezone_utils import now_in_zurich, now_in_zurich_str
 
 
 app = Flask(__name__)
@@ -320,10 +320,10 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     matched_todo = False
     target_stem = Path(file_name).stem.strip().casefold()
 
-    for todo in todos:
+    for index, todo in enumerate(todos, start=1):
         todo_note = str(todo.get("note", "")).strip()
         note_stem = Path(todo_note).stem.strip().casefold()
-        id_matches = str(todo.get("id")) == str(todo_id)
+        id_matches = str(index) == str(todo_id)
         note_matches = bool(target_stem) and note_stem == target_stem
 
         if id_matches or note_matches:
@@ -338,7 +338,6 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     conf = _load_conf()
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
     writer.write_todos_table(todos)
-    parser.sync_todos_to_db()
 
 
 def _append_todo(note: str, todo_type: str, progress: str) -> None:
@@ -356,7 +355,6 @@ def _append_todo(note: str, todo_type: str, progress: str) -> None:
     conf = _load_conf()
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
     writer.write_todos_table(todos)
-    parser.sync_todos_to_db()
 
 
 def _normalize_todo_types(value):
@@ -368,46 +366,68 @@ def _normalize_todo_types(value):
     return [str(normalized)]
 
 
-def _load_todos(database: db, query: str) -> list[dict]:
-    rows = database.get_todos_by_note(query) if query else database.get_all_todos()
-    processed_rows = []
-    for row in rows:
+def _load_todos(parser: DocsParser, query: str) -> list[dict]:
+    todos = parser.parse_todos_from_markdown()
+    processed_rows: list[dict] = []
+    normalized_query = query.casefold()
+
+    for index, row in enumerate(todos, start=1):
         prepared = dict(row)
+        prepared["id"] = index
         prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
+        if normalized_query and normalized_query not in str(prepared.get("note", "")).casefold():
+            continue
         processed_rows.append(prepared)
 
     return processed_rows
 
 
-def _load_hslu_overview(database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
-    semesters = database.get_hslu_semesters()
+def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
+    rows = parser.parse_hslu_sw_overview()
+    semesters = sorted(
+        {str(row.get("semester", "")).strip() for row in rows if str(row.get("semester", "")).strip()},
+        key=str.casefold,
+    )
     standard_semester = database.get_hslu_standard_semester()
 
     default_semester = standard_semester if standard_semester in semesters else (semesters[0] if semesters else "")
     selected_semester = semester if semester in semesters else default_semester
 
-    modules = database.get_hslu_modules_by_semester(selected_semester) if selected_semester else []
+    modules = sorted(
+        {
+            str(row.get("module", "")).strip()
+            for row in rows
+            if str(row.get("semester", "")).strip() == selected_semester and str(row.get("module", "")).strip()
+        },
+        key=str.casefold,
+    )
     selected_module = module if module in modules else ""
-
     selected_sw = sw if sw.isdigit() else ""
 
-    rows = database.get_hslu_sw_overview_by_semester_and_module(selected_semester, selected_module) if selected_semester else []
+    filtered_rows = [row for row in rows if str(row.get("semester", "")).strip() == selected_semester] if selected_semester else []
+    if selected_module:
+        filtered_rows = [row for row in filtered_rows if str(row.get("module", "")).strip() == selected_module]
     if selected_sw:
-        rows = [row for row in rows if str(row.get("SW", "")).strip() == selected_sw]
+        filtered_rows = [row for row in filtered_rows if str(row.get("SW", "")).strip() == selected_sw]
 
-    return semesters, selected_semester, modules, selected_module, selected_sw, rows, standard_semester
-
-
+    return semesters, selected_semester, modules, selected_module, selected_sw, filtered_rows, standard_semester
 
 
-def _load_hslu_checklist(database: db, semester: str, sw: str, sections: list[str]) -> tuple[list[str], str, str, list[str], list[str], dict[str, list[dict]]]:
-    semesters = database.get_hslu_checklist_semesters()
+
+def _load_hslu_checklist(parser: DocsParser, semester: str, sw: str, sections: list[str]) -> tuple[list[str], str, str, list[str], list[str], dict[str, list[dict]]]:
+    rows = parser.parse_hslu_semester_checklist()
+    semesters = sorted(
+        {str(row.get("semester", "")).strip() for row in rows if str(row.get("semester", "")).strip()},
+        key=str.casefold,
+    )
     selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
     selected_sw = sw.zfill(2) if sw.isdigit() else ""
-    rows = database.get_hslu_sw_checklist_by_semester_and_sw(selected_semester, selected_sw) if selected_semester else []
+    filtered_rows = [row for row in rows if str(row.get("semester", "")).strip() == selected_semester] if selected_semester else []
+    if selected_sw:
+        filtered_rows = [row for row in filtered_rows if (str(row.get("sw", "")).strip() == selected_sw or not str(row.get("sw", "")).strip())]
 
     available_sections: list[str] = []
-    for row in rows:
+    for row in filtered_rows:
         section_name = str(row.get("section") or "").strip()
         if section_name and section_name not in available_sections:
             available_sections.append(section_name)
@@ -417,11 +437,11 @@ def _load_hslu_checklist(database: db, semester: str, sw: str, sections: list[st
         default_sections = ["Kontaktstudium", "während Lernblocker"]
         selected_sections = [section for section in default_sections if section in available_sections]
 
-    filtered_rows = [row for row in rows if str(row.get("section") or "").strip() in selected_sections]
+    section_rows = [row for row in filtered_rows if str(row.get("section") or "").strip() in selected_sections]
 
     deduplicated_rows: list[dict] = []
     seen = set()
-    for row in filtered_rows:
+    for row in section_rows:
         sw_value = str(row.get("sw") or "").strip()
         checklist_row = str(row.get("checklist_row") or "").strip()
         checklist_item = str(row.get("checklist_item") or "").strip()
@@ -430,10 +450,12 @@ def _load_hslu_checklist(database: db, semester: str, sw: str, sections: list[st
             continue
 
         unique_key = (
+            str(row.get("semester") or "").strip().casefold(),
             str(row.get("section") or "").strip().casefold(),
             sw_value.casefold(),
             checklist_row.casefold(),
             checklist_item.casefold(),
+            str(row.get("file_path") or "").strip(),
         )
         if unique_key in seen:
             continue
@@ -613,39 +635,40 @@ def index():
 
 @app.route("/version_control", methods=["GET"])
 def version_control_overview():
-    database = db()
-    version_status = database.get_version_control_snapshot()
-
-    remote_status = version_status.get("remote_status", {})
+    try:
+        version_status = DocsVersionHandler().get_status_snapshot()
+        synced_at = now_in_zurich_str()
+        error_message = ""
+    except Exception as exc:
+        version_status = {"has_changes": False, "changes": [], "untracked_files": []}
+        synced_at = "Never"
+        error_message = str(exc)
+        flash(f"Failed to load local git status: {exc}", "danger")
 
     return render_template(
         "version_control.html",
         has_changes=version_status.get("has_changes", False),
         changes=version_status.get("changes", []),
         untracked_files=version_status.get("untracked_files", []),
-        remote_status=remote_status,
-        synced_at=_format_sync_time_relative_to_now(version_status.get("synced_at", "Never")),
-        synced_at_alert=_sync_banner_state(version_status.get("synced_at", "Never")),
+        synced_at=_format_sync_time_relative_to_now(synced_at),
+        synced_at_alert=_sync_banner_state(synced_at),
+        status_error=error_message,
     )
 
 
 @app.route("/version_control/sync", methods=["POST"])
 def version_control_sync():
     try:
-        database = db()
-        version_handler = DocsVersionHandler()
-        snapshot = version_handler.get_status_snapshot()
+        snapshot = DocsVersionHandler().get_status_snapshot()
         change_count = len(snapshot.get("changes", []))
         untracked_count = len(snapshot.get("untracked_files", []))
-        synced_at = database.save_version_control_snapshot(snapshot)
-        remote_status = snapshot.get("remote_status", {}) if isinstance(snapshot, dict) else {}
-        remote_message = remote_status.get("message", "Remote status unavailable.") if isinstance(remote_status, dict) else "Remote status unavailable."
+        synced_at = now_in_zurich_str()
         flash(
-            f"Git status refreshed at {synced_at}. {change_count} changed files and {untracked_count} newly created/deleted files detected across the repository. {remote_message}",
+            f"Local git status refreshed at {synced_at}. {change_count} changed files and {untracked_count} newly created/deleted files detected across the repository.",
             "success",
         )
     except Exception as exc:
-        flash(f"Failed to refresh git status: {exc}", "danger")
+        flash(f"Failed to refresh local git status: {exc}", "danger")
 
     return redirect(url_for("version_control_overview"))
 
@@ -670,8 +693,9 @@ def version_control_revert_file():
 @app.route("/api/version_control/status", methods=["GET"])
 def version_control_status_api():
     try:
-        database = db()
-        return jsonify(database.get_version_control_snapshot())
+        snapshot = DocsVersionHandler().get_status_snapshot()
+        snapshot["synced_at"] = now_in_zurich_str()
+        return jsonify(snapshot)
     except Exception as exc:
         return jsonify({"has_changes": False, "changes": [], "untracked_files": [], "synced_at": "Never", "error": str(exc)}), 500
 
@@ -813,18 +837,18 @@ def set_manual_compliance():
 @app.route("/todo", methods=["GET"])
 def todo_overview():
     query = request.args.get("q", "").strip()
+    parser = DocsParser()
 
     try:
-        parser = DocsParser()
-        parser.sync_todos_to_db()
+        todos = _load_todos(parser, query)
     except BaseException as exc:
         if isinstance(exc, SystemExit):
-            flash("Todo sync failed. Check conf.json todo path and parser logs.", "danger")
+            flash("Todo parsing failed. Check conf.json todo path and parser logs.", "danger")
         else:
-            flash("Automatic todo sync failed. You can retry using 'Sync Todos'.", "warning")
+            flash("Automatic todo parsing failed.", "warning")
+        todos = []
 
     database = db()
-    todos = _load_todos(database, query)
     all_tags = database.get_all_tags()
 
     templates = _load_template_options()
@@ -857,12 +881,11 @@ def todo_overview():
 @app.route("/todo/sync", methods=["POST"])
 def sync_todos():
     try:
-        parser = DocsParser()
-        synced = parser.sync_todos_to_db()
-        flash(f"Synced {len(synced)} todos from markdown.", "success")
+        parsed = DocsParser().parse_todos_from_markdown()
+        flash(f"Reloaded {len(parsed)} todos from markdown.", "success")
     except BaseException as exc:
         if isinstance(exc, SystemExit):
-            flash("Todo sync failed. Check conf.json todo path and parser logs.", "danger")
+            flash("Todo parsing failed. Check conf.json todo path and parser logs.", "danger")
         else:
             flash(traceback.format_exc(), "danger")
 
@@ -891,20 +914,17 @@ def add_todo():
 @app.route("/todo/delete", methods=["POST"])
 def delete_todo():
     todo_id = request.form.get("todo_id", "").strip()
-    if not todo_id:
+    if not todo_id.isdigit():
         flash("Todo id is required.", "warning")
         return redirect(url_for("todo_overview"))
 
     try:
-        parser = DocsParser()
-        database = db()
-        current_todos = database.get_all_todos()
-        kept_todos = [todo for todo in current_todos if str(todo.get("id")) != todo_id]
+        current_todos = DocsParser().parse_todos_from_markdown()
+        kept_todos = [todo for index, todo in enumerate(current_todos, start=1) if str(index) != todo_id]
 
         conf = _load_conf()
         writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
         writer.write_todos_table(kept_todos)
-        parser.sync_todos_to_db()
         flash("Todo deleted.", "success")
     except BaseException:
         flash("Failed to delete todo.", "danger")
@@ -917,24 +937,22 @@ def update_todo_progress():
     todo_id = request.form.get("todo_id", "").strip()
     progress = request.form.get("progress", "Not Started").strip()
 
-    if not todo_id:
+    if not todo_id.isdigit():
         flash("Todo id is required.", "warning")
         return redirect(url_for("todo_overview"))
 
     try:
-        parser = DocsParser()
-        database = db()
-        current_todos = database.get_all_todos()
+        current_todos = DocsParser().parse_todos_from_markdown()
 
-        for todo in current_todos:
-            if str(todo.get("id")) == todo_id:
+        for index, todo in enumerate(current_todos, start=1):
+            if str(index) == todo_id:
                 todo["progress"] = progress
                 todo["last_update"] = _today_dd_mm()
+                break
 
         conf = _load_conf()
         writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
         writer.write_todos_table(current_todos)
-        parser.sync_todos_to_db()
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
@@ -1340,15 +1358,10 @@ def hslu_semester_overview():
     database = db()
     parser = DocsParser()
 
-    try:
-        parser.sync_hslu_sw_overview_to_db()
-    except SystemExit:
-        flash("Automatic HSLU sync failed. You can retry using 'Sync now'.", "warning")
-
     semester = request.args.get("semester", "").strip()
     module = request.args.get("module", "").strip()
     sw = request.args.get("sw", "").strip()
-    semesters, selected_semester, modules, selected_module, selected_sw, overview_rows, standard_semester = _load_hslu_overview(database, semester, module, sw)
+    semesters, selected_semester, modules, selected_module, selected_sw, overview_rows, standard_semester = _load_hslu_overview(parser, database, semester, module, sw)
 
     return render_template(
         "hslu_semester_overview.html",
@@ -1359,7 +1372,7 @@ def hslu_semester_overview():
         overview_rows=overview_rows,
         selected_sw=selected_sw,
         standard_semester=standard_semester,
-        last_sync_time=database.get_last_sync_time(),
+        last_sync_time="Live markdown view",
         sw_status_options=SW_STATUS_OPTIONS,
     )
 
@@ -1371,7 +1384,14 @@ def hslu_semester_overview_standard_semester():
     semester = request.form.get("semester", "").strip()
 
     database = db()
-    semesters = database.get_hslu_semesters()
+    semesters = sorted(
+        {
+            str(row.get("semester", "")).strip()
+            for row in DocsParser().parse_hslu_sw_overview()
+            if str(row.get("semester", "")).strip()
+        },
+        key=str.casefold,
+    )
 
     if not semester or semester not in semesters:
         flash("Please select a valid semester before setting it as standard.", "warning")
@@ -1407,7 +1427,6 @@ def hslu_semester_overview_update_status():
     try:
         parser = DocsParser()
         parser.update_hslu_sw_status(semester, module, kw, sw, field, status)
-        parser.sync_hslu_sw_overview_to_db()
         flash(f"Updated {field} status for KW {kw} / SW {sw}.", "success")
     except SystemExit:
         flash("Failed to update markdown status. Check logs and file mapping.", "danger")
@@ -1422,15 +1441,13 @@ def hslu_semester_overview_sync():
     sw = request.form.get("sw", "").strip()
 
     try:
-        parser = DocsParser()
-        rows = parser.sync_hslu_sw_overview_to_db()
-        db().update_last_sync_time()
-        flash(f"Synced {len(rows)} semester overview rows.", "success")
+        rows = DocsParser().parse_hslu_sw_overview()
+        flash(f"Reloaded {len(rows)} semester overview rows from markdown.", "success")
     except SystemExit:
-        flash("HSLU sync failed. Check logs and folder mapping.", "danger")
+        flash("HSLU parsing failed. Check logs and folder mapping.", "danger")
     except Exception:
         logger.error("HSLU sync endpoint failed\n%s", traceback.format_exc())
-        flash("HSLU sync failed unexpectedly.", "danger")
+        flash("HSLU parsing failed unexpectedly.", "danger")
 
     if semester:
         if module:
@@ -1439,23 +1456,15 @@ def hslu_semester_overview_sync():
     return redirect(url_for("hslu_semester_overview"))
 
 
-
-
 @app.route("/hslu/semester_checklist", methods=["GET"])
 def hslu_semester_checklist():
-    database = db()
     parser = DocsParser()
-
-    try:
-        parser.sync_hslu_semester_checklist_to_db()
-    except SystemExit:
-        flash("Automatic checklist sync failed. You can retry using 'Sync now'.", "warning")
 
     semester = request.args.get("semester", "").strip()
     sw = request.args.get("sw", "").strip()
     sections = [item.strip() for item in request.args.getlist("section") if item.strip()]
     semesters, selected_semester, selected_sw, available_sections, selected_sections, checklist_rows_by_section = _load_hslu_checklist(
-        database, semester, sw, sections
+        parser, semester, sw, sections
     )
 
     return render_template(
@@ -1466,7 +1475,7 @@ def hslu_semester_checklist():
         available_sections=available_sections,
         selected_sections=selected_sections,
         checklist_rows_by_section=checklist_rows_by_section,
-        last_sync_time=database.get_last_sync_time(),
+        last_sync_time="Live markdown view",
         sw_status_options=SW_STATUS_OPTIONS,
     )
 
@@ -1476,14 +1485,20 @@ def hslu_semester_checklist_update_status():
     semester = request.form.get("semester", "").strip()
     sw_filter = request.form.get("sw_filter", "").strip()
     section_filters = [section.strip() for section in request.form.getlist("section_filters") if section.strip()]
-    row_id = request.form.get("row_id", "").strip()
     status = request.form.get("status", "").strip()
+    target = {
+        "section": request.form.get("section", "").strip(),
+        "sw": request.form.get("sw", "").strip(),
+        "checklist_row": request.form.get("checklist_row", "").strip(),
+        "checklist_item": request.form.get("checklist_item", "").strip(),
+        "file_path": request.form.get("file_path", "").strip(),
+    }
 
     def _redirect_with_filters():
         query = urlencode({"semester": semester, "sw": sw_filter, "section": section_filters}, doseq=True)
         return redirect(f"{url_for('hslu_semester_checklist')}?{query}")
 
-    if not row_id.isdigit():
+    if not target["section"] or not target["checklist_item"] or not target["file_path"]:
         flash("Missing checklist row identifier.", "warning")
         return _redirect_with_filters()
 
@@ -1493,8 +1508,7 @@ def hslu_semester_checklist_update_status():
 
     try:
         parser = DocsParser()
-        parser.update_hslu_semester_checklist_status(int(row_id), status)
-        parser.sync_hslu_semester_checklist_to_db()
+        parser.update_hslu_semester_checklist_status(target, status)
         flash("Checklist status updated.", "success")
     except SystemExit:
         flash("Failed to update checklist markdown status. Check logs and file mapping.", "danger")
@@ -1508,15 +1522,13 @@ def hslu_semester_checklist_sync():
     sw = request.form.get("sw", "").strip()
 
     try:
-        parser = DocsParser()
-        rows = parser.sync_hslu_semester_checklist_to_db()
-        db().update_last_sync_time()
-        flash(f"Synced {len(rows)} semester checklist rows.", "success")
+        rows = DocsParser().parse_hslu_semester_checklist()
+        flash(f"Reloaded {len(rows)} semester checklist rows from markdown.", "success")
     except SystemExit:
-        flash("Semester checklist sync failed. Check logs and folder mapping.", "danger")
+        flash("Semester checklist parsing failed. Check logs and folder mapping.", "danger")
     except Exception:
         logger.error("Semester checklist sync endpoint failed\n%s", traceback.format_exc())
-        flash("Semester checklist sync failed unexpectedly.", "danger")
+        flash("Semester checklist parsing failed unexpectedly.", "danger")
 
     return redirect(url_for("hslu_semester_checklist", semester=semester, sw=sw))
 

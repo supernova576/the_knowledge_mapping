@@ -53,7 +53,7 @@
             <div class="col-lg-4 col-md-6">
                 <div class="card shadow-sm border-success-subtle h-100">
                     <div class="card-body">
-                        <h2 class="h6 text-muted">Average Score</h2>
+                        <h2 class="h6 text-muted">Average Score (out of 100)</h2>
                         <p class="display-6 text-success mb-0">{{ average_score }}</p>
                     </div>
                 </div>
@@ -79,11 +79,11 @@
                 <form method="get" action="{{ url_for('ai_feedback_overview') }}" class="row g-2 align-items-end">
                     <div class="col-md-8">
                         <label class="form-label">Name</label>
-                        <input name="name" value="{{ selected_name }}" class="form-control" placeholder="Filter by note name (wildcard)" />
+                        <input name="name" value="{{ selected_name }}" class="form-control" placeholder="Filter by note name" />
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">Score</label>
-                        <input name="score" value="{{ selected_score }}" class="form-control" placeholder="Rounded int" inputmode="numeric" />
+                        <input name="score" value="{{ selected_score }}" class="form-control" placeholder="Filter by score" inputmode="numeric" />
                     </div>
                     <div class="col-md-2 d-grid">
                         <button class="btn btn-outline-primary">Apply</button>

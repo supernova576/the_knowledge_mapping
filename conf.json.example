@@ -10,8 +10,7 @@
     },
     "git": {
         "full_path_to_git_dir": "/the-knowledge/.git",
-        "username": "The Knowledge Mapping Tool",
-        "email": "example@example.com"
+        "executable": "git"
     },
     "log": {
         "log_file_path": "logs/app.log"

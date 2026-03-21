@@ -105,7 +105,11 @@
                                         <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                         <td>
                                             <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
-                                                <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                                <input type="hidden" name="section" value="{{ row.section }}" />
+                                                <input type="hidden" name="sw" value="{{ row.sw }}" />
+                                                <input type="hidden" name="checklist_row" value="{{ row.checklist_row }}" />
+                                                <input type="hidden" name="checklist_item" value="{{ row.checklist_item }}" />
+                                                <input type="hidden" name="file_path" value="{{ row.file_path }}" />
                                                 <input type="hidden" name="semester" value="{{ selected_semester }}" />
                                                 <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
                                                 {% for selected_section in selected_sections %}
@@ -159,7 +163,11 @@
                                     <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                     <td>
                                         <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
-                                            <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                            <input type="hidden" name="section" value="{{ row.section }}" />
+                                                <input type="hidden" name="sw" value="{{ row.sw }}" />
+                                                <input type="hidden" name="checklist_row" value="{{ row.checklist_row }}" />
+                                                <input type="hidden" name="checklist_item" value="{{ row.checklist_item }}" />
+                                                <input type="hidden" name="file_path" value="{{ row.file_path }}" />
                                             <input type="hidden" name="semester" value="{{ selected_semester }}" />
                                             <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
                                             {% for selected_section in selected_sections %}
@@ -211,7 +219,11 @@
                                     <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                     <td>
                                         <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
-                                            <input type="hidden" name="row_id" value="{{ row.id }}" />
+                                            <input type="hidden" name="section" value="{{ row.section }}" />
+                                                <input type="hidden" name="sw" value="{{ row.sw }}" />
+                                                <input type="hidden" name="checklist_row" value="{{ row.checklist_row }}" />
+                                                <input type="hidden" name="checklist_item" value="{{ row.checklist_item }}" />
+                                                <input type="hidden" name="file_path" value="{{ row.file_path }}" />
                                             <input type="hidden" name="semester" value="{{ selected_semester }}" />
                                             <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
                                             {% for selected_section in selected_sections %}

@@ -52,15 +52,12 @@
                 </div>
             </div>
             <div class="col-12 col-md-6 d-flex">
-                <div class="alert {% if remote_status and remote_status.has_remote_changes %}alert-warning{% else %}alert-info{% endif %} mb-0 w-100" role="status">
-                    <strong>Remote status:</strong>
-                    {% if remote_status and remote_status.message %}
-                    {{ remote_status.message }}
+                <div class="alert {% if status_error %}alert-danger{% else %}alert-info{% endif %} mb-0 w-100" role="status">
+                    <strong>Mode:</strong>
+                    {% if status_error %}
+                    Failed to inspect the local repository: {{ status_error }}
                     {% else %}
-                    Remote status unavailable.
-                    {% endif %}
-                    {% if remote_status and remote_status.upstream %}
-                    <div class="small mt-1"><strong>Upstream:</strong> {{ remote_status.upstream }}</div>
+                    Fully local repository inspection only. No remote GitHub checks are performed.
                     {% endif %}
                 </div>
             </div>
