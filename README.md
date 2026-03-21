@@ -73,8 +73,17 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
 
 ## Features to implement
-- document exporter
-  - export by Tag / Name
-  - convert exported doc to pdf
-  - generate table of contents
-  - display with PICTURES
+- document editor
+  - update link and video_link to contain Name => value
+- Add PRIV Menu
+  - Schulungen
+    - create from Template
+    - Mapping of a newly created tag to selected files
+  - Projects
+    - create from Template
+    - Status and todos
+    - Mapping of project specific tag to docs
+- conf.json
+  - remove git stuff
+  - add missing paths to images, templates and priv (also update code)
+    

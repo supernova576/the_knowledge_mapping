@@ -31,6 +31,7 @@ class DocsParser:
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
                 self.todo_file_path: str = j.get("todo", {}).get("full_path_to_todo_file", False)
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
+                self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
             logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
@@ -437,30 +438,26 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse HSLU SW overview\n%s", traceback.format_exc())
             adieu(1)
-    def sync_hslu_sw_overview_to_db(self) -> list[dict]:
-        try:
-            rows = self.parse_hslu_sw_overview()
-            db().replace_all_hslu_sw_overview(rows)
-            logger.info("HSLU SW overview sync completed with %s rows", len(rows))
-            return rows
-        except Exception:
-            logger.error("HSLU SW overview sync failed\n%s", traceback.format_exc())
-            adieu(1)
     def _split_markdown_table_row(self, row_line: str) -> list[str]:
         return [cell.strip() for cell in row_line.strip().strip("|").split("|")]
+
     def _parse_checklist_status(self, raw_value: str) -> str:
         return self._normalize_sw_progress(raw_value)
+
     def _find_hslu_semester_checklist_file(self, semester_dir: Path) -> Path | None:
         pattern = re.compile(r"^SE0\d\s*-\s*Semester\s+Checklist\.md$", re.IGNORECASE)
         for entry in sorted([p for p in semester_dir.iterdir() if p.is_file()], key=lambda item: item.name.casefold()):
             if pattern.match(entry.name):
                 return entry
         return None
+
     def _extract_checklist_sections(self, markdown_content: str) -> list[tuple[str, str]]:
         section_pattern = re.compile(r"(?ms)^##\s+(.+?)\s*$\n(.*?)(?=^##\s+|\Z)")
         return [(title.strip(), block) for title, block in section_pattern.findall(markdown_content)]
+
     def _extract_table_lines(self, section_block: str) -> list[str]:
         return [line.strip() for line in section_block.splitlines() if line.strip().startswith("|")]
+
     def _parse_checklist_table_rows(self, header_cells: list[str], data_lines: list[str], semester: str, section: str, file_path: str) -> list[dict]:
         parsed_rows: list[dict] = []
         sw_column_index = -1
@@ -506,6 +503,7 @@ class DocsParser:
                     }
                 )
         return parsed_rows
+
     def parse_hslu_semester_checklist(self) -> list[dict]:
         try:
             hslu_root = Path(self.hslu_base_path)
@@ -538,29 +536,18 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse HSLU semester checklist\n%s", traceback.format_exc())
             adieu(1)
-    def sync_hslu_semester_checklist_to_db(self) -> list[dict]:
+
+    def update_hslu_semester_checklist_status(self, target: dict, target_status: str) -> None:
         try:
-            rows = self.parse_hslu_semester_checklist()
-            db().replace_all_hslu_sw_checklist(rows)
-            logger.info("HSLU semester checklist sync completed with %s rows", len(rows))
-            return rows
-        except Exception:
-            logger.error("HSLU semester checklist sync failed\n%s", traceback.format_exc())
-            adieu(1)
-    def update_hslu_semester_checklist_status(self, row_id: int, target_status: str) -> None:
-        try:
-            target = db().get_hslu_sw_checklist_by_id(row_id)
-            if not target:
-                raise ValueError(f"Checklist row id={row_id} not found")
-            file_path = Path(target.get("file_path", ""))
+            file_path = Path(str(target.get("file_path", "")).strip())
             if not file_path.exists():
                 raise FileNotFoundError(f"Checklist file not found: {file_path}")
             content = file_path.read_text(encoding="utf-8")
             raw_icon = self._sw_progress_state_to_raw(target_status)
-            section = target.get("section", "")
-            item = target.get("checklist_item", "")
-            sw = (target.get("sw", "") or "").strip()
-            checklist_row = target.get("checklist_row", "")
+            section = str(target.get("section", "")).strip()
+            item = str(target.get("checklist_item", "")).strip()
+            sw = str(target.get("sw", "") or "").strip()
+            checklist_row = str(target.get("checklist_row", "") or "").strip()
             section_pattern = re.compile(rf"(?ms)(^##\s+{re.escape(section)}\s*$\n)(.*?)(?=^##\s+|\Z)")
             section_match = section_pattern.search(content)
             if not section_match:
@@ -573,15 +560,15 @@ class DocsParser:
             header_idx = table_indices[0]
             header_cells = self._split_markdown_table_row(lines[header_idx])
             data_start = table_indices[2]
-            if any(h.casefold() == "sw" for h in header_cells):
-                sw_idx = next(i for i,h in enumerate(header_cells) if h.casefold()=="sw")
-                item_idx = next((i for i,h in enumerate(header_cells) if h == item), -1)
+            if any(header.casefold() == "sw" for header in header_cells):
+                sw_idx = next(index for index, header in enumerate(header_cells) if header.casefold() == "sw")
+                item_idx = next((index for index, header in enumerate(header_cells) if header == item), -1)
                 if item_idx < 0:
                     raise ValueError(f"Checklist item column not found: {item}")
-                for i in range(data_start, len(lines)):
-                    if not lines[i].strip().startswith("|"):
+                for index in range(data_start, len(lines)):
+                    if not lines[index].strip().startswith("|"):
                         continue
-                    cells = self._split_markdown_table_row(lines[i])
+                    cells = self._split_markdown_table_row(lines[index])
                     if len(cells) < len(header_cells):
                         cells.extend([""] * (len(header_cells) - len(cells)))
                     row_sw_match = re.search(r"\d{1,2}", cells[sw_idx] if sw_idx < len(cells) else "")
@@ -589,33 +576,109 @@ class DocsParser:
                     if row_sw != sw:
                         continue
                     cells[item_idx] = raw_icon
-                    line_ending = "\n" if lines[i].endswith("\n") else ""
-                    lines[i] = "| " + " | ".join(cells) + f" |{line_ending}"
+                    line_ending = "\n" if lines[index].endswith("\n") else ""
+                    lines[index] = "| " + " | ".join(cells) + f" |{line_ending}"
                     break
                 else:
                     raise ValueError(f"SW row not found for {sw}")
             else:
-                for i in range(data_start, len(lines)):
-                    if not lines[i].strip().startswith("|"):
+                for index in range(data_start, len(lines)):
+                    if not lines[index].strip().startswith("|"):
                         continue
-                    cells = self._split_markdown_table_row(lines[i])
+                    cells = self._split_markdown_table_row(lines[index])
                     if len(cells) < 2:
                         continue
                     if cells[0] != checklist_row:
                         continue
                     cells[1] = raw_icon
-                    line_ending = "\n" if lines[i].endswith("\n") else ""
-                    lines[i] = "| " + " | ".join(cells) + f" |{line_ending}"
+                    line_ending = "\n" if lines[index].endswith("\n") else ""
+                    lines[index] = "| " + " | ".join(cells) + f" |{line_ending}"
                     break
                 else:
                     raise ValueError(f"Checklist row not found for {checklist_row}")
             new_block = "".join(lines)
             new_content = content[:section_match.start(2)] + new_block + content[section_match.end(2):]
             file_path.write_text(new_content, encoding="utf-8")
-            logger.info("Updated HSLU checklist markdown id=%s status=%s", row_id, target_status)
+            logger.info(
+                "Updated HSLU checklist markdown file=%s section=%s item=%s status=%s",
+                file_path,
+                section,
+                item,
+                target_status,
+            )
         except Exception:
             logger.error("Failed to update HSLU checklist status in markdown\n%s", traceback.format_exc())
             adieu(1)
+
+    def parse_ai_feedback_file(self, file_path: str | Path) -> dict:
+        try:
+            target_path = Path(file_path).resolve()
+            content = target_path.read_text(encoding="utf-8")
+
+            note_name_match = re.search(r"(?ims)^##\s+Note Name\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            version_match = re.search(r"(?ims)^##\s+Version\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            score_match = re.search(r"(?ims)^##\s+Score\s*$\n(.*?)(?=^##\s+|\Z)", content)
+            feedback_match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", content)
+
+            note_name = note_name_match.group(1).strip() if note_name_match else target_path.stem.strip()
+            version_line = version_match.group(1).strip() if version_match else ""
+            score_line = score_match.group(1).strip() if score_match else ""
+            feedback_text = feedback_match.group(1).strip() if feedback_match else ""
+
+            version_number = 1
+            creation_date = "N/A"
+            if version_line:
+                version_parts = [part.strip() for part in version_line.split("/", 1)]
+                if version_parts and version_parts[0].isdigit():
+                    version_number = int(version_parts[0])
+                if len(version_parts) > 1 and version_parts[1]:
+                    creation_date = version_parts[1]
+
+            score_match_numeric = re.search(r"-?\d+(?:\.\d+)?", score_line)
+            if not score_match_numeric:
+                raise ValueError(f"AI feedback score missing or invalid in {target_path.name}")
+
+            return {
+                "file_name": note_name,
+                "version": version_number,
+                "score": float(score_match_numeric.group(0)),
+                "path_to_feedback": str(target_path),
+                "creation_date": creation_date,
+                "feedback": feedback_text,
+            }
+        except Exception:
+            logger.error("Failed to parse AI feedback file %s\n%s", file_path, traceback.format_exc())
+            raise
+
+    def parse_ai_feedback_files(self) -> list[dict]:
+        try:
+            if not self.ai_feedback_path:
+                raise ValueError("AI feedback path missing in conf.json")
+
+            feedback_dir = Path(self.ai_feedback_path)
+            if not feedback_dir.exists():
+                logger.info("AI feedback directory does not exist yet: %s", feedback_dir)
+                return []
+
+            rows: list[dict] = []
+            for file_path in sorted(feedback_dir.rglob("*.md"), key=lambda item: str(item).casefold()):
+                rows.append(self.parse_ai_feedback_file(file_path))
+
+            return rows
+        except Exception:
+            logger.error("Failed to parse AI feedback files\n%s", traceback.format_exc())
+            raise
+
+    def sync_ai_feedback_to_db(self) -> list[dict]:
+        try:
+            rows = self.parse_ai_feedback_files()
+            db().replace_all_ai_feedback(rows)
+            logger.info("AI feedback sync completed with %s entries", len(rows))
+            return rows
+        except Exception:
+            logger.error("AI feedback sync failed\n%s", traceback.format_exc())
+            raise
+
     def parse_todos_from_markdown(self) -> list[dict]:
         try:
             if not self.todo_file_path:
@@ -650,13 +713,4 @@ class DocsParser:
             return todos
         except Exception:
             logger.error("Failed to parse todos markdown\n%s", traceback.format_exc())
-            adieu(1)
-    def sync_todos_to_db(self) -> list[dict]:
-        try:
-            todos = self.parse_todos_from_markdown()
-            db().replace_all_todos(todos)
-            logger.info("Todo sync completed with %s entries", len(todos))
-            return todos
-        except Exception:
-            logger.error("Todo sync failed\n%s", traceback.format_exc())
             adieu(1)

@@ -11,6 +11,22 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 
+class ExportPDFMixin:
+    page_number_offset = 0
+
+    def _display_page_number(self, page_number: int) -> int:
+        return max(page_number - int(getattr(self, "page_number_offset", 0)), 0)
+
+    def footer(self) -> None:
+        if self.page_no() <= int(getattr(self, "page_number_offset", 0)):
+            return
+
+        self.set_y(-12)
+        self.set_font("Helvetica", size=9)
+        self.set_text_color(0, 0, 0)
+        self.cell(0, 5, str(self._display_page_number(self.page_no())), align="R")
+
+
 class DocsExporter:
     IGNORE_SECTION_HEADING = "## Zusätzliche Ressourcen"
     PDF_TEXT_REPLACEMENTS = str.maketrans(
@@ -311,6 +327,108 @@ class DocsExporter:
         pdf.ln(1)
         pdf.set_font("Helvetica", size=11)
 
+    def _build_toc_entries(self, body_docs: list[dict]) -> list[dict]:
+        toc_entries: list[dict] = []
+        for doc_data in body_docs:
+            toc_entries.append(
+                {
+                    "level": 0,
+                    "title": doc_data["title"],
+                    "page": doc_data["start_page"],
+                }
+            )
+            for heading in doc_data["headings"]:
+                toc_entries.append(heading)
+        return toc_entries
+
+    def _estimate_toc_page_count(self, pdf, toc_entries: list[dict]) -> int:
+        usable_height = pdf.h - pdf.t_margin - pdf.b_margin
+        current_height = 12
+        page_count = 1
+
+        for entry in toc_entries:
+            level = int(entry.get("level", 0))
+            row_height = 8 if level == 0 else 6
+            if current_height + row_height > usable_height:
+                page_count += 1
+                current_height = 0
+            current_height += row_height
+
+        return max(page_count, 1)
+
+    def _render_toc_entry(self, pdf, title: str, page_number: int, level: int) -> None:
+        indent = 7 * max(level, 0)
+        row_height = 8 if level == 0 else 6
+        font_size = 12 if level == 0 else 11
+        font_style = "B" if level == 0 else ""
+
+        self._ensure_space(pdf, row_height + 1)
+        pdf.set_font("Helvetica", font_style, font_size)
+        pdf.set_text_color(0, 0, 0)
+        line_start_x = pdf.l_margin + indent
+        line_end_x = pdf.w - pdf.r_margin
+        page_text = str(pdf._display_page_number(page_number))
+        page_width = max(pdf.get_string_width(page_text), 10)
+        page_column_width = page_width + 2
+        gap_width = 2
+        leader_min_width = 8
+
+        clean_title = self._sanitize_pdf_text(title)
+        title_max_width = max(line_end_x - line_start_x - page_column_width - gap_width - leader_min_width, 10)
+        title_width = pdf.get_string_width(clean_title)
+        ellipsis = "..."
+        if title_width > title_max_width:
+            while clean_title and pdf.get_string_width(f"{clean_title}{ellipsis}") > title_max_width:
+                clean_title = clean_title[:-1]
+            clean_title = f"{clean_title.rstrip()}{ellipsis}" if clean_title else ellipsis
+
+        title_width = min(pdf.get_string_width(clean_title), title_max_width)
+        dot_width = max(pdf.get_string_width("."), 0.5)
+        title_end_x = line_start_x + title_width
+        page_x = line_end_x - page_column_width
+        leader_start_x = title_end_x + gap_width
+        leader_width = max(page_x - gap_width - leader_start_x, leader_min_width)
+        leader = "." * max(2, int(leader_width / dot_width))
+        row_y = pdf.get_y()
+
+        pdf.set_xy(line_start_x, row_y)
+        pdf.cell(title_width, row_height, clean_title, new_x="RIGHT", new_y="TOP")
+        pdf.set_xy(leader_start_x, row_y)
+        pdf.cell(leader_width, row_height, leader, align="R", new_x="RIGHT", new_y="TOP")
+        pdf.set_xy(page_x, row_y)
+        pdf.cell(page_column_width, row_height, page_text, align="R", new_x="LMARGIN", new_y="NEXT")
+
+    def _render_toc(self, pdf, toc_entries: list[dict], toc_pages: list[int]) -> None:
+        if not toc_pages:
+            return
+
+        page_index = 0
+        pdf.page = toc_pages[page_index]
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(pdf.l_margin, pdf.t_margin)
+        pdf.set_font("Helvetica", "B", 18)
+        pdf.cell(0, 10, "Table of Contents", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+        for entry in toc_entries:
+            level = int(entry.get("level", 0))
+            row_height = 8 if level == 0 else 6
+            if pdf.get_y() + row_height > (pdf.h - pdf.b_margin):
+                page_index += 1
+                if page_index >= len(toc_pages):
+                    break
+                pdf.page = toc_pages[page_index]
+                pdf.set_xy(pdf.l_margin, pdf.t_margin)
+                pdf.set_font("Helvetica", "B", 18)
+                pdf.cell(0, 10, "Table of Contents", new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(2)
+            self._render_toc_entry(
+                pdf,
+                title=str(entry.get("title", "")),
+                page_number=int(entry.get("page", 0)),
+                level=level,
+            )
+
     def export_docs_to_pdf(self, export_title: str, docs: list[dict], user_description: str = "") -> Path:
         try:
             from fpdf import FPDF
@@ -321,7 +439,9 @@ class DocsExporter:
         file_name = self._safe_pdf_name(export_title)
         output_path = self.export_dir / file_name
 
-        pdf = FPDF()
+        ExportPDF = type("ExportPDF", (ExportPDFMixin, FPDF), {})
+        pdf = ExportPDF()
+        pdf.page_number_offset = 1
         pdf.alias_nb_pages()
         pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -385,7 +505,6 @@ class DocsExporter:
         pdf.set_x(details_inner_x)
         pdf.multi_cell(details_w - 14, 7, "Amount of pages: {nb}", new_x="LMARGIN", new_y="NEXT")
 
-        toc_sections: list[tuple[str, list[tuple[int, str]]]] = []
         body_docs: list[dict] = []
         all_links: dict[str, list[str]] = {}
         all_video_links: dict[str, list[str]] = {}
@@ -400,35 +519,45 @@ class DocsExporter:
 
             content = doc_path.read_text(encoding="utf-8")
             cleaned_content = self._strip_ignored_section(content)
-            toc_sections.append((title, self._extract_toc_entries(cleaned_content)))
-            body_docs.append({"title": title, "content": cleaned_content})
+            raw_headings = self._extract_toc_entries(cleaned_content)
+            body_docs.append(
+                {
+                    "title": title,
+                    "content": cleaned_content,
+                    "headings": [
+                        {
+                            "level": level,
+                            "title": heading_title,
+                            "page": 0,
+                        }
+                        for level, heading_title in raw_headings
+                    ],
+                    "start_page": 0,
+                }
+            )
             all_links[title] = self._parse_db_array(doc.get("links", "N/A"))
             all_video_links[title] = self._parse_db_array(doc.get("video_links", "N/A"))
             all_used_images[title] = self._extract_obsidian_images(cleaned_content)
 
-        pdf.add_page()
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Helvetica", "B", 18)
-        pdf.cell(0, 10, "Table of Contents", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(2)
-        pdf.set_font("Helvetica", size=11)
+        placeholder_entries = self._build_toc_entries(body_docs) or [{"level": 0, "title": "", "page": 0}]
+        toc_page_count = self._estimate_toc_page_count(pdf, placeholder_entries)
+        toc_pages: list[int] = []
 
-        for doc_title, sections in toc_sections:
-            pdf.set_font("Helvetica", "B", 12)
-            self._multi_cell_line(pdf, 7, f"- {doc_title}")
-            pdf.set_font("Helvetica", size=11)
-            for level, section_title in sections:
-                indent = "  " * max(level - 1, 1)
-                self._multi_cell_line(pdf, 6, f"{indent}- {section_title}")
+        for _ in range(toc_page_count):
+            pdf.add_page()
+            toc_pages.append(pdf.page_no())
 
         for doc_data in body_docs:
             pdf.add_page()
+            doc_data["start_page"] = pdf.page_no()
+            pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "B", 18)
             pdf.cell(0, 10, self._sanitize_pdf_text(doc_data["title"]), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 
             lines = doc_data["content"].splitlines()
             idx = 0
+            heading_index = 0
             while idx < len(lines):
                 line = lines[idx]
                 stripped = line.strip()
@@ -456,6 +585,9 @@ class DocsExporter:
                     if level <= 2:
                         self._ensure_space(pdf, 30)
                     pdf.set_font("Helvetica", "B", size)
+                    if heading_index < len(doc_data["headings"]):
+                        doc_data["headings"][heading_index]["page"] = pdf.page_no()
+                        heading_index += 1
                     self._multi_cell_line(pdf, 8, text)
                     pdf.set_font("Helvetica", size=11)
                     idx += 1
@@ -501,6 +633,7 @@ class DocsExporter:
                 idx += 1
 
         pdf.add_page()
+        pdf.set_text_color(0, 0, 0)
         pdf.set_font("Helvetica", "B", 18)
         pdf.cell(0, 10, "Ressources", new_x="LMARGIN", new_y="NEXT")
 
@@ -542,6 +675,9 @@ class DocsExporter:
                 self._multi_cell_line(pdf, 6, f"- {title} => {image}")
         if not images_found:
             self._multi_cell_line(pdf, 6, "NONE")
+
+        toc_entries = self._build_toc_entries(body_docs)
+        self._render_toc(pdf, toc_entries, toc_pages)
 
         pdf.output(str(output_path))
         return output_path

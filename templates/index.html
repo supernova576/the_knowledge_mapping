@@ -110,11 +110,33 @@
                 </form>
             </div>
             <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Links</th><th>Video links</th><th>Actions</th></tr></thead><tbody>
-            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td><a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}">Edit</a></td></tr>
+            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% for link in doc.links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td>{% for link in doc.video_links_list %}<a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>{% endfor %}</td><td><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}">Edit</a><button type="button" class="btn btn-outline-success btn-sm ai-feedback-trigger" data-file-name="{{ doc.title }}">Feedback</button></div></td></tr>
             {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}
 </div>
+
+    <div class="modal fade" id="aiFeedbackConfirmModal" tabindex="-1" aria-labelledby="aiFeedbackConfirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title fs-5" id="aiFeedbackConfirmModalLabel">Request AI Feedback</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-0" id="ai-feedback-confirm-message"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <form method="post" action="{{ url_for('generate_ai_feedback') }}" id="ai-feedback-inline-form" class="m-0">
+                        <input type="hidden" name="selected_doc" id="ai-feedback-selected-doc" />
+                        <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" />
+                        <button type="submit" class="btn btn-outline-success" id="ai-feedback-confirm-submit">Request AI Feedback</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
@@ -125,6 +147,11 @@
             const scanForm = document.getElementById("scan-form");
             const scanSubmit = document.getElementById("scan-submit");
             const syncLoadingBanner = document.getElementById("sync-loading-banner");
+            const aiFeedbackModalElement = document.getElementById("aiFeedbackConfirmModal");
+            const aiFeedbackMessage = document.getElementById("ai-feedback-confirm-message");
+            const aiFeedbackSelectedDoc = document.getElementById("ai-feedback-selected-doc");
+            const aiFeedbackInlineForm = document.getElementById("ai-feedback-inline-form");
+            const aiFeedbackConfirmSubmit = document.getElementById("ai-feedback-confirm-submit");
             if (scanForm && syncLoadingBanner) {
                 scanForm.addEventListener("submit", function () {
                     syncLoadingBanner.classList.remove("d-none");
@@ -132,6 +159,25 @@
                         scanSubmit.disabled = true;
                         scanSubmit.textContent = "Syncing...";
                     }
+                });
+            }
+
+            if (aiFeedbackModalElement && aiFeedbackMessage && aiFeedbackSelectedDoc) {
+                const aiFeedbackModal = new bootstrap.Modal(aiFeedbackModalElement);
+                document.querySelectorAll(".ai-feedback-trigger").forEach(function (button) {
+                    button.addEventListener("click", function () {
+                        const fileName = button.getAttribute("data-file-name") || "";
+                        aiFeedbackSelectedDoc.value = fileName;
+                        aiFeedbackMessage.textContent = "Do you really want to request an AI Feedback for the following file: " + fileName + ".";
+                        aiFeedbackModal.show();
+                    });
+                });
+            }
+
+            if (aiFeedbackInlineForm && aiFeedbackConfirmSubmit) {
+                aiFeedbackInlineForm.addEventListener("submit", function () {
+                    aiFeedbackConfirmSubmit.disabled = true;
+                    aiFeedbackConfirmSubmit.textContent = "Requesting...";
                 });
             }
         })();

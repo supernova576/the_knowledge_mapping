@@ -96,6 +96,50 @@ class DocsWriter:
             logger.error("Failed to create markdown note %s\n%s", target_path, traceback.format_exc())
             adieu(1)
 
+    def render_ai_feedback_template(
+        self,
+        template_content: str,
+        note_name: str,
+        version: int,
+        creation_date: str,
+        score: str,
+        feedback: str,
+    ) -> str:
+        try:
+            rendered = str(template_content)
+            replacements = {
+                "{{ name_of_controlled_note }}": str(note_name).strip(),
+                "{{ version }}": str(version),
+                "{{ creation_date }}": str(creation_date).strip(),
+                "{{ score }}": str(score).strip(),
+                "{{ feedback }}": str(feedback).strip(),
+            }
+
+            for placeholder, value in replacements.items():
+                rendered = rendered.replace(placeholder, value)
+
+            return rendered
+        except Exception:
+            logger.error("Failed to render AI feedback template\n%s", traceback.format_exc())
+            raise
+
+    def write_ai_feedback_file(self, output_dir: Path, note_name: str, version: int, rendered_content: str) -> Path:
+        try:
+            safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(note_name).strip()).strip(" ._")
+            if not safe_name:
+                raise ValueError("Invalid note name for AI feedback output file.")
+
+            output_dir.mkdir(parents=True, exist_ok=True)
+            target_path = output_dir / f"{safe_name} - AI Feedback v{int(version)}.md"
+            if target_path.exists():
+                raise FileExistsError(f"AI feedback file already exists: {target_path}")
+
+            target_path.write_text(rendered_content.rstrip() + "\n", encoding="utf-8")
+            return target_path
+        except Exception:
+            logger.error("Failed to write AI feedback markdown file\n%s", traceback.format_exc())
+            raise
+
     def prepend_template_to_existing_note(
         self,
         target_path: Path,
@@ -113,7 +157,10 @@ class DocsWriter:
             if updated_content is None and not history_present:
                 return False, ["#### Page History"]
 
-            combined_content = f"{template_content.rstrip()}\n\n{updated_content.lstrip()}"
+            template_prefix = self._strip_resources_section(template_content).rstrip()
+            combined_content = updated_content.lstrip()
+            if template_prefix:
+                combined_content = f"{template_prefix}\n\n{combined_content}"
             target_path.write_text(combined_content, encoding="utf-8")
             return True, []
         except Exception:
@@ -187,6 +234,18 @@ class DocsWriter:
     def _find_section_index(self, lines: list[str], section_header: str) -> int:
         return next((i for i, line in enumerate(lines) if line.strip() == section_header), -1)
 
+    def _strip_resources_section(self, content: str) -> str:
+        lines = content.splitlines()
+        resources_idx = self._find_section_index(lines, "## Zusätzliche Ressourcen")
+        if resources_idx == -1:
+            return content
+
+        trimmed = lines[:resources_idx]
+        result = "\n".join(trimmed).rstrip()
+        if content.endswith("\n") and result:
+            result += "\n"
+        return result
+
     def _section_end_index(self, lines: list[str], section_start: int) -> int:
         for index in range(section_start + 1, len(lines)):
             if lines[index].strip().startswith("#### "):
@@ -252,7 +311,16 @@ class DocsWriter:
 
         section_end = self._section_end_index(lines, section_idx)
         block = lines[section_idx + 1:section_end]
-        existing_tags = re.findall(r"(?<!\w)#[-\w]+", "\n".join(block))
+        editable_block = block
+        preserved_suffix: list[str] = []
+
+        for index, line in enumerate(block):
+            if line.strip().startswith(">"):
+                editable_block = block[:index]
+                preserved_suffix = block[index:]
+                break
+
+        existing_tags = re.findall(r"(?<!\w)#[-\w]+", "\n".join(editable_block))
         deduped_existing = list(dict.fromkeys(existing_tags))
 
         kept_tags = [tag for tag in deduped_existing if tag not in tags_to_remove]
@@ -261,5 +329,6 @@ class DocsWriter:
                 kept_tags.append(tag)
 
         replacement = [" ".join(kept_tags).strip()] if kept_tags else [""]
+        replacement.extend(preserved_suffix)
         lines[section_idx + 1:section_end] = replacement
         return lines

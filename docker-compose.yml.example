@@ -8,7 +8,6 @@ services:
       - ./logs:/app/logs
       - ./conf.json:/app/conf.json
       - /path/to/docs:/the-knowledge
-      - /path/to/github_key:/tmp/github_key:ro
 
     environment:
       - PYTHONUNBUFFERED=1

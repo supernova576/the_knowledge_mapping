@@ -73,62 +73,15 @@ class db:
                 """
             )
 
-            settings_columns = [row["name"] for row in self._execute("PRAGMA table_info(settings)").fetchall()]
-            if "hslu_semester_overview_standard_semester" not in settings_columns:
-                self._execute("ALTER TABLE settings ADD COLUMN hslu_semester_overview_standard_semester TEXT")
-
             self.cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS todos (
+                CREATE TABLE IF NOT EXISTS ai_feedback (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    note TEXT UNIQUE,
-                    type TEXT,
-                    progress TEXT,
-                    last_update TEXT
-                )
-                """
-            )
-
-            self.cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS hslu_sw_overview (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    semester TEXT,
-                    module TEXT,
-                    KW TEXT,
-                    SW TEXT,
-                    thema TEXT,
-                    downloaded TEXT,
-                    documented TEXT,
-                    deadlines TEXT
-                )
-                """
-            )
-
-            self.cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS hslu_sw_checklist (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    semester TEXT,
-                    section TEXT,
-                    sw TEXT,
-                    checklist_row TEXT,
-                    checklist_item TEXT,
-                    status TEXT,
-                    file_path TEXT
-                )
-                """
-            )
-
-            self.cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS version_control_snapshots (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    has_changes TEXT NOT NULL,
-                    changes_json TEXT NOT NULL,
-                    untracked_files_json TEXT NOT NULL DEFAULT '[]',
-                    remote_status_json TEXT NOT NULL DEFAULT '{}',
-                    synced_at TEXT NOT NULL
+                    file_name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    path_to_feedback TEXT NOT NULL UNIQUE,
+                    creation_date TEXT NOT NULL
                 )
                 """
             )
@@ -315,95 +268,6 @@ class db:
             logger.error("sqlite_handler/get_last_sync_time failed\n%s", traceback.format_exc())
             adieu(1)
 
-    def save_version_control_snapshot(self, snapshot: dict, synced_at: str | None = None) -> str:
-        try:
-            timestamp = synced_at or now_in_zurich_str()
-            changes = snapshot.get("changes") if isinstance(snapshot, dict) else []
-            if not isinstance(changes, list):
-                changes = []
-
-            has_changes = "true" if bool(snapshot.get("has_changes")) else "false"
-            changes_json = json.dumps(changes, ensure_ascii=False)
-            untracked_files = snapshot.get("untracked_files") if isinstance(snapshot, dict) else []
-            if not isinstance(untracked_files, list):
-                untracked_files = []
-            untracked_files_json = json.dumps(untracked_files, ensure_ascii=False)
-            remote_status = snapshot.get("remote_status") if isinstance(snapshot, dict) else {}
-            if not isinstance(remote_status, dict):
-                remote_status = {}
-            remote_status_json = json.dumps(remote_status, ensure_ascii=False)
-
-            self._execute(
-                """
-                INSERT INTO version_control_snapshots (id, has_changes, changes_json, untracked_files_json, remote_status_json, synced_at)
-                VALUES (1, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    has_changes=excluded.has_changes,
-                    changes_json=excluded.changes_json,
-                    untracked_files_json=excluded.untracked_files_json,
-                    remote_status_json=excluded.remote_status_json,
-                    synced_at=excluded.synced_at
-                """,
-                (has_changes, changes_json, untracked_files_json, remote_status_json, timestamp),
-            )
-            self._commit()
-            return timestamp
-        except Exception:
-            logger.error("sqlite_handler/save_version_control_snapshot failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def get_version_control_snapshot(self) -> dict:
-        try:
-            row = self._fetch_one_dict(
-                "SELECT has_changes, changes_json, untracked_files_json, remote_status_json, synced_at FROM version_control_snapshots WHERE id = 1"
-            )
-            if not row:
-                return {
-                    "has_changes": False,
-                    "changes": [],
-                    "untracked_files": [],
-                    "remote_status": {},
-                    "synced_at": "Never",
-                }
-
-            raw_changes = row.get("changes_json", "[]")
-            try:
-                parsed_changes = json.loads(raw_changes)
-            except json.JSONDecodeError:
-                parsed_changes = []
-
-            if not isinstance(parsed_changes, list):
-                parsed_changes = []
-
-            raw_untracked_files = row.get("untracked_files_json", "[]")
-            try:
-                parsed_untracked_files = json.loads(raw_untracked_files)
-            except json.JSONDecodeError:
-                parsed_untracked_files = []
-
-            if not isinstance(parsed_untracked_files, list):
-                parsed_untracked_files = []
-
-            raw_remote_status = row.get("remote_status_json", "{}")
-            try:
-                parsed_remote_status = json.loads(raw_remote_status)
-            except json.JSONDecodeError:
-                parsed_remote_status = {}
-
-            if not isinstance(parsed_remote_status, dict):
-                parsed_remote_status = {}
-
-            return {
-                "has_changes": str(row.get("has_changes", "false")).lower() == "true",
-                "changes": parsed_changes,
-                "untracked_files": parsed_untracked_files,
-                "remote_status": parsed_remote_status,
-                "synced_at": row.get("synced_at", "Never") or "Never",
-            }
-        except Exception:
-            logger.error("sqlite_handler/get_version_control_snapshot failed\n%s", traceback.format_exc())
-            adieu(1)
-
     def delete_docs_by_id(self, id: int) -> None:
         try:
             self._execute("DELETE FROM docs WHERE id = ?", (id,))
@@ -578,6 +442,71 @@ class db:
             logger.info("Deleted todo id=%s", todo_id)
         except Exception:
             logger.error("sqlite_handler/delete_todo_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def replace_all_ai_feedback(self, rows: list[dict]) -> None:
+        try:
+            self._execute("DELETE FROM ai_feedback")
+            for row in rows:
+                self._execute(
+                    """
+                    INSERT INTO ai_feedback (file_name, version, score, path_to_feedback, creation_date)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(row.get("file_name", "N/A")).strip(),
+                        int(row.get("version", 1)),
+                        float(row.get("score", 0)),
+                        str(row.get("path_to_feedback", "")).strip(),
+                        str(row.get("creation_date", "N/A")).strip(),
+                    ),
+                )
+            self._commit()
+            logger.info("Replaced ai_feedback table with %s entries", len(rows))
+        except Exception:
+            logger.error("sqlite_handler/replace_all_ai_feedback failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_ai_feedback(self) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM ai_feedback
+                ORDER BY lower(file_name) ASC, version DESC, id DESC
+                """
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_all_ai_feedback failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_ai_feedback_by_id(self, feedback_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM ai_feedback WHERE id = ?", (feedback_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_ai_feedback_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_ai_feedback_by_id(self, feedback_id: int) -> None:
+        try:
+            self._execute("DELETE FROM ai_feedback WHERE id = ?", (feedback_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_ai_feedback_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_latest_ai_feedback_for_file(self, file_name: str) -> dict | None:
+        try:
+            return self._fetch_one_dict(
+                """
+                SELECT * FROM ai_feedback
+                WHERE lower(file_name) = lower(?)
+                ORDER BY version DESC, id DESC
+                LIMIT 1
+                """,
+                (file_name,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_latest_ai_feedback_for_file failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:
