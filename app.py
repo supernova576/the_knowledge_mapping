@@ -707,6 +707,29 @@ def _format_feedback_score(value) -> str:
     return f"{score:.2f}".rstrip("0").rstrip(".")
 
 
+def _interpolate_rgb(start: tuple[int, int, int], end: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    bounded_factor = max(0.0, min(1.0, factor))
+    return tuple(round(start[index] + (end[index] - start[index]) * bounded_factor) for index in range(3))
+
+
+def _feedback_score_color(value) -> str:
+    score = _parse_feedback_score(value)
+    if score is None:
+        return "#6c757d"
+
+    bounded_score = max(0.0, min(100.0, score))
+    low_color = (220, 53, 69)
+    mid_color = (245, 173, 39)
+    high_color = (25, 135, 84)
+
+    if bounded_score <= 60:
+        rgb = _interpolate_rgb(low_color, mid_color, bounded_score / 60.0 if 60 else 0.0)
+    else:
+        rgb = _interpolate_rgb(mid_color, high_color, (bounded_score - 60.0) / 40.0)
+
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+
 def _extract_feedback_body(content: str) -> str:
     match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", str(content or ""))
     return match.group(1).strip() if match else str(content or "").strip()
@@ -733,6 +756,7 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
         prepared = dict(row)
         prepared["score_value"] = _parse_feedback_score(prepared.get("score"))
         prepared["score_display"] = _format_feedback_score(prepared.get("score"))
+        prepared["score_color"] = _feedback_score_color(prepared.get("score"))
         prepared["version_display"] = str(prepared.get("version", "N/A"))
         prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
 
@@ -1375,6 +1399,7 @@ def ai_feedback_overview():
         feedback_rows=feedback_rows,
         total_reports=len(all_feedback_rows),
         average_score=_format_feedback_score(average_score) if average_score is not None else "N/A",
+        average_score_color=_feedback_score_color(average_score),
         selected_name=name_query,
         selected_score=score_query,
         available_docs=available_docs,
@@ -1457,6 +1482,7 @@ def ai_feedback_detail(feedback_id: int):
 
     prepared_feedback = dict(feedback_row)
     prepared_feedback["score_display"] = _format_feedback_score(prepared_feedback.get("score"))
+    prepared_feedback["score_color"] = _feedback_score_color(prepared_feedback.get("score"))
     prepared_feedback["feedback_text"] = _extract_feedback_body(feedback_content)
     prepared_feedback["path_to_feedback"] = str(feedback_path)
 
