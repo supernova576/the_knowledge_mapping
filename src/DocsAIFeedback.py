@@ -87,12 +87,45 @@ class DocsAIFeedback:
             },
         ]
 
+    def _build_request_payload(self, messages: list[dict], use_strict_schema: bool) -> dict:
+        payload: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.2,
+            "stream": False,
+            "provider": {
+                "order": self.provider_order if isinstance(self.provider_order, list) else [],
+                "require_parameters": True,
+            },
+        }
+
+        if use_strict_schema:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ai_feedback",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "score": {"type": "number"},
+                            "feedback": {"type": "string"},
+                        },
+                        "required": ["score", "feedback"],
+                    },
+                },
+            }
+
+        return payload
+
     def _extract_response_content(self, response_json: dict) -> str:
         choices = response_json.get("choices", [])
         if not choices:
             raise ValueError("AI response did not contain any choices.")
 
-        message = choices[0].get("message", {})
+        choice = choices[0]
+        message = choice.get("message", {})
         content = message.get("content", "")
 
         if isinstance(content, str):
@@ -104,6 +137,17 @@ class DocsAIFeedback:
                 if isinstance(item, dict) and item.get("type") == "text":
                     text_parts.append(str(item.get("text", "")))
             return "\n".join(text_parts).strip()
+
+        tool_calls = message.get("tool_calls", [])
+        if tool_calls:
+            function_call = tool_calls[0].get("function", {})
+            arguments = function_call.get("arguments", "")
+            if isinstance(arguments, str) and arguments.strip():
+                return arguments.strip()
+
+        text = choice.get("text", "")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
 
         raise ValueError("Unsupported AI response content format.")
 
@@ -135,39 +179,14 @@ class DocsAIFeedback:
             raise ValueError("AI response score must not be NaN.")
         return score
 
-    def _request_ai_feedback(self, messages: list[dict]) -> dict:
+    def _request_ai_feedback_once(self, messages: list[dict], use_strict_schema: bool) -> dict:
         if not self.base_url:
             raise ValueError("AI feedback base_url is missing in conf.json.")
         if not self.api_key or self.api_key == "-":
             raise ValueError("AI feedback api_key is missing in conf.json.")
         if not self.model:
             raise ValueError("AI feedback model is missing in conf.json.")
-
-        payload: dict = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.2,
-            "provider": {
-                "order": self.provider_order if isinstance(self.provider_order, list) else [],
-                "require_parameters": True,
-            },
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "ai_feedback",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "score": {"type": "number"},
-                            "feedback": {"type": "string"},
-                        },
-                        "required": ["score", "feedback"],
-                    },
-                },
-            },
-        }
+        payload = self._build_request_payload(messages, use_strict_schema=use_strict_schema)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -209,6 +228,17 @@ class DocsAIFeedback:
             "score": self._normalize_score(parsed_payload.get("score")),
             "feedback": feedback_text,
         }
+
+    def _request_ai_feedback(self, messages: list[dict]) -> dict:
+        try:
+            return self._request_ai_feedback_once(messages, use_strict_schema=True)
+        except (ValueError, RuntimeError) as exc:
+            logger.warning(
+                "Strict AI feedback request failed for model %s. Retrying without json_schema. Reason: %s",
+                self.model,
+                exc,
+            )
+            return self._request_ai_feedback_once(messages, use_strict_schema=False)
 
     def generate_feedback(self, file_name: str) -> dict:
         try:

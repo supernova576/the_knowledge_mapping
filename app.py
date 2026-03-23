@@ -1458,9 +1458,18 @@ def generate_ai_feedback():
         parser.sync_ai_feedback_to_db()
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
-    except Exception as exc:
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
         logger.error("AI feedback generation failed\n%s", traceback.format_exc())
-        return render_template("500.html", error_message=str(exc)), 500
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
+    except SystemExit:
+        logger.error("AI feedback generation aborted by SystemExit\n%s", traceback.format_exc())
+        flash("AI feedback generation failed due to a file, database, or parser exit. Check logs and paths.", "danger")
+        return redirect(redirect_to)
+    except BaseException as exc:
+        logger.error("AI feedback generation failed with BaseException\n%s", traceback.format_exc())
+        flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
+        return redirect(redirect_to)
 
 
 @app.route("/ai_feedback/<int:feedback_id>", methods=["GET"])
