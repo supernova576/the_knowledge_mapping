@@ -1,8 +1,10 @@
 import json
 import re
+import socket
 import traceback
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -216,6 +218,24 @@ class DocsAIFeedback:
         except Exception:
             logger.error("Failed to write AI feedback error payload\n%s", traceback.format_exc())
 
+    def _read_response_with_deadline(self, response) -> str:
+        started_at = monotonic()
+        chunks: list[bytes] = []
+
+        while True:
+            elapsed_seconds = monotonic() - started_at
+            if elapsed_seconds >= self.request_timeout_seconds:
+                raise TimeoutError(
+                    f"OpenRouter response exceeded total timeout of {self.request_timeout_seconds} seconds."
+                )
+
+            chunk = response.read(64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+        return b"".join(chunks).decode("utf-8")
+
     def _request_ai_feedback_once(self, note_name: str, messages: list[dict], use_strict_schema: bool) -> dict:
         if not self.base_url:
             raise ValueError("AI feedback base_url is missing in conf.json.")
@@ -242,7 +262,7 @@ class DocsAIFeedback:
 
         try:
             with urllib_request.urlopen(request_object, timeout=self.request_timeout_seconds) as response:
-                raw_response_text = response.read().decode("utf-8")
+                raw_response_text = self._read_response_with_deadline(response)
                 response_json = json.loads(raw_response_text)
         except urllib_error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
@@ -262,7 +282,22 @@ class DocsAIFeedback:
             )
             logger.error("OpenRouter request failed\n%s", traceback.format_exc())
             raise RuntimeError(f"OpenRouter request failed: HTTP {exc.code} - {error_body}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            self._dump_error_payload(
+                note_name=note_name,
+                request_payload=payload,
+                use_strict_schema=use_strict_schema,
+                error_message=str(exc),
+            )
+            logger.error("OpenRouter request timed out\n%s", traceback.format_exc())
+            raise RuntimeError(str(exc)) from exc
         except urllib_error.URLError as exc:
+            self._dump_error_payload(
+                note_name=note_name,
+                request_payload=payload,
+                use_strict_schema=use_strict_schema,
+                error_message=f"OpenRouter request failed: {exc.reason}",
+            )
             logger.error("OpenRouter request failed\n%s", traceback.format_exc())
             raise RuntimeError(f"OpenRouter request failed: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
