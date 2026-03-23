@@ -483,7 +483,7 @@ def _set_rw_permissions_for_all_users(path: Path) -> None:
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     parser = DocsParser()
     database = db()
-    todos = database.get_all_todos()
+    todos = parser.parse_todos_from_markdown()
 
     matched_todo = False
     target_stem = Path(file_name).stem.strip().casefold()
