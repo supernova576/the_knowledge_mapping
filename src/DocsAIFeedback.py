@@ -1,6 +1,7 @@
 import json
 import re
 import traceback
+from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -26,6 +27,7 @@ class DocsAIFeedback:
         self.feedback_template_path = Path(
             ai_conf.get("feedback_template_path", "/the-knowledge/03_TEMPLATES/2 - AI Feedback.md")
         ).resolve()
+        self.error_output_path = Path(ai_conf.get("error_output_path", "output/ai_feedback_error")).resolve()
         self.base_url = str(ai_conf.get("base_url", "")).strip()
         self.api_key = str(ai_conf.get("api_key", "")).strip()
         self.model = str(ai_conf.get("model", "")).strip()
@@ -179,7 +181,42 @@ class DocsAIFeedback:
             raise ValueError("AI response score must not be NaN.")
         return score
 
-    def _request_ai_feedback_once(self, messages: list[dict], use_strict_schema: bool) -> dict:
+    def _dump_error_payload(
+        self,
+        *,
+        note_name: str,
+        request_payload: dict,
+        use_strict_schema: bool,
+        error_message: str,
+        response_json: dict | None = None,
+        raw_response_text: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        try:
+            self.error_output_path.mkdir(parents=True, exist_ok=True)
+            safe_note_name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(note_name or "unknown").strip()).strip("._") or "unknown"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_path = self.error_output_path / f"{timestamp}_{safe_note_name}_ai_feedback_error.json"
+
+            payload = {
+                "created_at": datetime.now().isoformat(),
+                "note_name": note_name,
+                "model": self.model,
+                "provider_order": self.provider_order if isinstance(self.provider_order, list) else [],
+                "base_url": self.base_url,
+                "use_strict_schema": use_strict_schema,
+                "http_status": http_status,
+                "error_message": error_message,
+                "request_payload": request_payload,
+                "response_json": response_json,
+                "raw_response_text": raw_response_text,
+            }
+            target_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            logger.error("Wrote AI feedback error payload to %s", target_path)
+        except Exception:
+            logger.error("Failed to write AI feedback error payload\n%s", traceback.format_exc())
+
+    def _request_ai_feedback_once(self, note_name: str, messages: list[dict], use_strict_schema: bool) -> dict:
         if not self.base_url:
             raise ValueError("AI feedback base_url is missing in conf.json.")
         if not self.api_key or self.api_key == "-":
@@ -205,40 +242,73 @@ class DocsAIFeedback:
 
         try:
             with urllib_request.urlopen(request_object, timeout=self.request_timeout_seconds) as response:
-                response_json = json.loads(response.read().decode("utf-8"))
+                raw_response_text = response.read().decode("utf-8")
+                response_json = json.loads(raw_response_text)
         except urllib_error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
+            parsed_error_body = None
+            try:
+                parsed_error_body = json.loads(error_body)
+            except json.JSONDecodeError:
+                parsed_error_body = None
+            self._dump_error_payload(
+                note_name=note_name,
+                request_payload=payload,
+                use_strict_schema=use_strict_schema,
+                error_message=f"OpenRouter request failed: HTTP {exc.code}",
+                response_json=parsed_error_body if isinstance(parsed_error_body, dict) else None,
+                raw_response_text=error_body,
+                http_status=exc.code,
+            )
             logger.error("OpenRouter request failed\n%s", traceback.format_exc())
             raise RuntimeError(f"OpenRouter request failed: HTTP {exc.code} - {error_body}") from exc
         except urllib_error.URLError as exc:
             logger.error("OpenRouter request failed\n%s", traceback.format_exc())
             raise RuntimeError(f"OpenRouter request failed: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
+            self._dump_error_payload(
+                note_name=note_name,
+                request_payload=payload,
+                use_strict_schema=use_strict_schema,
+                error_message=f"OpenRouter returned invalid JSON: {exc}",
+                raw_response_text=raw_response_text,
+            )
             logger.error("OpenRouter response was not valid JSON\n%s", traceback.format_exc())
             raise RuntimeError(f"OpenRouter returned invalid JSON: {exc}") from exc
 
-        raw_content = self._extract_response_content(response_json)
-        parsed_payload = self._parse_json_payload(raw_content)
-
-        feedback_text = str(parsed_payload.get("feedback", "")).strip()
-        if not feedback_text:
-            raise ValueError("AI response did not provide feedback text.")
-
-        return {
-            "score": self._normalize_score(parsed_payload.get("score")),
-            "feedback": feedback_text,
-        }
-
-    def _request_ai_feedback(self, messages: list[dict]) -> dict:
         try:
-            return self._request_ai_feedback_once(messages, use_strict_schema=True)
+            raw_content = self._extract_response_content(response_json)
+            parsed_payload = self._parse_json_payload(raw_content)
+
+            feedback_text = str(parsed_payload.get("feedback", "")).strip()
+            if not feedback_text:
+                raise ValueError("AI response did not provide feedback text.")
+
+            return {
+                "score": self._normalize_score(parsed_payload.get("score")),
+                "feedback": feedback_text,
+            }
+        except (ValueError, KeyError, TypeError) as exc:
+            self._dump_error_payload(
+                note_name=note_name,
+                request_payload=payload,
+                use_strict_schema=use_strict_schema,
+                error_message=str(exc),
+                response_json=response_json,
+                raw_response_text=raw_response_text,
+            )
+            raise
+
+    def _request_ai_feedback(self, note_name: str, messages: list[dict]) -> dict:
+        try:
+            return self._request_ai_feedback_once(note_name, messages, use_strict_schema=True)
         except (ValueError, RuntimeError) as exc:
             logger.warning(
                 "Strict AI feedback request failed for model %s. Retrying without json_schema. Reason: %s",
                 self.model,
                 exc,
             )
-            return self._request_ai_feedback_once(messages, use_strict_schema=False)
+            return self._request_ai_feedback_once(note_name, messages, use_strict_schema=False)
 
     def generate_feedback(self, file_name: str) -> dict:
         try:
@@ -248,7 +318,7 @@ class DocsAIFeedback:
             evaluation_context = self._read_template(self.prompt_template_path, "AI prompt")
             feedback_template = self._read_template(self.feedback_template_path, "AI feedback")
 
-            ai_feedback = self._request_ai_feedback(self._build_messages(note_name, doc_content, evaluation_context))
+            ai_feedback = self._request_ai_feedback(note_name, self._build_messages(note_name, doc_content, evaluation_context))
             return {
                 "note_name": note_name,
                 "score": ai_feedback["score"],

@@ -26,6 +26,7 @@
         "model": "google/gemini-2.5-flash-lite",
         "http_referer": "http://localhost",
         "app_title": "The Knowledge Mapping",
-        "timeout_seconds": 120
+        "timeout_seconds": 120,
+        "error_output_path": "/output/ai_feedback_error"
     }
 }
