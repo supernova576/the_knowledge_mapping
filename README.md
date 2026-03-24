@@ -83,7 +83,3 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - create from Template
     - Status and todos
     - Mapping of project specific tag to docs
-- conf.json
-  - remove git stuff
-  - add missing paths to images, templates and priv (also update code)
-    
