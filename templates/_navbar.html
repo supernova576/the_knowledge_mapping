@@ -13,14 +13,7 @@
                     <a class="nav-link {% if active_page == 'todo' %}active{% endif %}"
                         href="{{ url_for('todo_overview') }}">Todo</a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link {% if active_page == 'version_control' %}active{% endif %}"
-                        href="{{ url_for('version_control_overview') }}">Version control</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link {% if active_page == 'export' %}active{% endif %}"
-                        href="{{ url_for('export_page') }}">Export</a>
-                </li>
+                
                 <li class="nav-item">
                     <a class="nav-link {% if active_page == 'ai_feedback' %}active{% endif %}"
                         href="{{ url_for('ai_feedback_overview') }}">AI Feedback</a>
@@ -29,6 +22,27 @@
 
             <!-- RIGHT SIDE -->
             <ul class="navbar-nav mb-2 mb-lg-0">
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle {% if active_page in ['hslu_semester_overview', 'hslu_semester_checklist'] %}active{% endif %}"
+                        href="#" role="button" data-bs-toggle="dropdown">
+                        Advanced
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'export' %}active{% endif %}"
+                                href="{{ url_for('export_page') }}">
+                                Export
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'version_control' %}active{% endif %}"
+                                href="{{ url_for('version_control_overview') }}">
+                                Version Control
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if active_page in ['hslu_semester_overview', 'hslu_semester_checklist'] %}active{% endif %}"
                         href="#" role="button" data-bs-toggle="dropdown">

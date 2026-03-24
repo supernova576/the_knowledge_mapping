@@ -64,18 +64,27 @@ class DocsExporter:
         normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(title or "export").strip()).strip("_")
         return f"{normalized or 'export'}.pdf"
 
-    def _parse_db_array(self, value: str) -> list[str]:
+    def _parse_db_link_map(self, value: str) -> dict[str, str]:
         raw = str(value or "").strip()
         if not raw or raw == "N/A":
-            return []
-        if raw.startswith("[") and raw.endswith("]"):
+            return {}
+        if (raw.startswith("[") and raw.endswith("]")) or (raw.startswith("{") and raw.endswith("}")):
             try:
                 parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    normalized: dict[str, str] = {}
+                    for link, description in parsed.items():
+                        clean_link = str(link).strip()
+                        if not clean_link:
+                            continue
+                        clean_description = str(description).strip() or clean_link
+                        normalized[clean_link] = clean_description
+                    return normalized
                 if isinstance(parsed, list):
-                    return [str(item).strip() for item in parsed if str(item).strip()]
+                    return {str(item).strip(): str(item).strip() for item in parsed if str(item).strip()}
             except json.JSONDecodeError:
-                return []
-        return [raw]
+                return {}
+        return {raw: raw}
 
     def _resolve_doc_path(self, doc_title: str) -> Path | None:
         sanitized = str(doc_title or "").strip().replace("/", "").replace("\\", "")
@@ -506,8 +515,8 @@ class DocsExporter:
         pdf.multi_cell(details_w - 14, 7, "Amount of pages: {nb}", new_x="LMARGIN", new_y="NEXT")
 
         body_docs: list[dict] = []
-        all_links: dict[str, list[str]] = {}
-        all_video_links: dict[str, list[str]] = {}
+        all_links: dict[str, dict[str, str]] = {}
+        all_video_links: dict[str, dict[str, str]] = {}
         all_used_images: dict[str, list[str]] = {}
 
         for doc in ordered_docs:
@@ -535,8 +544,8 @@ class DocsExporter:
                     "start_page": 0,
                 }
             )
-            all_links[title] = self._parse_db_array(doc.get("links", "N/A"))
-            all_video_links[title] = self._parse_db_array(doc.get("video_links", "N/A"))
+            all_links[title] = self._parse_db_link_map(doc.get("links", "N/A"))
+            all_video_links[title] = self._parse_db_link_map(doc.get("video_links", "N/A"))
             all_used_images[title] = self._extract_obsidian_images(cleaned_content)
 
         placeholder_entries = self._build_toc_entries(body_docs) or [{"level": 0, "title": "", "page": 0}]
@@ -643,10 +652,10 @@ class DocsExporter:
         pdf.set_font("Helvetica", size=11)
         page_links_found = False
         for title in sorted(all_links.keys(), key=str.casefold):
-            links = all_links.get(title, [])
-            for link in links:
+            links = all_links.get(title, {})
+            for link, description in links.items():
                 page_links_found = True
-                self._multi_cell_line(pdf, 6, f"- {title} => {link}")
+                self._multi_cell_line(pdf, 6, f"- {title} => {description} ({link})")
         if not page_links_found:
             self._multi_cell_line(pdf, 6, "NONE")
 
@@ -656,10 +665,10 @@ class DocsExporter:
         pdf.set_font("Helvetica", size=11)
         video_links_found = False
         for title in sorted(all_video_links.keys(), key=str.casefold):
-            links = all_video_links.get(title, [])
-            for link in links:
+            links = all_video_links.get(title, {})
+            for link, description in links.items():
                 video_links_found = True
-                self._multi_cell_line(pdf, 6, f"- {title} => {link}")
+                self._multi_cell_line(pdf, 6, f"- {title} => {description} ({link})")
         if not video_links_found:
             self._multi_cell_line(pdf, 6, "NONE")
 

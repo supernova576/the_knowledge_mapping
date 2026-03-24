@@ -4,7 +4,7 @@ import os
 import re
 import stat
 import traceback
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from datetime import datetime
 from pathlib import Path
 
@@ -116,6 +116,174 @@ def _render_hslu_inline_markdown(value: str) -> str:
     return _render_fragment(text)
 
 
+def _render_ai_feedback_markdown(value: str) -> str:
+    raw_markdown = str(value or "").strip()
+    if not raw_markdown:
+        return ""
+
+    def _escape_inline(text: str) -> str:
+        return html.escape(str(text or ""))
+
+    def _safe_href(raw_href: str) -> str:
+        candidate = str(raw_href or "").strip()
+        if re.match(r"^(https?://|mailto:)", candidate, flags=re.IGNORECASE):
+            return html.escape(candidate, quote=True)
+        return ""
+
+    def _render_inline(text: str) -> str:
+        rendered = _escape_inline(text)
+        rendered = re.sub(r"`([^`]+)`", lambda match: f"<code>{match.group(1)}</code>", rendered)
+        rendered = re.sub(r"\*\*([^*]+)\*\*", lambda match: f"<strong>{match.group(1)}</strong>", rendered)
+        rendered = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", lambda match: f"<em>{match.group(1)}</em>", rendered)
+        rendered = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            lambda match: (
+                f'<a href="{safe_href}" target="_blank" rel="noopener noreferrer nofollow">{match.group(1)}</a>'
+                if (safe_href := _safe_href(match.group(2)))
+                else match.group(1)
+            ),
+            rendered,
+        )
+        return rendered
+
+    def _render_table(block_lines: list[str]) -> str | None:
+        if len(block_lines) < 2:
+            return None
+
+        def _split_row(row: str) -> list[str]:
+            stripped = row.strip()
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                return []
+            return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+        header = _split_row(block_lines[0])
+        separator = _split_row(block_lines[1])
+        if not header or len(header) != len(separator):
+            return None
+        if not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in separator):
+            return None
+
+        body_rows: list[list[str]] = []
+        for line in block_lines[2:]:
+            cells = _split_row(line)
+            if len(cells) != len(header):
+                return None
+            body_rows.append(cells)
+
+        head_html = "".join(f"<th>{_render_inline(cell)}</th>" for cell in header)
+        body_html = "".join(
+            "<tr>" + "".join(f"<td>{_render_inline(cell)}</td>" for cell in row) + "</tr>"
+            for row in body_rows
+        )
+        return f"<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"
+
+    lines = raw_markdown.splitlines()
+    blocks: list[str] = []
+    paragraph_buffer: list[str] = []
+    list_stack: list[str] = []
+    table_buffer: list[str] = []
+    in_code_block = False
+    code_lines: list[str] = []
+
+    def _flush_paragraph() -> None:
+        nonlocal paragraph_buffer
+        if paragraph_buffer:
+            blocks.append(f"<p>{'<br>'.join(_render_inline(line) for line in paragraph_buffer)}</p>")
+            paragraph_buffer = []
+
+    def _flush_lists() -> None:
+        nonlocal list_stack
+        while list_stack:
+            blocks.append(f"</{list_stack.pop()}>")
+
+    def _flush_table() -> None:
+        nonlocal table_buffer
+        if not table_buffer:
+            return
+        table_html = _render_table(table_buffer)
+        if table_html is None:
+            for row in table_buffer:
+                paragraph_buffer.append(row)
+            _flush_paragraph()
+        else:
+            blocks.append(table_html)
+        table_buffer = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            _flush_paragraph()
+            _flush_table()
+            _flush_lists()
+            if in_code_block:
+                blocks.append(f"<pre><code>{_escape_inline(chr(10).join(code_lines))}</code></pre>")
+                code_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            _flush_paragraph()
+            _flush_lists()
+            table_buffer.append(line)
+            continue
+        _flush_table()
+
+        if not stripped:
+            _flush_paragraph()
+            _flush_lists()
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading_match:
+            _flush_paragraph()
+            _flush_lists()
+            level = len(heading_match.group(1))
+            blocks.append(f"<h{level}>{_render_inline(heading_match.group(2))}</h{level}>")
+            continue
+
+        if re.fullmatch(r"---+|\*\*\*+", stripped):
+            _flush_paragraph()
+            _flush_lists()
+            blocks.append("<hr>")
+            continue
+
+        blockquote_match = re.match(r"^>\s?(.*)$", stripped)
+        if blockquote_match:
+            _flush_paragraph()
+            _flush_lists()
+            blocks.append(f"<blockquote><p>{_render_inline(blockquote_match.group(1))}</p></blockquote>")
+            continue
+
+        ordered_match = re.match(r"^\d+\.\s+(.*)$", stripped)
+        unordered_match = re.match(r"^[-*]\s+(.*)$", stripped)
+        if ordered_match or unordered_match:
+            _flush_paragraph()
+            list_tag = "ol" if ordered_match else "ul"
+            if not list_stack or list_stack[-1] != list_tag:
+                _flush_lists()
+                blocks.append(f"<{list_tag}>")
+                list_stack.append(list_tag)
+            item_content = ordered_match.group(1) if ordered_match else unordered_match.group(1)
+            blocks.append(f"<li>{_render_inline(item_content)}</li>")
+            continue
+
+        paragraph_buffer.append(line)
+
+    if in_code_block:
+        blocks.append(f"<pre><code>{_escape_inline(chr(10).join(code_lines))}</code></pre>")
+    _flush_paragraph()
+    _flush_table()
+    _flush_lists()
+    return "\n".join(blocks)
+
+
 def _normalize_value(value):
     if isinstance(value, str):
         stripped = value.strip()
@@ -138,6 +306,50 @@ def _to_display_list(value):
     return [str(normalized)]
 
 
+def _is_valid_http_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _parse_link_map(value) -> dict[str, str]:
+    if isinstance(value, dict):
+        parsed_dict = value
+    elif isinstance(value, list):
+        parsed_dict = {str(item).strip(): str(item).strip() for item in value if str(item).strip()}
+    else:
+        raw = str(value or "").strip()
+        if not raw or raw == "N/A":
+            return {}
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            loaded = None
+
+        if isinstance(loaded, dict):
+            parsed_dict = loaded
+        elif isinstance(loaded, list):
+            parsed_dict = {str(item).strip(): str(item).strip() for item in loaded if str(item).strip()}
+        elif _is_valid_http_url(raw):
+            parsed_dict = {raw: raw}
+        else:
+            return {}
+
+    normalized: dict[str, str] = {}
+    for raw_link, raw_description in parsed_dict.items():
+        link = str(raw_link or "").strip()
+        description = re.sub(r"\s+", " ", str(raw_description or "").strip())
+        if not link or not _is_valid_http_url(link):
+            continue
+        normalized[link] = description or link
+
+    return normalized
+
+
+def _link_map_to_items(value) -> list[dict[str, str]]:
+    link_map = _parse_link_map(value)
+    return [{"link": link, "description": description} for link, description in link_map.items()]
+
+
 
 
 def _normalize_manual_override(value: str | None) -> str:
@@ -158,18 +370,22 @@ def _compliance_tag_class(doc: dict) -> str:
 
     return "compliance-tag-not-compliant"
 
-def _load_docs(database: db, view: str, query: str) -> dict:
-
-    if view == "id" and query:
-        try:
-            return database.get_docs_by_id(int(query))
-        except ValueError:
-            logger.warning("Invalid ID query received in UI: %s", query)
-            flash("ID must be a number", "danger")
-            return database.get_all_docs()
+def _load_docs(database: db, parser: DocsParser, view: str, query: str) -> dict:
 
     if view == "name" and query:
         return database.get_docs_by_name(query, exact_match=False)
+
+    if view == "description" and query:
+        matching_titles = parser.get_doc_titles_by_description_query(query)
+        if not matching_titles:
+            return {}
+
+        all_docs = database.get_all_docs()
+        return {
+            doc_id: doc_data
+            for doc_id, doc_data in all_docs.items()
+            if str(doc_data.get("title", "")).strip() in matching_titles
+        }
 
     if view == "tag" and query:
         return database.get_docs_by_tag(query)
@@ -315,7 +531,7 @@ def _set_rw_permissions_for_all_users(path: Path) -> None:
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     parser = DocsParser()
     database = db()
-    todos = database.get_all_todos()
+    todos = parser.parse_todos_from_markdown()
 
     matched_todo = False
     target_stem = Path(file_name).stem.strip().casefold()
@@ -539,9 +755,44 @@ def _format_feedback_score(value) -> str:
     return f"{score:.2f}".rstrip("0").rstrip(".")
 
 
+def _interpolate_rgb(start: tuple[int, int, int], end: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    bounded_factor = max(0.0, min(1.0, factor))
+    return tuple(round(start[index] + (end[index] - start[index]) * bounded_factor) for index in range(3))
+
+
+def _feedback_score_color(value) -> str:
+    score = _parse_feedback_score(value)
+    if score is None:
+        return "#6c757d"
+
+    bounded_score = max(0.0, min(100.0, score))
+    low_color = (220, 53, 69)
+    mid_color = (245, 173, 39)
+    high_color = (25, 135, 84)
+
+    if bounded_score <= 60:
+        rgb = _interpolate_rgb(low_color, mid_color, bounded_score / 60.0 if 60 else 0.0)
+    else:
+        rgb = _interpolate_rgb(mid_color, high_color, (bounded_score - 60.0) / 40.0)
+
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+
 def _extract_feedback_body(content: str) -> str:
     match = re.search(r"(?ims)^##\s+Feedback\s*$\n(.*?)(?=\Z)", str(content or ""))
     return match.group(1).strip() if match else str(content or "").strip()
+
+
+def _ensure_doc_can_receive_ai_feedback(database: db, selected_doc: str) -> None:
+    matching_docs = database.get_docs_by_name(selected_doc, exact_match=True)
+    if not matching_docs:
+        return
+
+    doc_row = next(iter(matching_docs.values()))
+    if str(doc_row.get("is_under_construction", "false")).lower() == "true":
+        raise ValueError(
+            "The note is under construction. The feedback was thus not requested. Change the note status and try again."
+        )
 
 
 def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> list[dict]:
@@ -553,6 +804,7 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
         prepared = dict(row)
         prepared["score_value"] = _parse_feedback_score(prepared.get("score"))
         prepared["score_display"] = _format_feedback_score(prepared.get("score"))
+        prepared["score_color"] = _feedback_score_color(prepared.get("score"))
         prepared["version_display"] = str(prepared.get("version", "N/A"))
         prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
 
@@ -579,12 +831,13 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
 def index():
     view = request.args.get("view", "all")
     query = request.args.get("q", "").strip()
+    parser = DocsParser()
     sort_by = request.args.get("sort", "title_asc").strip()
     if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
         sort_by = "title_asc"
 
     database = db()
-    docs = _load_docs(database, view, query)
+    docs = _load_docs(database, parser, view, query)
     under_construction_docs = database.get_under_construction_docs()
 
     total_docs = len(docs)
@@ -595,8 +848,8 @@ def index():
     for item in docs.values():
         row = dict(item)
         row["tags_list"] = _to_display_list(row.get("tags"))
-        row["links_list"] = _to_display_list(row.get("links"))
-        row["video_links_list"] = _to_display_list(row.get("video_links"))
+        row["links_list"] = _link_map_to_items(row.get("links"))
+        row["video_links_list"] = _link_map_to_items(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
@@ -1087,8 +1340,8 @@ def edit_doc_resources(doc_id: int):
         all_tags=all_tags,
         current_resources={
             "tags": _to_display_list(doc.get("tags")),
-            "links": _to_display_list(doc.get("links")),
-            "video_links": _to_display_list(doc.get("video_links")),
+            "links": _link_map_to_items(doc.get("links")),
+            "video_links": _link_map_to_items(doc.get("video_links")),
         },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
@@ -1116,21 +1369,82 @@ def save_doc_resources(doc_id: int):
 
     tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
     tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
-    links_to_add = _parse_multiline_values(request.form.get("links_to_add", ""))
-    links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_links_to_remove")))
-    video_links_to_add = _parse_multiline_values(request.form.get("video_links_to_add", ""))
-    video_links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_video_links_to_remove")))
+    existing_links_original = request.form.getlist("existing_links_original")
+    existing_links_description = request.form.getlist("existing_links_description")
+    existing_links_link = request.form.getlist("existing_links_link")
+    selected_links_to_remove = set(request.form.getlist("selected_links_to_remove"))
+
+    existing_video_links_original = request.form.getlist("existing_video_links_original")
+    existing_video_links_description = request.form.getlist("existing_video_links_description")
+    existing_video_links_link = request.form.getlist("existing_video_links_link")
+    selected_video_links_to_remove = set(request.form.getlist("selected_video_links_to_remove"))
+
+    new_links_description = request.form.getlist("new_links_description")
+    new_links_link = request.form.getlist("new_links_link")
+    new_video_links_description = request.form.getlist("new_video_links_description")
+    new_video_links_link = request.form.getlist("new_video_links_link")
     create_missing_sections = request.form.get("create_missing_sections", "false").strip().lower() == "true"
+
+    def _collect_link_map(
+        original_values: list[str],
+        description_values: list[str],
+        link_values: list[str],
+        removed_originals: set[str],
+        append_descriptions: list[str] | None = None,
+        append_links: list[str] | None = None,
+    ) -> dict[str, str]:
+        collected: dict[str, str] = {}
+        for original, description, link in zip(original_values, description_values, link_values):
+            original_clean = str(original or "").strip()
+            if original_clean and original_clean in removed_originals:
+                continue
+
+            candidate_link = str(link or "").strip()
+            candidate_description = re.sub(r"\s+", " ", str(description or "").strip())
+            if not candidate_link:
+                continue
+            if not _is_valid_http_url(candidate_link):
+                continue
+            collected[candidate_link] = candidate_description or candidate_link
+
+        if append_descriptions is None or append_links is None:
+            return collected
+
+        for description, link in zip(append_descriptions, append_links):
+            candidate_link = str(link or "").strip()
+            candidate_description = re.sub(r"\s+", " ", str(description or "").strip())
+            if not candidate_link:
+                continue
+            if not _is_valid_http_url(candidate_link):
+                continue
+            collected[candidate_link] = candidate_description or candidate_link
+
+        return collected
+
+    links_map = _collect_link_map(
+        original_values=existing_links_original,
+        description_values=existing_links_description,
+        link_values=existing_links_link,
+        removed_originals=selected_links_to_remove,
+        append_descriptions=new_links_description,
+        append_links=new_links_link,
+    )
+    video_links_map = _collect_link_map(
+        original_values=existing_video_links_original,
+        description_values=existing_video_links_description,
+        link_values=existing_video_links_link,
+        removed_originals=selected_video_links_to_remove,
+        append_descriptions=new_video_links_description,
+        append_links=new_video_links_link,
+    )
 
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
     success, missing_sections = writer.update_doc_resources(
         doc_path=doc_path,
         tags_to_add=tags_to_add,
         tags_to_remove=tags_to_remove,
-        links_to_add=links_to_add,
-        links_to_remove=links_to_remove,
-        video_links_to_add=video_links_to_add,
-        video_links_to_remove=video_links_to_remove,
+        links_map=links_map,
+        video_links_map=video_links_map,
         create_missing_sections=create_missing_sections,
     )
 
@@ -1138,10 +1452,6 @@ def save_doc_resources(doc_id: int):
         session[f"pending_doc_resource_updates_{doc_id}"] = {
             "tags_to_add": request.form.get("tags_to_add", ""),
             "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
-            "links_to_add": request.form.get("links_to_add", ""),
-            "links_to_remove": "\n".join(request.form.getlist("selected_links_to_remove")),
-            "video_links_to_add": request.form.get("video_links_to_add", ""),
-            "video_links_to_remove": "\n".join(request.form.getlist("selected_video_links_to_remove")),
         }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",
@@ -1195,6 +1505,7 @@ def ai_feedback_overview():
         feedback_rows=feedback_rows,
         total_reports=len(all_feedback_rows),
         average_score=_format_feedback_score(average_score) if average_score is not None else "N/A",
+        average_score_color=_feedback_score_color(average_score),
         selected_name=name_query,
         selected_score=score_query,
         available_docs=available_docs,
@@ -1223,12 +1534,13 @@ def generate_ai_feedback():
 
     try:
         conf = _load_conf()
+        database = db()
+        _ensure_doc_can_receive_ai_feedback(database, selected_doc)
         parser = DocsParser()
         parser.sync_ai_feedback_to_db()
         ai_feedback_service = DocsAIFeedback(conf)
         feedback_payload = ai_feedback_service.generate_feedback(selected_doc)
 
-        database = db()
         latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
         next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
 
@@ -1252,9 +1564,18 @@ def generate_ai_feedback():
         parser.sync_ai_feedback_to_db()
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
-    except Exception as exc:
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
         logger.error("AI feedback generation failed\n%s", traceback.format_exc())
-        return render_template("500.html", error_message=str(exc)), 500
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
+    except SystemExit:
+        logger.error("AI feedback generation aborted by SystemExit\n%s", traceback.format_exc())
+        flash("AI feedback generation failed due to a file, database, or parser exit. Check logs and paths.", "danger")
+        return redirect(redirect_to)
+    except BaseException as exc:
+        logger.error("AI feedback generation failed with BaseException\n%s", traceback.format_exc())
+        flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
+        return redirect(redirect_to)
 
 
 @app.route("/ai_feedback/<int:feedback_id>", methods=["GET"])
@@ -1276,6 +1597,7 @@ def ai_feedback_detail(feedback_id: int):
 
     prepared_feedback = dict(feedback_row)
     prepared_feedback["score_display"] = _format_feedback_score(prepared_feedback.get("score"))
+    prepared_feedback["score_color"] = _feedback_score_color(prepared_feedback.get("score"))
     prepared_feedback["feedback_text"] = _extract_feedback_body(feedback_content)
     prepared_feedback["path_to_feedback"] = str(feedback_path)
 
@@ -1535,6 +1857,11 @@ def hslu_semester_checklist_sync():
 @app.template_filter("render_hslu_inline_markdown")
 def render_hslu_inline_markdown_filter(value: str) -> Markup:
     return Markup(_render_hslu_inline_markdown(value))
+
+
+@app.template_filter("render_ai_feedback_markdown")
+def render_ai_feedback_markdown_filter(value: str) -> Markup:
+    return Markup(_render_ai_feedback_markdown(value))
 
 
 if __name__ == "__main__":

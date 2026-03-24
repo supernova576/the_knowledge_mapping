@@ -54,7 +54,7 @@
                 <div class="card shadow-sm border-success-subtle h-100">
                     <div class="card-body">
                         <h2 class="h6 text-muted">Average Score (out of 100)</h2>
-                        <p class="display-6 text-success mb-0">{{ average_score }}</p>
+                        <p class="display-6 mb-0" style="color: {{ average_score_color }};">{{ average_score }}</p>
                     </div>
                 </div>
             </div>
@@ -132,7 +132,9 @@
                                 <td>{{ row.file_name }}</td>
                                 <td>{{ row.creation_date }}</td>
                                 <td>{{ row.version_display }}</td>
-                                <td>{{ row.score_display }}</td>
+                                <td>
+                                    <span style="color: {{ row.score_color }}; font-weight: 600;">{{ row.score_display }}</span>
+                                </td>
                                 <td>
                                     <a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('ai_feedback_detail', feedback_id=row.id) }}">
                                         Show Feedback

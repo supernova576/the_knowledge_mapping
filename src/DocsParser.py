@@ -90,9 +90,30 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse markdown links\n%s", traceback.format_exc())
             adieu(1)
-    def __to_db_text(self, value: str | list[str]) -> str:
+    def __extract_markdown_link_map(self, text: str) -> dict[str, str]:
         try:
-            if isinstance(value, list):
+            mapping: dict[str, str] = {}
+            markdown_links = re.findall(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", text)
+            for description, link in markdown_links:
+                normalized_link = str(link).strip()
+                normalized_description = str(description).strip()
+                if normalized_link:
+                    mapping[normalized_link] = normalized_description or normalized_link
+
+            remaining_text = re.sub(r"\[[^\]]+\]\(https?://[^)\s]+\)", "", text)
+            plain_links = re.findall(r"\bhttps?://[^\s)>]+", remaining_text)
+            for link in plain_links:
+                normalized_link = str(link).strip()
+                if normalized_link and normalized_link not in mapping:
+                    mapping[normalized_link] = normalized_link
+
+            return mapping
+        except Exception:
+            logger.error("Failed to parse markdown link map\n%s", traceback.format_exc())
+            adieu(1)
+    def __to_db_text(self, value: str | list[str] | dict[str, str]) -> str:
+        try:
+            if isinstance(value, (list, dict)):
                 return json.dumps(value, ensure_ascii=False) if value else "N/A"
             return value if value else "N/A"
         except Exception:
@@ -136,8 +157,8 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             external_refs_block = self.__extract_subsection_block(cleaned, "Externe Referenzen")
-            links = self.__extract_markdown_links(external_refs_block) if external_refs_block else []
-            return self.__to_db_text(links)
+            link_map = self.__extract_markdown_link_map(external_refs_block) if external_refs_block else {}
+            return self.__to_db_text(link_map)
         except Exception:
             logger.error("Failed to parse links\n%s", traceback.format_exc())
             adieu(1)
@@ -145,12 +166,8 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
-            links = re.findall(r"\[[^\]]+\]\((https?://[^)\s]+)\)", video_block) if video_block else []
-            deduped_links: list[str] = []
-            for link in links:
-                if link not in deduped_links:
-                    deduped_links.append(link)
-            return self.__to_db_text(deduped_links)
+            link_map = self.__extract_markdown_link_map(video_block) if video_block else {}
+            return self.__to_db_text(link_map)
         except Exception:
             logger.error("Failed to parse video links\n%s", traceback.format_exc())
             adieu(1)
@@ -172,8 +189,7 @@ class DocsParser:
             created_at_ok = created_at != "N/A"
             if not created_at_ok:
                 noncompliance_reasons.append("Erstelldatum: Nicht vorhanden")
-            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
-            beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
+            beschreibung_text = self.__extract_beschreibung_text(cleaned)
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
             beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
             if not beschreibung_ok:
@@ -205,6 +221,35 @@ class DocsParser:
             return is_compliant, self.__to_db_text(noncompliance_reasons)
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __extract_beschreibung_text(self, doc_content: str) -> str:
+        try:
+            cleaned = self.__strip_ignored_sections(doc_content)
+            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
+            return beschreibung_match.group(1).strip() if beschreibung_match else ""
+        except Exception:
+            logger.error("Failed to extract Beschreibung section\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_doc_titles_by_description_query(self, query: str) -> set[str]:
+        try:
+            normalized_query = str(query or "").strip().casefold()
+            if not normalized_query:
+                return set()
+
+            matching_titles: set[str] = set()
+            for doc_full_path in self.__get_full_document_list():
+                with open(doc_full_path, "r", encoding="utf-8") as f:
+                    file_contents = f.read()
+
+                beschreibung_text = self.__extract_beschreibung_text(file_contents)
+                if normalized_query in beschreibung_text.casefold():
+                    matching_titles.add(self.__parse_title_from_doc(doc_full_path))
+
+            return matching_titles
+        except Exception:
+            logger.error("Failed to search docs by Beschreibung\n%s", traceback.format_exc())
             adieu(1)
     def parse_and_add_ALL_docs_to_db(self) -> None:
         try:

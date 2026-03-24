@@ -46,7 +46,7 @@
                 <div class="card shadow-sm border-success-subtle h-100">
                     <div class="card-body">
                         <h2 class="h6 text-muted">Score</h2>
-                        <p class="fs-4 text-success mb-0">{{ feedback.score_display }}</p>
+                        <p class="fs-4 mb-0" style="color: {{ feedback.score_color }};">{{ feedback.score_display }}</p>
                     </div>
                 </div>
             </div>
@@ -55,7 +55,7 @@
         <div class="card shadow-sm mb-4">
             <div class="card-body">
                 <h2 class="h5">Feedback</h2>
-                <pre class="km-feedback-markdown mb-0">{{ feedback.feedback_text }}</pre>
+                <div class="km-feedback-markdown mb-0">{{ feedback.feedback_text|render_ai_feedback_markdown }}</div>
             </div>
         </div>
 

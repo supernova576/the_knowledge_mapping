@@ -19,4 +19,4 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 COPY . .
 
 EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:5000 --timeout ${GUNICORN_TIMEOUT:-180} --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT:-30} app:app"]
