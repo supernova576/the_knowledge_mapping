@@ -66,7 +66,44 @@ class DocsAIFeedback:
             raise FileNotFoundError(f"{label} template not found: {template_path}")
         return template_path.read_text(encoding="utf-8")
 
-    def _build_messages(self, note_name: str, doc_content: str, evaluation_context: str) -> list[dict]:
+    def _build_previous_feedback_section(self, previous_feedback: dict | None) -> str:
+        if not isinstance(previous_feedback, dict):
+            return ""
+
+        previous_score = previous_feedback.get("score")
+        previous_feedback_text = str(previous_feedback.get("feedback", "")).strip()
+        if previous_score is None or not previous_feedback_text:
+            return ""
+
+        previous_version = int(previous_feedback.get("version", 0) or 0)
+        previous_creation_date = str(previous_feedback.get("creation_date", "N/A")).strip() or "N/A"
+        review_instruction = ""
+        try:
+            if float(previous_score) < 100:
+                review_instruction = (
+                    "Because the previous score was below 100, explicitly evaluate whether the previously "
+                    "identified issues were implemented or are still missing.\n"
+                )
+        except (TypeError, ValueError):
+            pass
+
+        return (
+            "Use this previous AI feedback for context before evaluating the current documentation version:\n"
+            f"Previous version: {previous_version}\n"
+            f"Previous creation date: {previous_creation_date}\n"
+            f"Previous score: {previous_score}\n"
+            f"Previous feedback:\n{previous_feedback_text}\n\n"
+            f"{review_instruction}"
+        )
+
+    def _build_messages(
+        self,
+        note_name: str,
+        doc_content: str,
+        evaluation_context: str,
+        previous_feedback: dict | None = None,
+    ) -> list[dict]:
+        previous_feedback_context = self._build_previous_feedback_section(previous_feedback)
         return [
             {
                 "role": "system",
@@ -83,6 +120,7 @@ class DocsAIFeedback:
                     f"Evaluate the markdown note named '{note_name}'.\n\n"
                     "Use the following evaluation context:\n"
                     f"{evaluation_context}\n\n"
+                    f"{previous_feedback_context}"
                     "Now review this markdown note:\n"
                     f"{doc_content}\n\n"
                     "Return JSON only, with this schema:\n"
@@ -345,7 +383,7 @@ class DocsAIFeedback:
             )
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=False)
 
-    def generate_feedback(self, file_name: str) -> dict:
+    def generate_feedback(self, file_name: str, previous_feedback: dict | None = None) -> dict:
         try:
             doc_path = self._resolve_doc_path(file_name)
             note_name = doc_path.stem.strip()
@@ -353,7 +391,15 @@ class DocsAIFeedback:
             evaluation_context = self._read_template(self.prompt_template_path, "AI prompt")
             feedback_template = self._read_template(self.feedback_template_path, "AI feedback")
 
-            ai_feedback = self._request_ai_feedback(note_name, self._build_messages(note_name, doc_content, evaluation_context))
+            ai_feedback = self._request_ai_feedback(
+                note_name,
+                self._build_messages(
+                    note_name,
+                    doc_content,
+                    evaluation_context,
+                    previous_feedback=previous_feedback,
+                ),
+            )
             return {
                 "note_name": note_name,
                 "score": ai_feedback["score"],

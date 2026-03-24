@@ -1574,7 +1574,22 @@ def generate_ai_feedback():
         parser = DocsParser()
         parser.sync_ai_feedback_to_db()
         ai_feedback_service = DocsAIFeedback(conf)
-        feedback_payload = ai_feedback_service.generate_feedback(selected_doc)
+        selected_doc_note_name = Path(selected_doc).stem.strip()
+        latest_feedback_context = None
+        latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
+        if latest_feedback_for_context and latest_feedback_for_context.get("path_to_feedback"):
+            parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
+            latest_feedback_context = {
+                "version": parsed_latest_feedback.get("version"),
+                "score": parsed_latest_feedback.get("score"),
+                "creation_date": parsed_latest_feedback.get("creation_date"),
+                "feedback": parsed_latest_feedback.get("feedback"),
+            }
+
+        feedback_payload = ai_feedback_service.generate_feedback(
+            selected_doc,
+            previous_feedback=latest_feedback_context,
+        )
 
         latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
         next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
