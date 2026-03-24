@@ -872,8 +872,6 @@ def index():
     for item in docs.values():
         row = dict(item)
         row["tags_list"] = _to_display_list(row.get("tags"))
-        row["links_list"] = _link_map_to_items(row.get("links"))
-        row["video_links_list"] = _link_map_to_items(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
