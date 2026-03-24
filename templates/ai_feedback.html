@@ -129,7 +129,12 @@
                         <tbody>
                             {% for row in feedback_rows %}
                             <tr>
-                                <td>{{ row.file_name }}</td>
+                                <td>
+                                    {{ row.file_name }}
+                                    {% if not row.included_in_average %}
+                                    <span class="badge text-bg-secondary ms-1">Excluded from average</span>
+                                    {% endif %}
+                                </td>
                                 <td>{{ row.creation_date }}</td>
                                 <td>{{ row.version_display }}</td>
                                 <td>

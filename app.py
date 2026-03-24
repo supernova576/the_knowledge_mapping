@@ -827,6 +827,30 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
     return filtered_rows
 
 
+def _latest_ai_feedback_row_ids(rows: list[dict]) -> set[int]:
+    latest_ids: set[int] = set()
+    latest_by_file: dict[str, tuple[int, int]] = {}
+
+    for row in rows:
+        file_name = str(row.get("file_name", "")).strip()
+        if not file_name:
+            continue
+
+        row_id = int(row.get("id", 0))
+        version = int(row.get("version", 0))
+        file_key = file_name.casefold()
+
+        current_best = latest_by_file.get(file_key)
+        candidate = (version, row_id)
+        if current_best is None or candidate > current_best:
+            latest_by_file[file_key] = candidate
+
+    for _, (_, row_id) in latest_by_file.items():
+        latest_ids.add(row_id)
+
+    return latest_ids
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -1477,6 +1501,13 @@ def ai_feedback_overview():
     score_query = request.args.get("score", "").strip()
     all_feedback_rows = _load_ai_feedback_rows(database, "", "")
     feedback_rows = _load_ai_feedback_rows(database, name_query, score_query)
+    latest_row_ids = _latest_ai_feedback_row_ids(all_feedback_rows)
+
+    for row in all_feedback_rows:
+        row["included_in_average"] = int(row.get("id", 0)) in latest_row_ids
+
+    for row in feedback_rows:
+        row["included_in_average"] = int(row.get("id", 0)) in latest_row_ids
 
     feedback_docs_present = {
         str(row.get("file_name", "")).strip().casefold()
@@ -1497,7 +1528,11 @@ def ai_feedback_overview():
         key=lambda item: item["title"].casefold(),
     )
 
-    scores = [row["score_value"] for row in all_feedback_rows if row.get("score_value") is not None]
+    scores = [
+        row["score_value"]
+        for row in all_feedback_rows
+        if row.get("included_in_average") and row.get("score_value") is not None
+    ]
     average_score = sum(scores) / len(scores) if scores else None
 
     return render_template(
