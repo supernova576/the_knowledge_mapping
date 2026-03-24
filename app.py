@@ -4,7 +4,7 @@ import os
 import re
 import stat
 import traceback
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from datetime import datetime
 from pathlib import Path
 
@@ -304,6 +304,50 @@ def _to_display_list(value):
     if normalized in (None, "", "N/A"):
         return []
     return [str(normalized)]
+
+
+def _is_valid_http_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _parse_link_map(value) -> dict[str, str]:
+    if isinstance(value, dict):
+        parsed_dict = value
+    elif isinstance(value, list):
+        parsed_dict = {str(item).strip(): str(item).strip() for item in value if str(item).strip()}
+    else:
+        raw = str(value or "").strip()
+        if not raw or raw == "N/A":
+            return {}
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            loaded = None
+
+        if isinstance(loaded, dict):
+            parsed_dict = loaded
+        elif isinstance(loaded, list):
+            parsed_dict = {str(item).strip(): str(item).strip() for item in loaded if str(item).strip()}
+        elif _is_valid_http_url(raw):
+            parsed_dict = {raw: raw}
+        else:
+            return {}
+
+    normalized: dict[str, str] = {}
+    for raw_link, raw_description in parsed_dict.items():
+        link = str(raw_link or "").strip()
+        description = re.sub(r"\s+", " ", str(raw_description or "").strip())
+        if not link or not _is_valid_http_url(link):
+            continue
+        normalized[link] = description or link
+
+    return normalized
+
+
+def _link_map_to_items(value) -> list[dict[str, str]]:
+    link_map = _parse_link_map(value)
+    return [{"link": link, "description": description} for link, description in link_map.items()]
 
 
 
@@ -804,8 +848,8 @@ def index():
     for item in docs.values():
         row = dict(item)
         row["tags_list"] = _to_display_list(row.get("tags"))
-        row["links_list"] = _to_display_list(row.get("links"))
-        row["video_links_list"] = _to_display_list(row.get("video_links"))
+        row["links_list"] = _link_map_to_items(row.get("links"))
+        row["video_links_list"] = _link_map_to_items(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
@@ -1296,8 +1340,8 @@ def edit_doc_resources(doc_id: int):
         all_tags=all_tags,
         current_resources={
             "tags": _to_display_list(doc.get("tags")),
-            "links": _to_display_list(doc.get("links")),
-            "video_links": _to_display_list(doc.get("video_links")),
+            "links": _link_map_to_items(doc.get("links")),
+            "video_links": _link_map_to_items(doc.get("video_links")),
         },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
@@ -1325,21 +1369,82 @@ def save_doc_resources(doc_id: int):
 
     tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
     tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
-    links_to_add = _parse_multiline_values(request.form.get("links_to_add", ""))
-    links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_links_to_remove")))
-    video_links_to_add = _parse_multiline_values(request.form.get("video_links_to_add", ""))
-    video_links_to_remove = _parse_multiline_values("\n".join(request.form.getlist("selected_video_links_to_remove")))
+    existing_links_original = request.form.getlist("existing_links_original")
+    existing_links_description = request.form.getlist("existing_links_description")
+    existing_links_link = request.form.getlist("existing_links_link")
+    selected_links_to_remove = set(request.form.getlist("selected_links_to_remove"))
+
+    existing_video_links_original = request.form.getlist("existing_video_links_original")
+    existing_video_links_description = request.form.getlist("existing_video_links_description")
+    existing_video_links_link = request.form.getlist("existing_video_links_link")
+    selected_video_links_to_remove = set(request.form.getlist("selected_video_links_to_remove"))
+
+    new_links_description = request.form.getlist("new_links_description")
+    new_links_link = request.form.getlist("new_links_link")
+    new_video_links_description = request.form.getlist("new_video_links_description")
+    new_video_links_link = request.form.getlist("new_video_links_link")
     create_missing_sections = request.form.get("create_missing_sections", "false").strip().lower() == "true"
+
+    def _collect_link_map(
+        original_values: list[str],
+        description_values: list[str],
+        link_values: list[str],
+        removed_originals: set[str],
+        append_descriptions: list[str] | None = None,
+        append_links: list[str] | None = None,
+    ) -> dict[str, str]:
+        collected: dict[str, str] = {}
+        for original, description, link in zip(original_values, description_values, link_values):
+            original_clean = str(original or "").strip()
+            if original_clean and original_clean in removed_originals:
+                continue
+
+            candidate_link = str(link or "").strip()
+            candidate_description = re.sub(r"\s+", " ", str(description or "").strip())
+            if not candidate_link:
+                continue
+            if not _is_valid_http_url(candidate_link):
+                continue
+            collected[candidate_link] = candidate_description or candidate_link
+
+        if append_descriptions is None or append_links is None:
+            return collected
+
+        for description, link in zip(append_descriptions, append_links):
+            candidate_link = str(link or "").strip()
+            candidate_description = re.sub(r"\s+", " ", str(description or "").strip())
+            if not candidate_link:
+                continue
+            if not _is_valid_http_url(candidate_link):
+                continue
+            collected[candidate_link] = candidate_description or candidate_link
+
+        return collected
+
+    links_map = _collect_link_map(
+        original_values=existing_links_original,
+        description_values=existing_links_description,
+        link_values=existing_links_link,
+        removed_originals=selected_links_to_remove,
+        append_descriptions=new_links_description,
+        append_links=new_links_link,
+    )
+    video_links_map = _collect_link_map(
+        original_values=existing_video_links_original,
+        description_values=existing_video_links_description,
+        link_values=existing_video_links_link,
+        removed_originals=selected_video_links_to_remove,
+        append_descriptions=new_video_links_description,
+        append_links=new_video_links_link,
+    )
 
     writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
     success, missing_sections = writer.update_doc_resources(
         doc_path=doc_path,
         tags_to_add=tags_to_add,
         tags_to_remove=tags_to_remove,
-        links_to_add=links_to_add,
-        links_to_remove=links_to_remove,
-        video_links_to_add=video_links_to_add,
-        video_links_to_remove=video_links_to_remove,
+        links_map=links_map,
+        video_links_map=video_links_map,
         create_missing_sections=create_missing_sections,
     )
 
@@ -1347,10 +1452,6 @@ def save_doc_resources(doc_id: int):
         session[f"pending_doc_resource_updates_{doc_id}"] = {
             "tags_to_add": request.form.get("tags_to_add", ""),
             "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
-            "links_to_add": request.form.get("links_to_add", ""),
-            "links_to_remove": "\n".join(request.form.getlist("selected_links_to_remove")),
-            "video_links_to_add": request.form.get("video_links_to_add", ""),
-            "video_links_to_remove": "\n".join(request.form.getlist("selected_video_links_to_remove")),
         }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",

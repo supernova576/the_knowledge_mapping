@@ -49,8 +49,8 @@
                     <div class="col-lg-4">
                         <h2 class="h6">Current links</h2>
                         <div class="border rounded p-2 bg-body-tertiary">
-                            {% for link in current_resources.links %}
-                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% for item in current_resources.links %}
+                            <a href="{{ item.link }}" target="_blank" rel="noreferrer" class="d-block small">{{ item.description }}</a>
                             {% else %}
                             <span class="text-muted small">No links available.</span>
                             {% endfor %}
@@ -59,8 +59,8 @@
                     <div class="col-lg-4">
                         <h2 class="h6">Current video links</h2>
                         <div class="border rounded p-2 bg-body-tertiary">
-                            {% for link in current_resources.video_links %}
-                            <a href="{{ link }}" target="_blank" rel="noreferrer" class="d-block small">{{ link }}</a>
+                            {% for item in current_resources.video_links %}
+                            <a href="{{ item.link }}" target="_blank" rel="noreferrer" class="d-block small">{{ item.description }}</a>
                             {% else %}
                             <span class="text-muted small">No video links available.</span>
                             {% endfor %}
@@ -94,30 +94,84 @@
                         <div class="form-text">Click a tag to add it in the "Add tags" field.</div>
                     </div>
 
-                    <div class="col-lg-6">
-                        <label class="form-label">Add external links (one per line)</label>
-                        <textarea class="form-control" rows="5" name="links_to_add" placeholder="https://example.com">{{ edit_state.pending_updates.links_to_add or "" }}</textarea>
-                    </div>
-                    <div class="col-lg-6">
-                        <label class="form-label">Remove external links (select one or multiple)</label>
-                        <select class="form-select" name="selected_links_to_remove" multiple size="5">
-                            {% for link in current_resources.links %}
-                            <option value="{{ link }}">{{ link }}</option>
+                    <div class="col-12">
+                        <label class="form-label">Edit external links</label>
+                        <div class="border rounded p-3" style="max-height: 280px; overflow-y: auto;">
+                            {% for item in current_resources.links %}
+                            <div class="row g-2 align-items-center mb-2">
+                                <input type="hidden" name="existing_links_original" value="{{ item.link }}" />
+                                <div class="col-md-1">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="selected_links_to_remove" value="{{ item.link }}" id="remove_link_{{ loop.index }}">
+                                        <label class="form-check-label small" for="remove_link_{{ loop.index }}">Remove</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control" name="existing_links_description" value="{{ item.description }}" maxlength="200" placeholder="Description">
+                                </div>
+                                <div class="col-md-7">
+                                    <input type="url" class="form-control" name="existing_links_link" value="{{ item.link }}" maxlength="500" placeholder="https://example.com">
+                                </div>
+                            </div>
+                            {% else %}
+                            <span class="text-muted">No links available.</span>
                             {% endfor %}
-                        </select>
+                        </div>
                     </div>
 
-                    <div class="col-lg-6">
-                        <label class="form-label">Add video links (one per line)</label>
-                        <textarea class="form-control" rows="5" name="video_links_to_add" placeholder="https://video.com/watch">{{ edit_state.pending_updates.video_links_to_add or "" }}</textarea>
+                    <div class="col-12">
+                        <label class="form-label">Add external links</label>
+                        <div id="newLinksContainer">
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control" name="new_links_description" maxlength="200" placeholder="Description">
+                                </div>
+                                <div class="col-md-8">
+                                    <input type="url" class="form-control" name="new_links_link" maxlength="500" placeholder="https://example.com">
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="addNewLinkRow">Add row</button>
                     </div>
-                    <div class="col-lg-6">
-                        <label class="form-label">Remove video links (select one or multiple)</label>
-                        <select class="form-select" name="selected_video_links_to_remove" multiple size="5">
-                            {% for link in current_resources.video_links %}
-                            <option value="{{ link }}">{{ link }}</option>
+
+                    <div class="col-12">
+                        <label class="form-label">Edit video links</label>
+                        <div class="border rounded p-3" style="max-height: 280px; overflow-y: auto;">
+                            {% for item in current_resources.video_links %}
+                            <div class="row g-2 align-items-center mb-2">
+                                <input type="hidden" name="existing_video_links_original" value="{{ item.link }}" />
+                                <div class="col-md-1">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="selected_video_links_to_remove" value="{{ item.link }}" id="remove_video_link_{{ loop.index }}">
+                                        <label class="form-check-label small" for="remove_video_link_{{ loop.index }}">Remove</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control" name="existing_video_links_description" value="{{ item.description }}" maxlength="200" placeholder="Description">
+                                </div>
+                                <div class="col-md-7">
+                                    <input type="url" class="form-control" name="existing_video_links_link" value="{{ item.link }}" maxlength="500" placeholder="https://video.com/watch">
+                                </div>
+                            </div>
+                            {% else %}
+                            <span class="text-muted">No video links available.</span>
                             {% endfor %}
-                        </select>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Add video links</label>
+                        <div id="newVideoLinksContainer">
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control" name="new_video_links_description" maxlength="200" placeholder="Description">
+                                </div>
+                                <div class="col-md-8">
+                                    <input type="url" class="form-control" name="new_video_links_link" maxlength="500" placeholder="https://video.com/watch">
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="addNewVideoLinkRow">Add row</button>
                     </div>
 
                     <div class="col-12 d-flex justify-content-end gap-2">
@@ -141,6 +195,10 @@
             const chips = Array.from(document.querySelectorAll(".tag-chip"));
             const tagsToAdd = document.querySelector('textarea[name="tags_to_add"]');
             const createMissingSectionsField = document.getElementById("createMissingSections");
+            const newLinksContainer = document.getElementById("newLinksContainer");
+            const newVideoLinksContainer = document.getElementById("newVideoLinksContainer");
+            const addNewLinkRow = document.getElementById("addNewLinkRow");
+            const addNewVideoLinkRow = document.getElementById("addNewVideoLinkRow");
 
             filterInput.addEventListener("input", function () {
                 const query = filterInput.value.trim().toLowerCase();
@@ -157,6 +215,28 @@
                         tagsToAdd.value = `${tagsToAdd.value.trim()}\n${value}`.trim();
                     }
                 });
+            });
+
+            function appendLinkRow(container, descriptionName, linkName, placeholder) {
+                const wrapper = document.createElement("div");
+                wrapper.className = "row g-2 mb-2";
+                wrapper.innerHTML = `
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" name="${descriptionName}" maxlength="200" placeholder="Description">
+                    </div>
+                    <div class="col-md-8">
+                        <input type="url" class="form-control" name="${linkName}" maxlength="500" placeholder="${placeholder}">
+                    </div>
+                `;
+                container.appendChild(wrapper);
+            }
+
+            addNewLinkRow.addEventListener("click", function () {
+                appendLinkRow(newLinksContainer, "new_links_description", "new_links_link", "https://example.com");
+            });
+
+            addNewVideoLinkRow.addEventListener("click", function () {
+                appendLinkRow(newVideoLinksContainer, "new_video_links_description", "new_video_links_link", "https://video.com/watch");
             });
 
             {% if edit_state.missing_sections %}

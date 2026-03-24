@@ -172,10 +172,8 @@ class DocsWriter:
         doc_path: Path,
         tags_to_add: list[str],
         tags_to_remove: list[str],
-        links_to_add: list[str],
-        links_to_remove: list[str],
-        video_links_to_add: list[str],
-        video_links_to_remove: list[str],
+        links_map: dict[str, str],
+        video_links_map: dict[str, str],
         create_missing_sections: bool,
     ) -> tuple[bool, list[str]]:
         try:
@@ -193,8 +191,8 @@ class DocsWriter:
             if missing_sections:
                 lines = self._create_missing_sections(lines, missing_sections)
 
-            lines = self._update_link_section(lines, "#### Erklärvideo", video_links_to_add, video_links_to_remove)
-            lines = self._update_link_section(lines, "#### Externe Referenzen", links_to_add, links_to_remove)
+            lines = self._update_link_section(lines, "#### Erklärvideo", video_links_map)
+            lines = self._update_link_section(lines, "#### Externe Referenzen", links_map)
             lines = self._update_tags_section(lines, tags_to_add, tags_to_remove)
 
             doc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -276,28 +274,13 @@ class DocsWriter:
 
         return lines
 
-    def _update_link_section(self, lines: list[str], section_header: str, add_items: list[str], remove_items: list[str]) -> list[str]:
+    def _update_link_section(self, lines: list[str], section_header: str, link_map: dict[str, str]) -> list[str]:
         section_idx = self._find_section_index(lines, section_header)
         if section_idx == -1:
             return lines
 
         section_end = self._section_end_index(lines, section_idx)
-        block = lines[section_idx + 1:section_end]
-        existing_links: list[str] = []
-        for line in block:
-            stripped = line.strip()
-            matched_url = re.search(r"\((https?://[^)\s]+)\)", stripped)
-            plain_url_match = re.search(r"^https?://\S+$", stripped)
-            url_value = matched_url.group(1) if matched_url else (plain_url_match.group(0) if plain_url_match else "")
-            if url_value and url_value not in existing_links:
-                existing_links.append(url_value)
-
-        kept_links = [link for link in existing_links if link not in remove_items]
-        for item in add_items:
-            if item not in kept_links:
-                kept_links.append(item)
-
-        replacement = [f"[{link}]({link})" for link in kept_links]
+        replacement = [f"[{description}]({link})" for link, description in link_map.items()]
         if not replacement:
             replacement = [""]
 

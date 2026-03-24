@@ -73,8 +73,6 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
 
 ## Features to implement
-- document editor
-  - update link and video_link to contain Name => value
 - Add PRIV Menu
   - Schulungen
     - create from Template
