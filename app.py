@@ -326,18 +326,22 @@ def _compliance_tag_class(doc: dict) -> str:
 
     return "compliance-tag-not-compliant"
 
-def _load_docs(database: db, view: str, query: str) -> dict:
-
-    if view == "id" and query:
-        try:
-            return database.get_docs_by_id(int(query))
-        except ValueError:
-            logger.warning("Invalid ID query received in UI: %s", query)
-            flash("ID must be a number", "danger")
-            return database.get_all_docs()
+def _load_docs(database: db, parser: DocsParser, view: str, query: str) -> dict:
 
     if view == "name" and query:
         return database.get_docs_by_name(query, exact_match=False)
+
+    if view == "description" and query:
+        matching_titles = parser.get_doc_titles_by_description_query(query)
+        if not matching_titles:
+            return {}
+
+        all_docs = database.get_all_docs()
+        return {
+            doc_id: doc_data
+            for doc_id, doc_data in all_docs.items()
+            if str(doc_data.get("title", "")).strip() in matching_titles
+        }
 
     if view == "tag" and query:
         return database.get_docs_by_tag(query)
@@ -783,12 +787,13 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
 def index():
     view = request.args.get("view", "all")
     query = request.args.get("q", "").strip()
+    parser = DocsParser()
     sort_by = request.args.get("sort", "title_asc").strip()
     if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
         sort_by = "title_asc"
 
     database = db()
-    docs = _load_docs(database, view, query)
+    docs = _load_docs(database, parser, view, query)
     under_construction_docs = database.get_under_construction_docs()
 
     total_docs = len(docs)

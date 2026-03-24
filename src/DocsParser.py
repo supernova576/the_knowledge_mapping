@@ -172,8 +172,7 @@ class DocsParser:
             created_at_ok = created_at != "N/A"
             if not created_at_ok:
                 noncompliance_reasons.append("Erstelldatum: Nicht vorhanden")
-            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
-            beschreibung_text = beschreibung_match.group(1).strip() if beschreibung_match else ""
+            beschreibung_text = self.__extract_beschreibung_text(cleaned)
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
             beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
             if not beschreibung_ok:
@@ -205,6 +204,35 @@ class DocsParser:
             return is_compliant, self.__to_db_text(noncompliance_reasons)
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __extract_beschreibung_text(self, doc_content: str) -> str:
+        try:
+            cleaned = self.__strip_ignored_sections(doc_content)
+            beschreibung_match = re.search(r"(?ims)^##\s+Beschreibung\s*$\n(.*?)(?=^#{1,6}\s+|\Z)", cleaned)
+            return beschreibung_match.group(1).strip() if beschreibung_match else ""
+        except Exception:
+            logger.error("Failed to extract Beschreibung section\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_doc_titles_by_description_query(self, query: str) -> set[str]:
+        try:
+            normalized_query = str(query or "").strip().casefold()
+            if not normalized_query:
+                return set()
+
+            matching_titles: set[str] = set()
+            for doc_full_path in self.__get_full_document_list():
+                with open(doc_full_path, "r", encoding="utf-8") as f:
+                    file_contents = f.read()
+
+                beschreibung_text = self.__extract_beschreibung_text(file_contents)
+                if normalized_query in beschreibung_text.casefold():
+                    matching_titles.add(self.__parse_title_from_doc(doc_full_path))
+
+            return matching_titles
+        except Exception:
+            logger.error("Failed to search docs by Beschreibung\n%s", traceback.format_exc())
             adieu(1)
     def parse_and_add_ALL_docs_to_db(self) -> None:
         try:

@@ -54,14 +54,14 @@
             <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
                 <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
                     <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                    <option value="id" {% if selected_view=='id' %}selected{% endif %}>By ID</option>
                     <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
+                    <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
                     <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
                     <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
                     <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
                     <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
                 </select></div>
-                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="id, file name, or #tag" /></div>
+                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
                 <input type="hidden" name="sort" value="{{ selected_sort }}" />
                 <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
             </form>
