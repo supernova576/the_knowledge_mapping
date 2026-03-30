@@ -81,3 +81,6 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - create from Template
     - Status and todos
     - Mapping of project specific tag to docs
+- Add Settings
+  - Compliance Settings
+    - customize parameters

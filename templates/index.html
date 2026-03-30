@@ -75,48 +75,38 @@
             </div>
         </div>
 
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="card shadow-sm h-100"><div class="card-body">
-                    <h2 class="h5">Manual compliance</h2>
-                    <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
-                        <div class="col-md-12"><label class="form-label">Document name</label><select class="form-select" name="doc_title" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
-                        <div class="col-md-7"><label class="form-label">Manual compliant override</label><select class="form-select" name="manual_compliant_override"><option value="true">true</option><option value="false" selected>false</option></select></div>
-                        <div class="col-md-5 d-grid"><button class="btn btn-outline-success">Update manual compliance</button></div>
-                    </form>
-                </div></div>
-            </div>
-            <div class="col-md-6">
-                <div class="card shadow-sm h-100"><div class="card-body">
+        <div class="row g-3 mb-4 align-items-stretch">
+            <div class="col-md-6 d-flex">
+                <div class="card shadow-sm h-100 w-100"><div class="card-body">
                     <h2 class="h5">Update docs</h2>
                     <form method="post" action="{{ url_for('create_doc_from_todo_template') }}" class="row g-2 align-items-end">
                         <input type="hidden" name="from_index" value="true" />
-                        <div class="col-md-12"><label class="form-label">Select document</label><select class="form-select" name="selected_doc" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
+                        <div class="col-md-12"><label class="form-label">Select document</label><select class="form-select" name="selected_doc" required><option value="" selected disabled>Select a document</option>{% for doc in selectable_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
                         <div class="col-md-12"><label class="form-label">Reason for update</label><input class="form-control" name="reason" placeholder="Why should this note be updated?" required /></div>
-                        <br>
                         <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Update Note</button></div>
                     </form>
                 </div></div>
             </div>
+            <div class="col-md-6 d-flex">
+                <div class="card shadow-sm h-100 w-100"><div class="card-body">
+                    <h2 class="h5">Search & filter</h2>
+                    <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
+                        <div class="col-md-12"><label class="form-label">View</label><select name="view" class="form-select">
+                            <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
+                            <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
+                            <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
+                            <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
+                            <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
+                            <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                            <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
+                        </select></div>
+                        <div class="col-md-12"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
+                        <input type="hidden" name="sort" value="{{ selected_sort }}" />
+                        <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
+                    </form>
+                </div></div>
+            </div>
         </div>
-
-        <div class="card shadow-sm mb-4"><div class="card-body">
-            <h2 class="h5">Search & filter</h2>
-            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
-                <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
-                    <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                    <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
-                    <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
-                    <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
-                    <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
-                    <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
-                    <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
-                </select></div>
-                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
-                <input type="hidden" name="sort" value="{{ selected_sort }}" />
-                <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
-            </form>
-        </div></div>
 
         <div class="card shadow-sm"><div class="card-body">
             <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">

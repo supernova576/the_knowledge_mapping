@@ -294,24 +294,6 @@ class db:
             logger.error("sqlite_handler/delete_all_docs failed\n%s", traceback.format_exc())
             adieu(1)
 
-    def update_manual_compliance_by_id(self, id: int, manual_override: str) -> None:
-        try:
-            if manual_override == "true":
-                self._execute(
-                    "UPDATE docs SET manual_compliant_override = ?, is_compliant = ?, noncompliance_reason = ? WHERE id = ?",
-                    ("true", "true", "N/A", id),
-                )
-            else:
-                self._execute(
-                    "UPDATE docs SET manual_compliant_override = ? WHERE id = ?",
-                    ("false", id),
-                )
-            self._commit()
-            logger.info("Updated manual compliance override for id=%s to=%s", id, manual_override)
-        except Exception:
-            logger.error("sqlite_handler/update_manual_compliance_by_id failed\n%s", traceback.format_exc())
-            adieu(1)
-
     def get_non_compliant_docs(self) -> dict:
         try:
             rows = self._fetch_all_dict("SELECT * FROM docs WHERE is_compliant = ?", ("false",))

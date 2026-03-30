@@ -39,6 +39,22 @@ INDEX_PROGRESS_WEIGHTS = {
     "deadlines": 0.2,
     "ai_gap": 0.2,
 }
+UNFINISHED_SW_STATUSES = {"", "Not Started", "In Progress"}
+FINISHED_SW_STATUSES = {"Done", "Not Needed"}
+
+
+def _normalize_sw_status(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in SW_STATUS_OPTIONS else ""
+
+
+def _entry_indicator_for_sw_status(*statuses: str | None) -> str:
+    normalized_statuses = [_normalize_sw_status(status) for status in statuses]
+    if any(status in UNFINISHED_SW_STATUSES for status in normalized_statuses):
+        return "⚠️"
+    if any(status in FINISHED_SW_STATUSES for status in normalized_statuses):
+        return "✅"
+    return "⚠️"
 
 
 def _normalize_todo_priority(value: str | None) -> str:
@@ -379,20 +395,11 @@ def _link_map_to_items(value) -> list[dict[str, str]]:
 
 
 
-def _normalize_manual_override(value: str | None) -> str:
-    return "true" if str(value).strip().lower() == "true" else "false"
-
-
 def _compliance_tag_class(doc: dict) -> str:
     if str(doc.get("is_under_construction", "false")).lower() == "true":
         return "text-bg-info"
 
-    is_compliant = doc.get("is_compliant") == "true"
-    manual_override = _normalize_manual_override(doc.get("manual_compliant_override")) == "true"
-
-    if manual_override:
-        return "compliance-tag-manual"
-    if is_compliant:
+    if doc.get("is_compliant") == "true":
         return "compliance-tag-compliant"
 
     return "compliance-tag-not-compliant"
@@ -813,7 +820,16 @@ def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module:
     if selected_sw:
         filtered_rows = [row for row in filtered_rows if str(row.get("SW", "")).strip() == selected_sw]
 
-    return semesters, selected_semester, modules, selected_module, selected_sw, filtered_rows, standard_semester
+    prepared_rows: list[dict] = []
+    for row in filtered_rows:
+        prepared_row = dict(row)
+        prepared_row["entry_indicator"] = _entry_indicator_for_sw_status(
+            prepared_row.get("downloaded"),
+            prepared_row.get("documented"),
+        )
+        prepared_rows.append(prepared_row)
+
+    return semesters, selected_semester, modules, selected_module, selected_sw, prepared_rows, standard_semester
 
 
 
@@ -863,7 +879,9 @@ def _load_hslu_checklist(parser: DocsParser, semester: str, sw: str, sections: l
         if unique_key in seen:
             continue
         seen.add(unique_key)
-        deduplicated_rows.append(row)
+        prepared_row = dict(row)
+        prepared_row["entry_indicator"] = _entry_indicator_for_sw_status(prepared_row.get("status"))
+        deduplicated_rows.append(prepared_row)
 
     rows_by_section: dict[str, list[dict]] = {section: [] for section in selected_sections}
     for row in deduplicated_rows:
@@ -1099,7 +1117,6 @@ def index():
         row["tags_list"] = _to_display_list(row.get("tags"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
-        row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
         row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
         row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
         if row["is_under_construction"] == "true":
@@ -1125,7 +1142,7 @@ def index():
         total_deadlines_count=total_deadlines_count,
         average_ai_score=average_ai_score,
     )
-    manual_compliance_docs = sorted(
+    selectable_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
         key=lambda value: value["title"].casefold(),
     )
@@ -1147,7 +1164,7 @@ def index():
         total_progress=index_progress["value"],
         total_progress_color_class=index_progress["color_class"],
         total_progress_color=index_progress["color"],
-        manual_compliance_docs=manual_compliance_docs,
+        selectable_docs=selectable_docs,
     )
 
 
@@ -1315,41 +1332,6 @@ def scan_docs():
     return redirect(url_for("index"))
 
 
-@app.route("/compliance/manual", methods=["POST"])
-def set_manual_compliance():
-    doc_id = request.form.get("doc_id", "").strip()
-    doc_title = request.form.get("doc_title", "").strip()
-    manual_override = _normalize_manual_override(request.form.get("manual_compliant_override", "false"))
-
-    if manual_override not in ("true", "false"):
-        logger.warning("Invalid manual compliance value for id=%s value=%s", doc_id, manual_override)
-        flash("Manual compliance value must be true or false.", "danger")
-        return redirect(url_for("index"))
-
-    try:
-        database = db()
-        if not doc_id and doc_title:
-            matched_docs = database.get_docs_by_name(doc_title, exact_match=True)
-            if not matched_docs:
-                flash(f"Document title not found: {doc_title}", "warning")
-                return redirect(url_for("index"))
-            doc_id = str(next(iter(matched_docs.values())).get("id", "")).strip()
-
-        if not doc_id:
-            logger.warning("Manual compliance update requested without doc_id/doc_title")
-            flash("Please select a document.", "warning")
-            return redirect(url_for("index"))
-
-        database.update_manual_compliance_by_id(int(doc_id), manual_override)
-        if manual_override == "true":
-            flash(f"Document id={doc_id} is now manually marked as compliant.", "success")
-        else:
-            flash(f"Manual compliance override removed for id={doc_id}.", "success")
-    except ValueError:
-        logger.warning("Manual compliance update failed due to non-numeric id: %s", doc_id)
-        flash("ID must be numeric.", "danger")
-
-    return redirect(url_for("index"))
 
 
 @app.route("/todo", methods=["GET"])
