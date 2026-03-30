@@ -20,10 +20,13 @@ class DocsWriter:
     TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
     TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 
-    def __init__(self, todo_file_path: str) -> None:
-        self.todo_path = Path(todo_file_path)
+    def __init__(self, todo_file_path: str = "", deadlines_file_path: str = "") -> None:
+        self.todo_path = Path(todo_file_path) if todo_file_path else None
+        self.deadlines_path = Path(deadlines_file_path) if deadlines_file_path else None
 
     def _ensure_file_exists(self) -> None:
+        if self.todo_path is None:
+            raise FileNotFoundError("Todo file path not configured.")
         if not self.todo_path.exists():
             raise FileNotFoundError(f"Todo file not found: {self.todo_path}")
 
@@ -101,6 +104,70 @@ class DocsWriter:
             logger.info("Wrote %s todo entries to %s", len(todos), self.todo_path)
         except Exception:
             logger.error("Failed to write todo markdown file\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _ensure_deadlines_file_exists(self) -> None:
+        if not self.deadlines_path:
+            raise FileNotFoundError("Deadlines file path not configured.")
+        if not self.deadlines_path.exists():
+            raise FileNotFoundError(f"Deadlines file not found: {self.deadlines_path}")
+
+    def _extract_deadlines_table_bounds(self, lines: list[str]) -> tuple[int, int]:
+        start = -1
+        end = -1
+        for index, line in enumerate(lines):
+            if (
+                line.strip().startswith("|")
+                and "Name" in line
+                and "Description" in line
+                and "Date" in line
+                and "Time" in line
+                and "Status" in line
+            ):
+                start = index
+                break
+
+        if start == -1:
+            raise ValueError("Could not find deadline markdown table header")
+
+        end = start + 1
+        while end < len(lines) and lines[end].strip().startswith("|"):
+            end += 1
+
+        return start, end
+
+    def _serialize_deadlines_table(self, deadlines: list[dict]) -> list[str]:
+        header = "| Name | Description | Date | Time | Status |\n"
+        separator = "| ---- | ----------- | ---- | ---- | ------ |\n"
+        rows = []
+
+        for deadline in deadlines:
+            name = str(deadline.get("name", "")).strip()
+            description = str(deadline.get("description", "")).strip()
+            date = str(deadline.get("date", "-")).strip() or "-"
+            time = str(deadline.get("time", "-")).strip() or "-"
+            status = str(deadline.get("status", "Not Started")).strip()
+            progress_icon = self.PROGRESS_TO_ICON.get(status, self.PROGRESS_TO_ICON["Not Started"])
+
+            rows.append(f"| {name} | {description} | {date} | {time} | {progress_icon} |\n")
+
+        return [header, separator, *rows]
+
+    def write_deadlines_table(self, deadlines: list[dict]) -> None:
+        try:
+            self._ensure_deadlines_file_exists()
+            with open(self.deadlines_path, "r", encoding="utf-8") as file:
+                lines = file.readlines()
+
+            start, end = self._extract_deadlines_table_bounds(lines)
+            new_table = self._serialize_deadlines_table(deadlines)
+            updated_lines = lines[:start] + new_table + lines[end:]
+
+            with open(self.deadlines_path, "w", encoding="utf-8") as file:
+                file.writelines(updated_lines)
+            logger.info("Wrote %s deadline entries to %s", len(deadlines), self.deadlines_path)
+        except Exception:
+            logger.error("Failed to write deadline markdown file\n%s", traceback.format_exc())
             adieu(1)
 
     def create_note_from_template(self, target_path: Path, template_content: str) -> None:

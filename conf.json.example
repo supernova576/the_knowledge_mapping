@@ -8,6 +8,9 @@
     "todo": {
         "full_path_to_todo_file": "/the-knowledge/README.md"
     },
+    "deadlines": {
+        "full_path_to_deadlines_file": "/the-knowledge/Deadlines.md"
+    },
     "git": {
         "full_path_to_git_dir": "/the-knowledge/.git",
         "executable": "git"

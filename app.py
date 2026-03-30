@@ -5,7 +5,7 @@ import re
 import stat
 import traceback
 from urllib.parse import urlencode, urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
 TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
 TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+DEADLINE_STATUS_OPTIONS = ["Not Started", "In Progress", "Done"]
 
 
 def _normalize_todo_priority(value: str | None) -> str:
@@ -619,6 +620,66 @@ def _load_todos(parser: DocsParser, query: str) -> list[dict]:
     return _sort_todos_by_priority(processed_rows)
 
 
+def _parse_deadline_date(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(str(value or "").strip(), "%d.%m.%Y")
+    except ValueError:
+        return None
+
+
+def _parse_deadline_time(value: str):
+    time_value = str(value or "").strip()
+    if not time_value or time_value == "-":
+        return None
+    try:
+        return datetime.strptime(time_value, "%H:%M").time()
+    except ValueError:
+        return None
+
+
+def _deadline_sort_key(deadline: dict) -> tuple[int, datetime, datetime.time]:
+    parsed_date = _parse_deadline_date(deadline.get("date", ""))
+    if parsed_date is None:
+        return (0, datetime.min, datetime.min.time())
+
+    parsed_time = _parse_deadline_time(deadline.get("time", ""))
+    return (1, parsed_date, parsed_time or datetime.max.time())
+
+
+def _deadline_row_class(deadline: dict) -> str:
+    date_value = _parse_deadline_date(deadline.get("date", ""))
+    if date_value is None:
+        return ""
+
+    time_value = _parse_deadline_time(deadline.get("time", ""))
+    if time_value is not None:
+        target = datetime.combine(date_value.date(), time_value)
+    else:
+        target = datetime.combine(date_value.date(), datetime.min.time()) + timedelta(hours=23, minutes=59)
+
+    days_remaining = (target - datetime.now()).total_seconds() / 86400
+    if days_remaining < 3:
+        return "table-danger"
+    if days_remaining < 7:
+        return "table-warning-deep"
+    if days_remaining < 14:
+        return "table-warning"
+    return ""
+
+
+def _load_deadlines(parser: DocsParser, include_description: bool = False) -> list[dict]:
+    rows = parser.parse_deadlines_from_markdown(include_description=include_description)
+    processed_rows: list[dict] = []
+    for source_index, row in enumerate(rows, start=1):
+        prepared = dict(row)
+        prepared["id"] = source_index
+        prepared["status"] = prepared.get("status") if prepared.get("status") in DEADLINE_STATUS_OPTIONS else "Not Started"
+        prepared["row_class"] = _deadline_row_class(prepared)
+        processed_rows.append(prepared)
+
+    return sorted(processed_rows, key=_deadline_sort_key)
+
+
 def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
     rows = parser.parse_hslu_sw_overview()
     semesters = sorted(
@@ -1186,6 +1247,169 @@ def sync_todos():
             flash(traceback.format_exc(), "danger")
 
     return redirect(url_for("todo_overview"))
+
+
+@app.route("/deadlines", methods=["GET"])
+def deadlines_overview():
+    parser = DocsParser()
+    try:
+        deadlines = _load_deadlines(parser, include_description=False)
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            flash("Deadline parsing failed. Check conf.json deadlines path and parser logs.", "danger")
+        else:
+            flash("Automatic deadline parsing failed.", "warning")
+        deadlines = []
+
+    return render_template(
+        "deadlines.html",
+        deadlines=deadlines,
+        total_deadlines=len(deadlines),
+        deadline_status_options=DEADLINE_STATUS_OPTIONS,
+    )
+
+
+@app.route("/deadlines/add", methods=["POST"])
+def add_deadline():
+    name = re.sub(r"\s+", " ", request.form.get("name", "").strip())
+    description = re.sub(r"\s+", " ", request.form.get("description", "").strip())
+    date = request.form.get("date", "").strip()
+    time = request.form.get("time", "").strip() or "-"
+    status = request.form.get("status", "Not Started").strip()
+
+    if not name:
+        flash("Deadline name is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if _parse_deadline_date(date) is None:
+        flash("Deadline date must match DD.MM.YYYY.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if _parse_deadline_time(time) is None and time != "-":
+        flash("Deadline time must match HH:MM or '-'.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if status not in DEADLINE_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        current_deadlines.append(
+            {
+                "name": name,
+                "description": description,
+                "date": date,
+                "time": time,
+                "status": status,
+            }
+        )
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline added successfully.", "success")
+    except BaseException:
+        flash("Failed to add deadline. Check logs and markdown format.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/delete", methods=["POST"])
+def delete_deadline():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        kept_deadlines = [deadline for index, deadline in enumerate(current_deadlines, start=1) if str(index) != deadline_id]
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(kept_deadlines)
+        flash("Deadline deleted.", "success")
+    except BaseException:
+        flash("Failed to delete deadline.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/edit", methods=["GET"])
+def edit_deadline_page():
+    deadline_id = request.args.get("deadline_id", "").strip()
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    parser = DocsParser()
+    deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    selected_deadline = None
+    for index, deadline in enumerate(deadlines, start=1):
+        if str(index) == deadline_id:
+            selected_deadline = dict(deadline)
+            selected_deadline["id"] = index
+            selected_deadline["status"] = selected_deadline.get("status") if selected_deadline.get("status") in DEADLINE_STATUS_OPTIONS else "Not Started"
+            break
+
+    if selected_deadline is None:
+        flash("Deadline not found.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    return render_template("deadline_edit.html", deadline=selected_deadline, deadline_status_options=DEADLINE_STATUS_OPTIONS)
+
+
+@app.route("/deadlines/edit", methods=["POST"])
+def update_deadline():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    name = re.sub(r"\s+", " ", request.form.get("name", "").strip())
+    description = re.sub(r"\s+", " ", request.form.get("description", "").strip())
+    date = request.form.get("date", "").strip()
+    time = request.form.get("time", "").strip() or "-"
+    status = request.form.get("status", "Not Started").strip()
+
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if not name:
+        flash("Deadline name is required.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if _parse_deadline_date(date) is None:
+        flash("Deadline date must match DD.MM.YYYY.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if _parse_deadline_time(time) is None and time != "-":
+        flash("Deadline time must match HH:MM or '-'.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if status not in DEADLINE_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+
+        updated = False
+        for index, deadline in enumerate(current_deadlines, start=1):
+            if str(index) == deadline_id:
+                deadline["name"] = name
+                deadline["description"] = description
+                deadline["date"] = date
+                deadline["time"] = time
+                deadline["status"] = status
+                updated = True
+                break
+
+        if not updated:
+            flash("Deadline not found.", "warning")
+            return redirect(url_for("deadlines_overview"))
+
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline updated.", "success")
+    except BaseException:
+        flash("Failed to update deadline.", "danger")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+
+    return redirect(url_for("deadlines_overview"))
 
 
 @app.route("/todo/add", methods=["POST"])
