@@ -23,6 +23,7 @@ class DocsParser:
         "Not Started": "![[not started.png]]",
         "": "",
     }
+    TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
     def __init__(self) -> None:
         try:
             path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -30,6 +31,7 @@ class DocsParser:
                 j: dict = json.loads(f.read())
                 self.docs_path: str = j.get("docs", {}).get("full_path_to_docs", False)
                 self.todo_file_path: str = j.get("todo", {}).get("full_path_to_todo_file", False)
+                self.deadlines_file_path: str = j.get("deadlines", {}).get("full_path_to_deadlines_file", "/the-knowledge/Deadlines.md")
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
                 self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
             if self.docs_path is False:
@@ -327,6 +329,13 @@ class DocsParser:
             return self.PROGRESS_ICON_TO_STATE.get(raw_progress.strip(), "Not Started")
         except Exception:
             logger.error("Failed to parse todo progress\n%s", traceback.format_exc())
+            adieu(1)
+    def _parse_todo_priority(self, raw_priority: str) -> str:
+        try:
+            normalized = str(raw_priority or "").strip().casefold()
+            return self.TODO_PRIORITY_VALUES.get(normalized, "Medium")
+        except Exception:
+            logger.error("Failed to parse todo priority\n%s", traceback.format_exc())
             adieu(1)
     def _normalize_sw_progress(self, raw_value: str) -> str:
         try:
@@ -732,7 +741,7 @@ class DocsParser:
             with open(todo_path, "r", encoding="utf-8") as file:
                 content = file.read()
             table_pattern = re.compile(
-                r"\|\s*Note\s*\|\s*Type\s*\|\s*Progress\s*\|\s*last Update\s*\|\n"
+                r"\|\s*Note\s*\|\s*Type\s*\|\s*Progress\s*\|\s*last Update\s*\|(?:\s*Priority\s*\|)?\n"
                 r"\|[^\n]+\|\n"
                 r"((?:\|[^\n]+\|\n?)*)",
                 re.MULTILINE,
@@ -744,18 +753,66 @@ class DocsParser:
             todos: list[dict] = []
             for row in rows:
                 parts = [cell.strip() for cell in row.strip("|").split("|")]
-                if len(parts) != 4:
+                if len(parts) not in (4, 5):
                     continue
-                note, todo_type, progress, last_update = parts
+                note, todo_type, progress, last_update = parts[:4]
+                priority = parts[4] if len(parts) == 5 else "Medium"
                 todos.append(
                     {
                         "note": self._clean_note(note),
                         "type": json.dumps(self._parse_todo_type(todo_type), ensure_ascii=False),
                         "progress": self._parse_todo_progress(progress),
                         "last_update": last_update,
+                        "priority": self._parse_todo_priority(priority),
                     }
                 )
             return todos
         except Exception:
             logger.error("Failed to parse todos markdown\n%s", traceback.format_exc())
+            adieu(1)
+
+    def _parse_deadline_status(self, raw_progress: str) -> str:
+        normalized = str(raw_progress or "").strip()
+        return self.PROGRESS_ICON_TO_STATE.get(normalized, "Not Started")
+
+    def parse_deadlines_from_markdown(self, include_description: bool = False) -> list[dict]:
+        try:
+            if not self.deadlines_file_path:
+                raise Exception("Deadlines path missing in conf.json")
+
+            deadline_path = Path(self.deadlines_file_path)
+            with open(deadline_path, "r", encoding="utf-8") as file:
+                content = file.read()
+
+            table_pattern = re.compile(
+                r"\|\s*Name\s*\|\s*Description\s*\|\s*Date\s*\|\s*Time\s*\|\s*Status\s*\|\n"
+                r"\|[^\n]+\|\n"
+                r"((?:\|[^\n]+\|\n?)*)",
+                re.MULTILINE,
+            )
+            match = table_pattern.search(content)
+            if not match:
+                return []
+
+            rows = [line.strip() for line in match.group(1).splitlines() if line.strip().startswith("|")]
+            deadlines: list[dict] = []
+            for row in rows:
+                parts = [cell.strip() for cell in row.strip("|").split("|")]
+                if len(parts) != 5:
+                    continue
+
+                name, description, date, time, status = parts
+                deadline_row = {
+                    "name": name,
+                    "date": date,
+                    "time": time,
+                    "status": self._parse_deadline_status(status),
+                }
+                if include_description:
+                    deadline_row["description"] = description
+                deadlines.append(deadline_row)
+
+            return deadlines
+        except Exception:
+            logger.error("Failed to parse deadlines markdown\n%s", traceback.format_exc())
             adieu(1)

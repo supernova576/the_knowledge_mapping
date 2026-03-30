@@ -73,3 +73,41 @@ body {
 .km-waiting-overlay .card {
   max-width: 36rem;
 }
+
+.table-warning-deep {
+  --bs-table-bg: #f08c2e;
+  --bs-table-striped-bg: #e28128;
+  --bs-table-hover-bg: #dc7824;
+  color: #212529;
+}
+
+.km-total-badge {
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 0.55rem 0.9rem;
+}
+
+.km-deadline-name {
+  font-weight: 600;
+}
+
+.km-deadline-name.table-danger {
+  --bs-table-bg: #ffb3bd;
+  --bs-table-striped-bg: #ffadb8;
+  --bs-table-hover-bg: #ffa4b1;
+  color: #7a0013;
+}
+
+.km-deadline-name.table-warning {
+  --bs-table-bg: #ffe46b;
+  --bs-table-striped-bg: #ffdf57;
+  --bs-table-hover-bg: #ffd93d;
+  color: #5a4300;
+}
+
+.km-deadline-name.table-warning-deep {
+  --bs-table-bg: #ffd24a;
+  --bs-table-striped-bg: #ffcc33;
+  --bs-table-hover-bg: #ffc61a;
+  color: #4a3200;
+}

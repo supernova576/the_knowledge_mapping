@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deadlines</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+
+<body>
+    <div class="container py-4">
+        {% set active_page = 'deadlines' %}
+        {% include '_navbar.html' %}
+
+        <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
+            <h1 class="h3 mb-0">Deadlines</h1>
+            <span class="badge km-total-badge">Total: {{ total_deadlines }}</span>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}<div class="alert alert-{{ category }} mb-2">{{ message }}</div>{% endfor %}{% endif %}
+        {% endwith %}
+
+        <div class="card shadow-sm mb-4"><div class="card-body">
+            <h2 class="h5">Add deadline</h2>
+            <form method="post" action="{{ url_for('add_deadline') }}" class="row g-2 align-items-end">
+                <div class="col-md-3"><label class="form-label">Name</label><input class="form-control" name="name" required maxlength="150" /></div>
+                <div class="col-md-3"><label class="form-label">Description</label><input class="form-control" name="description" maxlength="500" /></div>
+                <div class="col-md-2"><label class="form-label">Date (DD.MM.YYYY)</label><input class="form-control" name="date" placeholder="31.12.2026" required pattern="\d{2}\.\d{2}\.\d{4}" /></div>
+                <div class="col-md-1"><label class="form-label">Time</label><input class="form-control" name="time" placeholder="12:00" pattern="([01]\d|2[0-3]):[0-5]\d|-" /></div>
+                <div class="col-md-2"><label class="form-label">Status</label><select class="form-select" name="status">{% for status_option in deadline_status_options %}<option>{{ status_option }}</option>{% endfor %}</select></div>
+                <div class="col-md-1 d-grid"><button class="btn btn-success">Add</button></div>
+            </form>
+        </div></div>
+
+        <div class="card shadow-sm"><div class="card-body"><h2 class="h5">All deadlines</h2><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Name</th><th>Date</th><th>Time</th><th>Status</th><th>Edit</th><th>Delete</th></tr></thead><tbody>
+            {% for deadline in deadlines %}
+            <tr>
+                <td class="km-deadline-name {% if deadline.row_class %}{{ deadline.row_class }}{% endif %}">{{ deadline.name }}</td>
+                <td>{{ deadline.date }}</td>
+                <td>{{ deadline.time }}</td>
+                <td>
+                    <img src="{{ url_for('static', filename='png/' ~ (deadline.status|lower) ~ '.png') }}"
+                         alt="{{ deadline.status }}"
+                         height="24" />
+                </td>
+                <td>
+                    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('edit_deadline_page', deadline_id=deadline.id) }}">Edit</a>
+                </td>
+                <td>
+                    <form method="post" action="{{ url_for('delete_deadline') }}">
+                        <input type="hidden" name="deadline_id" value="{{ deadline.id }}" />
+                        <button class="btn btn-outline-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">No deadlines available.</td></tr>
+            {% endfor %}
+        </tbody></table></div></div></div>
+
+        {% include '_footer.html' %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    {% include '_theme_toggle_script.html' %}
+</body>
+
+</html>

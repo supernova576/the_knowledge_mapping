@@ -5,7 +5,7 @@ import re
 import stat
 import traceback
 from urllib.parse import urlencode, urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -29,6 +29,26 @@ logger = get_logger(__name__)
 
 
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
+TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+DEADLINE_STATUS_OPTIONS = ["Not Started", "In Progress", "Done"]
+
+
+def _normalize_todo_priority(value: str | None) -> str:
+    normalized = str(value or "").strip().casefold()
+    if normalized not in {"low", "medium", "high"}:
+        return "Medium"
+    return normalized.capitalize()
+
+
+def _sort_todos_by_priority(todos: list[dict]) -> list[dict]:
+    return sorted(
+        todos,
+        key=lambda todo: (
+            TODO_PRIORITY_ORDER.get(_normalize_todo_priority(todo.get("priority")), len(TODO_PRIORITY_ORDER)),
+            str(todo.get("note", "")).casefold(),
+        ),
+    )
 
 
 def _parse_sync_timestamp(sync_time: str | None) -> datetime | None:
@@ -556,7 +576,7 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     writer.write_todos_table(todos)
 
 
-def _append_todo(note: str, todo_type: str, progress: str) -> None:
+def _append_todo(note: str, todo_type: str, progress: str, priority: str = "Medium") -> None:
     parser = DocsParser()
     todos = parser.parse_todos_from_markdown()
     todos.append(
@@ -565,6 +585,7 @@ def _append_todo(note: str, todo_type: str, progress: str) -> None:
             "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
             "progress": progress,
             "last_update": _today_dd_mm(),
+            "priority": _normalize_todo_priority(priority),
         }
     )
 
@@ -591,11 +612,72 @@ def _load_todos(parser: DocsParser, query: str) -> list[dict]:
         prepared = dict(row)
         prepared["id"] = index
         prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
+        prepared["priority"] = _normalize_todo_priority(prepared.get("priority"))
         if normalized_query and normalized_query not in str(prepared.get("note", "")).casefold():
             continue
         processed_rows.append(prepared)
 
-    return processed_rows
+    return _sort_todos_by_priority(processed_rows)
+
+
+def _parse_deadline_date(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(str(value or "").strip(), "%d.%m.%Y")
+    except ValueError:
+        return None
+
+
+def _parse_deadline_time(value: str):
+    time_value = str(value or "").strip()
+    if not time_value or time_value == "-":
+        return None
+    try:
+        return datetime.strptime(time_value, "%H:%M").time()
+    except ValueError:
+        return None
+
+
+def _deadline_sort_key(deadline: dict) -> tuple[int, datetime, datetime.time]:
+    parsed_date = _parse_deadline_date(deadline.get("date", ""))
+    if parsed_date is None:
+        return (0, datetime.min, datetime.min.time())
+
+    parsed_time = _parse_deadline_time(deadline.get("time", ""))
+    return (1, parsed_date, parsed_time or datetime.max.time())
+
+
+def _deadline_row_class(deadline: dict) -> str:
+    date_value = _parse_deadline_date(deadline.get("date", ""))
+    if date_value is None:
+        return ""
+
+    time_value = _parse_deadline_time(deadline.get("time", ""))
+    if time_value is not None:
+        target = datetime.combine(date_value.date(), time_value)
+    else:
+        target = datetime.combine(date_value.date(), datetime.min.time()) + timedelta(hours=23, minutes=59)
+
+    days_remaining = (target - datetime.now()).total_seconds() / 86400
+    if days_remaining < 3:
+        return "table-danger"
+    if days_remaining < 7:
+        return "table-warning-deep"
+    if days_remaining < 14:
+        return "table-warning"
+    return ""
+
+
+def _load_deadlines(parser: DocsParser, include_description: bool = False) -> list[dict]:
+    rows = parser.parse_deadlines_from_markdown(include_description=include_description)
+    processed_rows: list[dict] = []
+    for source_index, row in enumerate(rows, start=1):
+        prepared = dict(row)
+        prepared["id"] = source_index
+        prepared["status"] = prepared.get("status") if prepared.get("status") in DEADLINE_STATUS_OPTIONS else "Not Started"
+        prepared["row_class"] = _deadline_row_class(prepared)
+        processed_rows.append(prepared)
+
+    return sorted(processed_rows, key=_deadline_sort_key)
 
 
 def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
@@ -827,6 +909,45 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
     return filtered_rows
 
 
+def _latest_ai_feedback_row_ids(rows: list[dict]) -> set[int]:
+    latest_ids: set[int] = set()
+    latest_by_file: dict[str, tuple[int, int]] = {}
+
+    for row in rows:
+        file_name = str(row.get("file_name", "")).strip()
+        if not file_name:
+            continue
+
+        row_id = int(row.get("id", 0))
+        version = int(row.get("version", 0))
+        file_key = file_name.casefold()
+
+        current_best = latest_by_file.get(file_key)
+        candidate = (version, row_id)
+        if current_best is None or candidate > current_best:
+            latest_by_file[file_key] = candidate
+
+    for _, (_, row_id) in latest_by_file.items():
+        latest_ids.add(row_id)
+
+    return latest_ids
+
+
+def _sync_ai_feedback_and_openrouter_credits(database: db) -> tuple[list[dict], str | None]:
+    parser = DocsParser()
+    synced_rows = parser.sync_ai_feedback_to_db()
+
+    try:
+        credits_left = DocsAIFeedback(_load_conf()).fetch_openrouter_credits_left()
+        credits_left_label = f"{credits_left:.4f}".rstrip("0").rstrip(".")
+        database.upsert_setting("openrouter_credits_left", credits_left_label)
+    except Exception:
+        logger.warning("Could not sync OpenRouter credits left\n%s", traceback.format_exc())
+        credits_left_label = None
+
+    return synced_rows, credits_left_label
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -848,8 +969,6 @@ def index():
     for item in docs.values():
         row = dict(item)
         row["tags_list"] = _to_display_list(row.get("tags"))
-        row["links_list"] = _link_map_to_items(row.get("links"))
-        row["video_links_list"] = _link_map_to_items(row.get("video_links"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
@@ -1145,18 +1264,182 @@ def sync_todos():
     return redirect(url_for("todo_overview"))
 
 
+@app.route("/deadlines", methods=["GET"])
+def deadlines_overview():
+    parser = DocsParser()
+    try:
+        deadlines = _load_deadlines(parser, include_description=False)
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            flash("Deadline parsing failed. Check conf.json deadlines path and parser logs.", "danger")
+        else:
+            flash("Automatic deadline parsing failed.", "warning")
+        deadlines = []
+
+    return render_template(
+        "deadlines.html",
+        deadlines=deadlines,
+        total_deadlines=len(deadlines),
+        deadline_status_options=DEADLINE_STATUS_OPTIONS,
+    )
+
+
+@app.route("/deadlines/add", methods=["POST"])
+def add_deadline():
+    name = re.sub(r"\s+", " ", request.form.get("name", "").strip())
+    description = re.sub(r"\s+", " ", request.form.get("description", "").strip())
+    date = request.form.get("date", "").strip()
+    time = request.form.get("time", "").strip() or "-"
+    status = request.form.get("status", "Not Started").strip()
+
+    if not name:
+        flash("Deadline name is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if _parse_deadline_date(date) is None:
+        flash("Deadline date must match DD.MM.YYYY.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if _parse_deadline_time(time) is None and time != "-":
+        flash("Deadline time must match HH:MM or '-'.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if status not in DEADLINE_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        current_deadlines.append(
+            {
+                "name": name,
+                "description": description,
+                "date": date,
+                "time": time,
+                "status": status,
+            }
+        )
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline added successfully.", "success")
+    except BaseException:
+        flash("Failed to add deadline. Check logs and markdown format.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/delete", methods=["POST"])
+def delete_deadline():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        kept_deadlines = [deadline for index, deadline in enumerate(current_deadlines, start=1) if str(index) != deadline_id]
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(kept_deadlines)
+        flash("Deadline deleted.", "success")
+    except BaseException:
+        flash("Failed to delete deadline.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/edit", methods=["GET"])
+def edit_deadline_page():
+    deadline_id = request.args.get("deadline_id", "").strip()
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    parser = DocsParser()
+    deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    selected_deadline = None
+    for index, deadline in enumerate(deadlines, start=1):
+        if str(index) == deadline_id:
+            selected_deadline = dict(deadline)
+            selected_deadline["id"] = index
+            selected_deadline["status"] = selected_deadline.get("status") if selected_deadline.get("status") in DEADLINE_STATUS_OPTIONS else "Not Started"
+            break
+
+    if selected_deadline is None:
+        flash("Deadline not found.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    return render_template("deadline_edit.html", deadline=selected_deadline, deadline_status_options=DEADLINE_STATUS_OPTIONS)
+
+
+@app.route("/deadlines/edit", methods=["POST"])
+def update_deadline():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    name = re.sub(r"\s+", " ", request.form.get("name", "").strip())
+    description = re.sub(r"\s+", " ", request.form.get("description", "").strip())
+    date = request.form.get("date", "").strip()
+    time = request.form.get("time", "").strip() or "-"
+    status = request.form.get("status", "Not Started").strip()
+
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if not name:
+        flash("Deadline name is required.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if _parse_deadline_date(date) is None:
+        flash("Deadline date must match DD.MM.YYYY.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if _parse_deadline_time(time) is None and time != "-":
+        flash("Deadline time must match HH:MM or '-'.", "warning")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+    if status not in DEADLINE_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+
+        updated = False
+        for index, deadline in enumerate(current_deadlines, start=1):
+            if str(index) == deadline_id:
+                deadline["name"] = name
+                deadline["description"] = description
+                deadline["date"] = date
+                deadline["time"] = time
+                deadline["status"] = status
+                updated = True
+                break
+
+        if not updated:
+            flash("Deadline not found.", "warning")
+            return redirect(url_for("deadlines_overview"))
+
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline updated.", "success")
+    except BaseException:
+        flash("Failed to update deadline.", "danger")
+        return redirect(url_for("edit_deadline_page", deadline_id=deadline_id))
+
+    return redirect(url_for("deadlines_overview"))
+
+
 @app.route("/todo/add", methods=["POST"])
 def add_todo():
     note = request.form.get("note", "").strip()
     todo_type = request.form.get("type", "").strip()
     progress = request.form.get("progress", "Not Started").strip()
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
 
     if not note or not todo_type:
         flash("Todo note and type are required.", "warning")
         return redirect(url_for("todo_overview"))
 
     try:
-        _append_todo(note=note, todo_type=todo_type, progress=progress)
+        _append_todo(note=note, todo_type=todo_type, progress=progress, priority=priority)
         flash("Todo added successfully.", "success")
     except BaseException:
         flash("Failed to add todo. Check logs and markdown format.", "danger")
@@ -1209,6 +1492,34 @@ def update_todo_progress():
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/priority", methods=["POST"])
+def update_todo_priority():
+    todo_id = request.form.get("todo_id", "").strip()
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
+
+    if not todo_id.isdigit():
+        flash("Todo id is required.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        current_todos = DocsParser().parse_todos_from_markdown()
+
+        for index, todo in enumerate(current_todos, start=1):
+            if str(index) == todo_id:
+                todo["priority"] = priority
+                todo["last_update"] = _today_dd_mm()
+                break
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(current_todos)
+        flash("Todo priority updated.", "success")
+    except BaseException:
+        flash("Failed to update todo priority.", "danger")
 
     return redirect(url_for("todo_overview"))
 
@@ -1310,6 +1621,7 @@ def create_doc_from_todo_template():
                 note=f"{Path(normalized_file_name).stem} ({reason})",
                 todo_type="Update",
                 progress="In Progress",
+                priority="Medium",
             )
             flash("Update note request created and todo added.", "success")
             return redirect(url_for("index"))
@@ -1477,6 +1789,13 @@ def ai_feedback_overview():
     score_query = request.args.get("score", "").strip()
     all_feedback_rows = _load_ai_feedback_rows(database, "", "")
     feedback_rows = _load_ai_feedback_rows(database, name_query, score_query)
+    latest_row_ids = _latest_ai_feedback_row_ids(all_feedback_rows)
+
+    for row in all_feedback_rows:
+        row["included_in_average"] = int(row.get("id", 0)) in latest_row_ids
+
+    for row in feedback_rows:
+        row["included_in_average"] = int(row.get("id", 0)) in latest_row_ids
 
     feedback_docs_present = {
         str(row.get("file_name", "")).strip().casefold()
@@ -1497,8 +1816,13 @@ def ai_feedback_overview():
         key=lambda item: item["title"].casefold(),
     )
 
-    scores = [row["score_value"] for row in all_feedback_rows if row.get("score_value") is not None]
+    scores = [
+        row["score_value"]
+        for row in all_feedback_rows
+        if row.get("included_in_average") and row.get("score_value") is not None
+    ]
     average_score = sum(scores) / len(scores) if scores else None
+    openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
 
     return render_template(
         "ai_feedback.html",
@@ -1509,15 +1833,24 @@ def ai_feedback_overview():
         selected_name=name_query,
         selected_score=score_query,
         available_docs=available_docs,
+        openrouter_credits_left=openrouter_credits_left,
     )
 
 
 @app.route("/ai_feedback/sync", methods=["POST"])
 def ai_feedback_sync():
     try:
-        parser = DocsParser()
-        synced_rows = parser.sync_ai_feedback_to_db()
-        flash(f"Synced {len(synced_rows)} AI feedback file(s).", "success")
+        synced_rows, credits_left_label = _sync_ai_feedback_and_openrouter_credits(db())
+        if credits_left_label is None:
+            flash(
+                f"Synced {len(synced_rows)} AI feedback file(s). OpenRouter credits could not be refreshed.",
+                "warning",
+            )
+        else:
+            flash(
+                f"Synced {len(synced_rows)} AI feedback file(s). OpenRouter credits left: ${credits_left_label}.",
+                "success",
+            )
         return redirect(url_for("ai_feedback_overview"))
     except Exception as exc:
         logger.error("AI feedback sync failed\n%s", traceback.format_exc())
@@ -1537,9 +1870,24 @@ def generate_ai_feedback():
         database = db()
         _ensure_doc_can_receive_ai_feedback(database, selected_doc)
         parser = DocsParser()
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         ai_feedback_service = DocsAIFeedback(conf)
-        feedback_payload = ai_feedback_service.generate_feedback(selected_doc)
+        selected_doc_note_name = Path(selected_doc).stem.strip()
+        latest_feedback_context = None
+        latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
+        if latest_feedback_for_context and latest_feedback_for_context.get("path_to_feedback"):
+            parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
+            latest_feedback_context = {
+                "version": parsed_latest_feedback.get("version"),
+                "score": parsed_latest_feedback.get("score"),
+                "creation_date": parsed_latest_feedback.get("creation_date"),
+                "feedback": parsed_latest_feedback.get("feedback"),
+            }
+
+        feedback_payload = ai_feedback_service.generate_feedback(
+            selected_doc,
+            previous_feedback=latest_feedback_context,
+        )
 
         latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
         next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
@@ -1561,7 +1909,7 @@ def generate_ai_feedback():
         )
         _set_rw_permissions_for_all_users(output_path)
 
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
@@ -1625,8 +1973,7 @@ def ai_feedback_delete(feedback_id: int):
             flash(f"Feedback file was already missing: {feedback_name}. Removed database entry.", "warning")
 
         database.delete_ai_feedback_by_id(feedback_id)
-        parser = DocsParser()
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         flash(f"AI feedback deleted successfully: {feedback_name}.", "success")
         return redirect(redirect_to)
     except Exception as exc:

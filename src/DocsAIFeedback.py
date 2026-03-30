@@ -66,7 +66,44 @@ class DocsAIFeedback:
             raise FileNotFoundError(f"{label} template not found: {template_path}")
         return template_path.read_text(encoding="utf-8")
 
-    def _build_messages(self, note_name: str, doc_content: str, evaluation_context: str) -> list[dict]:
+    def _build_previous_feedback_section(self, previous_feedback: dict | None) -> str:
+        if not isinstance(previous_feedback, dict):
+            return ""
+
+        previous_score = previous_feedback.get("score")
+        previous_feedback_text = str(previous_feedback.get("feedback", "")).strip()
+        if previous_score is None or not previous_feedback_text:
+            return ""
+
+        previous_version = int(previous_feedback.get("version", 0) or 0)
+        previous_creation_date = str(previous_feedback.get("creation_date", "N/A")).strip() or "N/A"
+        review_instruction = ""
+        try:
+            if float(previous_score) < 100:
+                review_instruction = (
+                    "Because the previous score was below 100, explicitly evaluate whether the previously "
+                    "identified issues were implemented or are still missing.\n"
+                )
+        except (TypeError, ValueError):
+            pass
+
+        return (
+            "Use this previous AI feedback for context before evaluating the current documentation version:\n"
+            f"Previous version: {previous_version}\n"
+            f"Previous creation date: {previous_creation_date}\n"
+            f"Previous score: {previous_score}\n"
+            f"Previous feedback:\n{previous_feedback_text}\n\n"
+            f"{review_instruction}"
+        )
+
+    def _build_messages(
+        self,
+        note_name: str,
+        doc_content: str,
+        evaluation_context: str,
+        previous_feedback: dict | None = None,
+    ) -> list[dict]:
+        previous_feedback_context = self._build_previous_feedback_section(previous_feedback)
         return [
             {
                 "role": "system",
@@ -83,6 +120,7 @@ class DocsAIFeedback:
                     f"Evaluate the markdown note named '{note_name}'.\n\n"
                     "Use the following evaluation context:\n"
                     f"{evaluation_context}\n\n"
+                    f"{previous_feedback_context}"
                     "Now review this markdown note:\n"
                     f"{doc_content}\n\n"
                     "Return JSON only, with this schema:\n"
@@ -334,6 +372,65 @@ class DocsAIFeedback:
             )
             raise
 
+    def _request_openrouter_json(self, endpoint: str) -> dict:
+        if not self.api_key or self.api_key == "-":
+            raise ValueError("AI feedback api_key is missing in conf.json.")
+
+        base_origin = str(self.base_url or "").strip().rstrip("/")
+        if not base_origin:
+            base_origin = "https://openrouter.ai/api/v1/chat/completions"
+        if "/api/v1/" in base_origin:
+            base_origin = base_origin.split("/api/v1/", 1)[0]
+
+        target_url = f"{base_origin}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": self.http_referer,
+            "X-Title": self.app_title,
+        }
+        request_object = urllib_request.Request(target_url, headers=headers, method="GET")
+        with urllib_request.urlopen(request_object, timeout=self.request_timeout_seconds) as response:
+            return json.loads(self._read_response_with_deadline(response))
+
+    def _extract_credits_left(self, payload: dict) -> float | None:
+        if not isinstance(payload, dict):
+            return None
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            data = payload
+
+        direct_candidates = ("credits_left", "remaining", "remaining_credits", "credits")
+        for key in direct_candidates:
+            if key in data:
+                return self._normalize_score(data.get(key))
+
+        total = data.get("total_credits", data.get("limit"))
+        used = data.get("total_usage", data.get("usage"))
+        if total is not None and used is not None:
+            return self._normalize_score(total) - self._normalize_score(used)
+
+        return None
+
+    def fetch_openrouter_credits_left(self) -> float:
+        endpoints_to_try = ["/api/v1/credits", "/api/v1/auth/key"]
+        last_error: Exception | None = None
+
+        for endpoint in endpoints_to_try:
+            try:
+                payload = self._request_openrouter_json(endpoint)
+                credits_left = self._extract_credits_left(payload)
+                if credits_left is not None:
+                    return max(0.0, credits_left)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise RuntimeError(f"Failed to fetch OpenRouter credits: {last_error}") from last_error
+        raise RuntimeError("Failed to fetch OpenRouter credits: response did not include remaining credits.")
+
     def _request_ai_feedback(self, note_name: str, messages: list[dict]) -> dict:
         try:
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=True)
@@ -345,7 +442,7 @@ class DocsAIFeedback:
             )
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=False)
 
-    def generate_feedback(self, file_name: str) -> dict:
+    def generate_feedback(self, file_name: str, previous_feedback: dict | None = None) -> dict:
         try:
             doc_path = self._resolve_doc_path(file_name)
             note_name = doc_path.stem.strip()
@@ -353,7 +450,15 @@ class DocsAIFeedback:
             evaluation_context = self._read_template(self.prompt_template_path, "AI prompt")
             feedback_template = self._read_template(self.feedback_template_path, "AI feedback")
 
-            ai_feedback = self._request_ai_feedback(note_name, self._build_messages(note_name, doc_content, evaluation_context))
+            ai_feedback = self._request_ai_feedback(
+                note_name,
+                self._build_messages(
+                    note_name,
+                    doc_content,
+                    evaluation_context,
+                    previous_feedback=previous_feedback,
+                ),
+            )
             return {
                 "note_name": note_name,
                 "score": ai_feedback["score"],

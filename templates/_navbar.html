@@ -13,6 +13,10 @@
                     <a class="nav-link {% if active_page == 'todo' %}active{% endif %}"
                         href="{{ url_for('todo_overview') }}">Todo</a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_page == 'deadlines' %}active{% endif %}"
+                        href="{{ url_for('deadlines_overview') }}">Deadlines</a>
+                </li>
                 
                 <li class="nav-item">
                     <a class="nav-link {% if active_page == 'ai_feedback' %}active{% endif %}"
