@@ -17,6 +17,8 @@ class DocsWriter:
         "In Progress": "![[in progress.png]]",
         "Done": "![[done.png]]",
     }
+    TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
+    TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 
     def __init__(self, todo_file_path: str) -> None:
         self.todo_path = Path(todo_file_path)
@@ -46,15 +48,27 @@ class DocsWriter:
         return start, end
 
     def _serialize_table(self, todos: list[dict]) -> list[str]:
-        header = "| Note                             | Type       | Progress             | last Update |\n"
-        separator = "| -------------------------------- | ---------- | -------------------- | ----------- |\n"
+        header = "| Note                             | Type       | Progress             | last Update | Priority |\n"
+        separator = "| -------------------------------- | ---------- | -------------------- | ----------- | -------- |\n"
         rows = []
 
-        for todo in todos:
+        sorted_todos = sorted(
+            todos,
+            key=lambda todo: (
+                self.TODO_PRIORITY_ORDER.get(
+                    self.TODO_PRIORITY_VALUES.get(str(todo.get("priority", "Medium")).strip().casefold(), "Medium"),
+                    len(self.TODO_PRIORITY_ORDER),
+                ),
+                str(todo.get("note", "")).casefold(),
+            ),
+        )
+
+        for todo in sorted_todos:
             note = todo.get("note", "").strip()
             todo_type = todo.get("type", [])
             progress = todo.get("progress", "Not Started")
             last_update = todo.get("last_update", self._today_dd_mm())
+            priority = self.TODO_PRIORITY_VALUES.get(str(todo.get("priority", "Medium")).strip().casefold(), "Medium")
 
             if isinstance(todo_type, str):
                 try:
@@ -68,7 +82,7 @@ class DocsWriter:
             type_text = "/".join([str(item).strip() for item in todo_type if str(item).strip()]) or "N/A"
             note_clean = re.sub(r"\s*\(.*?\)", "", note).strip()
             progress_icon = self.PROGRESS_TO_ICON.get(progress, self.PROGRESS_TO_ICON["Not Started"])
-            rows.append(f"| {note_clean} | {type_text} | {progress_icon} | {last_update} |\n")
+            rows.append(f"| {note_clean} | {type_text} | {progress_icon} | {last_update} | {priority} |\n")
 
         return [header, separator, *rows]
 

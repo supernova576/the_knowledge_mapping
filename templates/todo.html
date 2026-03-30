@@ -36,9 +36,10 @@
         <div class="card shadow-sm mb-4"><div class="card-body">
             <h2 class="h5">Add todo</h2>
             <form method="post" action="{{ url_for('add_todo') }}" class="row g-2 align-items-end">
-                <div class="col-md-5"><label class="form-label">Note</label><input class="form-control" name="note" required /></div>
+                <div class="col-md-4"><label class="form-label">Note</label><input class="form-control" name="note" required /></div>
                 <div class="col-md-3"><label class="form-label">Type (e.g. New/Update)</label><input class="form-control" name="type" required /></div>
                 <div class="col-md-2"><label class="form-label">Progress</label><select class="form-select" name="progress"><option>Not Started</option><option>In Progress</option><option>Done</option></select></div>
+                <div class="col-md-2"><label class="form-label">Priority</label><select class="form-select" name="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
                 <div class="col-md-2 d-grid"><button class="btn btn-success">Add</button></div>
             </form>
         </div></div>
@@ -46,7 +47,13 @@
         <div class="card shadow-sm"><div class="card-body"><h2 class="h5">All todos</h2><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Note</th><th>Type</th><th>Progress</th><th>Last update</th><th>Create/Update Docs</th><th>Actions</th></tr></thead><tbody>
             {% for todo in todos %}
             <tr>
-                <td>{{ todo.note }}</td>
+                <td>
+                    {% set normalized_priority = todo.priority|trim|lower %}
+                    <span class="badge me-2 {% if normalized_priority == 'high' %}text-bg-danger{% elif normalized_priority == 'medium' %}text-bg-warning{% else %}text-bg-success{% endif %}">
+                        {{ todo.priority }}
+                    </span>
+                    {{ todo.note }}
+                </td>
                 <td>
                     {% for todo_type in todo.type_list %}
                     {% set normalized_type = todo_type|trim|lower %}
@@ -76,6 +83,14 @@
                                 <option {% if todo.progress == 'Not Started' %}selected{% endif %}>Not Started</option>
                                 <option {% if todo.progress == 'In Progress' %}selected{% endif %}>In Progress</option>
                                 <option {% if todo.progress == 'Done' %}selected{% endif %}>Done</option>
+                            </select>
+                        </form>
+                        <form method="post" action="{{ url_for('update_todo_priority') }}" class="d-flex gap-2">
+                            <input type="hidden" name="todo_id" value="{{ todo.id }}" />
+                            <select class="form-select form-select-sm" name="priority" onchange="this.form.submit()">
+                                <option {% if todo.priority == 'Low' %}selected{% endif %}>Low</option>
+                                <option {% if todo.priority == 'Medium' %}selected{% endif %}>Medium</option>
+                                <option {% if todo.priority == 'High' %}selected{% endif %}>High</option>
                             </select>
                         </form>
                         <form method="post" action="{{ url_for('delete_todo') }}">

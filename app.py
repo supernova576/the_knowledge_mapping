@@ -29,6 +29,25 @@ logger = get_logger(__name__)
 
 
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
+TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+
+
+def _normalize_todo_priority(value: str | None) -> str:
+    normalized = str(value or "").strip().casefold()
+    if normalized not in {"low", "medium", "high"}:
+        return "Medium"
+    return normalized.capitalize()
+
+
+def _sort_todos_by_priority(todos: list[dict]) -> list[dict]:
+    return sorted(
+        todos,
+        key=lambda todo: (
+            TODO_PRIORITY_ORDER.get(_normalize_todo_priority(todo.get("priority")), len(TODO_PRIORITY_ORDER)),
+            str(todo.get("note", "")).casefold(),
+        ),
+    )
 
 
 def _parse_sync_timestamp(sync_time: str | None) -> datetime | None:
@@ -556,7 +575,7 @@ def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
     writer.write_todos_table(todos)
 
 
-def _append_todo(note: str, todo_type: str, progress: str) -> None:
+def _append_todo(note: str, todo_type: str, progress: str, priority: str = "Medium") -> None:
     parser = DocsParser()
     todos = parser.parse_todos_from_markdown()
     todos.append(
@@ -565,6 +584,7 @@ def _append_todo(note: str, todo_type: str, progress: str) -> None:
             "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
             "progress": progress,
             "last_update": _today_dd_mm(),
+            "priority": _normalize_todo_priority(priority),
         }
     )
 
@@ -591,11 +611,12 @@ def _load_todos(parser: DocsParser, query: str) -> list[dict]:
         prepared = dict(row)
         prepared["id"] = index
         prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
+        prepared["priority"] = _normalize_todo_priority(prepared.get("priority"))
         if normalized_query and normalized_query not in str(prepared.get("note", "")).casefold():
             continue
         processed_rows.append(prepared)
 
-    return processed_rows
+    return _sort_todos_by_priority(processed_rows)
 
 
 def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
@@ -1172,13 +1193,14 @@ def add_todo():
     note = request.form.get("note", "").strip()
     todo_type = request.form.get("type", "").strip()
     progress = request.form.get("progress", "Not Started").strip()
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
 
     if not note or not todo_type:
         flash("Todo note and type are required.", "warning")
         return redirect(url_for("todo_overview"))
 
     try:
-        _append_todo(note=note, todo_type=todo_type, progress=progress)
+        _append_todo(note=note, todo_type=todo_type, progress=progress, priority=priority)
         flash("Todo added successfully.", "success")
     except BaseException:
         flash("Failed to add todo. Check logs and markdown format.", "danger")
@@ -1231,6 +1253,34 @@ def update_todo_progress():
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
+
+    return redirect(url_for("todo_overview"))
+
+
+@app.route("/todo/priority", methods=["POST"])
+def update_todo_priority():
+    todo_id = request.form.get("todo_id", "").strip()
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
+
+    if not todo_id.isdigit():
+        flash("Todo id is required.", "warning")
+        return redirect(url_for("todo_overview"))
+
+    try:
+        current_todos = DocsParser().parse_todos_from_markdown()
+
+        for index, todo in enumerate(current_todos, start=1):
+            if str(index) == todo_id:
+                todo["priority"] = priority
+                todo["last_update"] = _today_dd_mm()
+                break
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(current_todos)
+        flash("Todo priority updated.", "success")
+    except BaseException:
+        flash("Failed to update todo priority.", "danger")
 
     return redirect(url_for("todo_overview"))
 
@@ -1332,6 +1382,7 @@ def create_doc_from_todo_template():
                 note=f"{Path(normalized_file_name).stem} ({reason})",
                 todo_type="Update",
                 progress="In Progress",
+                priority="Medium",
             )
             flash("Update note request created and todo added.", "success")
             return redirect(url_for("index"))

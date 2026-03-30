@@ -81,3 +81,11 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - create from Template
     - Status and todos
     - Mapping of project specific tag to docs
+- checklist
+  - "Batterie" element, dass den Status anzeigt von jedem modul (bzw. selektiertes modul oder pro modul)
+  - mehr mit farben arbeiten (zur Kategorisierung)
+  - oben einen col-md-6 erstellen mit "nächste abgaben"
+    - parsing von Dealines feld von den docs und in DB speichern
+- todo
+  - priorisierung mit farben
+    -  {niedrig: grün, mittel: gold, hoch: rot}
