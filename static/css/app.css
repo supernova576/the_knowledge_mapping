@@ -111,3 +111,32 @@ body {
   --bs-table-hover-bg: #ffc61a;
   color: #4a3200;
 }
+
+.km-battery-progress {
+  position: relative;
+  height: 1.6rem;
+  border: 2px solid var(--bs-border-color);
+  border-radius: 0.4rem;
+  background-color: rgba(var(--bs-secondary-rgb), 0.12);
+  overflow: visible;
+}
+
+.km-battery-progress::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -0.45rem;
+  width: 0.3rem;
+  height: 0.8rem;
+  border: 2px solid var(--bs-border-color);
+  border-left: 0;
+  border-radius: 0 0.2rem 0.2rem 0;
+  transform: translateY(-50%);
+  background-color: rgba(var(--bs-secondary-rgb), 0.12);
+}
+
+.km-battery-progress-fill {
+  height: 100%;
+  border-radius: 0.2rem;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}

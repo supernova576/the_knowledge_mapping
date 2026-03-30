@@ -32,6 +32,13 @@ SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
 TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
 TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 DEADLINE_STATUS_OPTIONS = ["Not Started", "In Progress", "Done"]
+INDEX_PROGRESS_WEIGHTS = {
+    "under_construction": 0.2,
+    "incompliant": 0.2,
+    "todos": 0.2,
+    "deadlines": 0.2,
+    "ai_gap": 0.2,
+}
 
 
 def _normalize_todo_priority(value: str | None) -> str:
@@ -680,6 +687,104 @@ def _load_deadlines(parser: DocsParser, include_description: bool = False) -> li
     return sorted(processed_rows, key=_deadline_sort_key)
 
 
+def _count_open_todos(todos: list[dict]) -> int:
+    return len([todo for todo in todos if str(todo.get("progress", "")).strip() != "Done"])
+
+
+def _count_upcoming_deadlines(deadlines: list[dict], days_window: int = 7) -> int:
+    now = datetime.now()
+    cutoff = now + timedelta(days=days_window)
+    upcoming_count = 0
+
+    for deadline in deadlines:
+        if str(deadline.get("status", "")).strip() == "Done":
+            continue
+
+        deadline_date = _parse_deadline_date(deadline.get("date", ""))
+        if deadline_date is None:
+            continue
+
+        deadline_time = _parse_deadline_time(deadline.get("time", ""))
+        deadline_at = (
+            datetime.combine(deadline_date.date(), deadline_time)
+            if deadline_time is not None
+            else datetime.combine(deadline_date.date(), datetime.max.time())
+        )
+        if now <= deadline_at < cutoff:
+            upcoming_count += 1
+
+    return upcoming_count
+
+
+def _count_all_deadlines(deadlines: list[dict]) -> int:
+    return len(deadlines)
+
+
+def _normalize_ratio(value: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return max(0.0, min(1.0, value / total))
+
+
+def _normalize_count(value: int) -> float:
+    if value <= 0:
+        return 0.0
+    return value / (value + 1)
+
+
+def _calculate_latest_ai_feedback_average(database: db) -> float | None:
+    all_feedback_rows = _load_ai_feedback_rows(database, "", "")
+    latest_row_ids = _latest_ai_feedback_row_ids(all_feedback_rows)
+    scores = [
+        row["score_value"]
+        for row in all_feedback_rows
+        if int(row.get("id", 0)) in latest_row_ids and row.get("score_value") is not None
+    ]
+    return sum(scores) / len(scores) if scores else None
+
+
+def _calculate_index_progress(
+    *,
+    total_docs: int,
+    under_construction_count: int,
+    incompliant_docs: int,
+    open_todos_count: int,
+    total_deadlines_count: int,
+    average_ai_score: float | None,
+) -> dict:
+    safe_average_ai_score = 100.0 if average_ai_score is None else max(0.0, min(100.0, average_ai_score))
+    under_construction_norm = _normalize_ratio(under_construction_count, total_docs)
+    incompliant_norm = _normalize_ratio(incompliant_docs, total_docs)
+    todos_norm = _normalize_count(open_todos_count)
+    deadlines_norm = _normalize_count(total_deadlines_count)
+    ai_gap_norm = (100.0 - safe_average_ai_score) / 100.0
+
+    weighted_penalty = (
+        INDEX_PROGRESS_WEIGHTS["under_construction"] * under_construction_norm
+        + INDEX_PROGRESS_WEIGHTS["incompliant"] * incompliant_norm
+        + INDEX_PROGRESS_WEIGHTS["todos"] * todos_norm
+        + INDEX_PROGRESS_WEIGHTS["deadlines"] * deadlines_norm
+        + INDEX_PROGRESS_WEIGHTS["ai_gap"] * ai_gap_norm
+    )
+    progress_value = round(max(0.0, min(100.0, 100.0 * (1.0 - weighted_penalty))))
+
+    if progress_value >= 80:
+        progress_color = "bg-success"
+    elif progress_value >= 60:
+        progress_color = "bg-info"
+    elif progress_value >= 40:
+        progress_color = "bg-warning"
+    else:
+        progress_color = "bg-danger"
+
+    return {
+        "value": progress_value,
+        "color_class": progress_color,
+        "color": _progress_bar_color(progress_value),
+        "average_ai_score": safe_average_ai_score,
+    }
+
+
 def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
     rows = parser.parse_hslu_sw_overview()
     semesters = sorted(
@@ -842,6 +947,29 @@ def _interpolate_rgb(start: tuple[int, int, int], end: tuple[int, int, int], fac
     return tuple(round(start[index] + (end[index] - start[index]) * bounded_factor) for index in range(3))
 
 
+def _progress_bar_color(value: float) -> str:
+    bounded_value = max(0.0, min(100.0, float(value)))
+    color_stops = [
+        (0.0, (109, 56, 117)),
+        (30.0, (219, 31, 31)),
+        (50.0, (219, 106, 31)),
+        (75.0, (219, 191, 31)),
+        (90.0, (153, 219, 31)),
+        (100.0, (81, 120, 10)),
+    ]
+
+    for index in range(1, len(color_stops)):
+        end_position, end_color = color_stops[index]
+        start_position, start_color = color_stops[index - 1]
+        if bounded_value <= end_position:
+            segment_span = end_position - start_position
+            factor = 0.0 if segment_span == 0 else (bounded_value - start_position) / segment_span
+            rgb = _interpolate_rgb(start_color, end_color, factor)
+            return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+    return "#{:02X}{:02X}{:02X}".format(*color_stops[-1][1])
+
+
 def _feedback_score_color(value) -> str:
     score = _parse_feedback_score(value)
     if score is None:
@@ -982,8 +1110,21 @@ def index():
 
     _sort_docs(processed_docs, sort_by)
     last_sync_time = database.get_last_sync_time()
+    open_todos_count = _count_open_todos(_load_todos(parser, query=""))
+    deadlines = _load_deadlines(parser, include_description=False)
+    upcoming_deadlines_count = _count_upcoming_deadlines(deadlines)
+    total_deadlines_count = _count_all_deadlines(deadlines)
 
     under_construction_count = len(under_construction_docs)
+    average_ai_score = _calculate_latest_ai_feedback_average(database)
+    index_progress = _calculate_index_progress(
+        total_docs=total_docs,
+        under_construction_count=under_construction_count,
+        incompliant_docs=incompliant_docs,
+        open_todos_count=open_todos_count,
+        total_deadlines_count=total_deadlines_count,
+        average_ai_score=average_ai_score,
+    )
     manual_compliance_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
         key=lambda value: value["title"].casefold(),
@@ -1001,6 +1142,11 @@ def index():
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         under_construction_count=under_construction_count,
+        open_todos_count=open_todos_count,
+        upcoming_deadlines_count=upcoming_deadlines_count,
+        total_progress=index_progress["value"],
+        total_progress_color_class=index_progress["color_class"],
+        total_progress_color=index_progress["color"],
         manual_compliance_docs=manual_compliance_docs,
     )
 
@@ -1816,12 +1962,7 @@ def ai_feedback_overview():
         key=lambda item: item["title"].casefold(),
     )
 
-    scores = [
-        row["score_value"]
-        for row in all_feedback_rows
-        if row.get("included_in_average") and row.get("score_value") is not None
-    ]
-    average_score = sum(scores) / len(scores) if scores else None
+    average_score = _calculate_latest_ai_feedback_average(database)
     openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
 
     return render_template(

@@ -45,27 +45,35 @@
         <div class="row g-3 mb-4">
             <div class="col-lg col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
             <div class="col-lg col-md-6"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">Under Construction</h2><p class="display-6 text-info-emphasis mb-0">{{ under_construction_count }}</p></div></div></div>
+            <div class="col-lg-3 col-md-6">
+                <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
+                    <h2 class="h6 text-muted">ToDos open</h2>
+                    <p class="display-6 text-warning-emphasis mb-0">{{ open_todos_count }}</p>
+                </div></div>
+            </div>
+            <div class="col-lg-3 col-md-6">
+                <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
+                    <h2 class="h6 text-muted">Next deadlines (&lt;7d)</h2>
+                    <p class="display-6 text-warning-emphasis mb-0">{{ upcoming_deadlines_count }}</p>
+                </div></div>
+            </div>
         </div>
 
-        <div class="card shadow-sm mb-4"><div class="card-body">
-            <h2 class="h5">Search & filter</h2>
-            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
-                <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
-                    <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                    <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
-                    <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
-                    <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
-                    <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
-                    <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
-                    <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
-                </select></div>
-                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
-                <input type="hidden" name="sort" value="{{ selected_sort }}" />
-                <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
-            </form>
-        </div></div>
+        <div class="row g-3 mb-4">
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">Under Construction</h2><p class="display-6 text-info-emphasis mb-0">{{ under_construction_count }}</p></div></div></div>
+            <div class="col-lg-6 col-md-12">
+                <div class="card shadow-sm border-secondary-subtle h-100"><div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                        <h2 class="h6 text-muted mb-0">Overall progress</h2>
+                        <span class="fw-semibold">{{ total_progress }}%</span>
+                    </div>
+                    <div class="km-battery-progress" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ total_progress }}">
+                        <div class="km-battery-progress-fill" style="width: {{ total_progress }}%; background-color: {{ total_progress_color }};"></div>
+                    </div>
+                </div></div>
+            </div>
+        </div>
 
         <div class="row g-3 mb-4">
             <div class="col-md-6">
@@ -91,6 +99,24 @@
                 </div></div>
             </div>
         </div>
+
+        <div class="card shadow-sm mb-4"><div class="card-body">
+            <h2 class="h5">Search & filter</h2>
+            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
+                <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
+                    <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
+                    <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
+                    <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
+                    <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
+                    <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
+                    <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                    <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
+                </select></div>
+                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
+                <input type="hidden" name="sort" value="{{ selected_sort }}" />
+                <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
+            </form>
+        </div></div>
 
         <div class="card shadow-sm"><div class="card-body">
             <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
