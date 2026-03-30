@@ -933,6 +933,21 @@ def _latest_ai_feedback_row_ids(rows: list[dict]) -> set[int]:
     return latest_ids
 
 
+def _sync_ai_feedback_and_openrouter_credits(database: db) -> tuple[list[dict], str | None]:
+    parser = DocsParser()
+    synced_rows = parser.sync_ai_feedback_to_db()
+
+    try:
+        credits_left = DocsAIFeedback(_load_conf()).fetch_openrouter_credits_left()
+        credits_left_label = f"{credits_left:.4f}".rstrip("0").rstrip(".")
+        database.upsert_setting("openrouter_credits_left", credits_left_label)
+    except Exception:
+        logger.warning("Could not sync OpenRouter credits left\n%s", traceback.format_exc())
+        credits_left_label = None
+
+    return synced_rows, credits_left_label
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -1807,6 +1822,7 @@ def ai_feedback_overview():
         if row.get("included_in_average") and row.get("score_value") is not None
     ]
     average_score = sum(scores) / len(scores) if scores else None
+    openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
 
     return render_template(
         "ai_feedback.html",
@@ -1817,15 +1833,24 @@ def ai_feedback_overview():
         selected_name=name_query,
         selected_score=score_query,
         available_docs=available_docs,
+        openrouter_credits_left=openrouter_credits_left,
     )
 
 
 @app.route("/ai_feedback/sync", methods=["POST"])
 def ai_feedback_sync():
     try:
-        parser = DocsParser()
-        synced_rows = parser.sync_ai_feedback_to_db()
-        flash(f"Synced {len(synced_rows)} AI feedback file(s).", "success")
+        synced_rows, credits_left_label = _sync_ai_feedback_and_openrouter_credits(db())
+        if credits_left_label is None:
+            flash(
+                f"Synced {len(synced_rows)} AI feedback file(s). OpenRouter credits could not be refreshed.",
+                "warning",
+            )
+        else:
+            flash(
+                f"Synced {len(synced_rows)} AI feedback file(s). OpenRouter credits left: ${credits_left_label}.",
+                "success",
+            )
         return redirect(url_for("ai_feedback_overview"))
     except Exception as exc:
         logger.error("AI feedback sync failed\n%s", traceback.format_exc())
@@ -1845,7 +1870,7 @@ def generate_ai_feedback():
         database = db()
         _ensure_doc_can_receive_ai_feedback(database, selected_doc)
         parser = DocsParser()
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         ai_feedback_service = DocsAIFeedback(conf)
         selected_doc_note_name = Path(selected_doc).stem.strip()
         latest_feedback_context = None
@@ -1884,7 +1909,7 @@ def generate_ai_feedback():
         )
         _set_rw_permissions_for_all_users(output_path)
 
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
@@ -1948,8 +1973,7 @@ def ai_feedback_delete(feedback_id: int):
             flash(f"Feedback file was already missing: {feedback_name}. Removed database entry.", "warning")
 
         database.delete_ai_feedback_by_id(feedback_id)
-        parser = DocsParser()
-        parser.sync_ai_feedback_to_db()
+        _sync_ai_feedback_and_openrouter_credits(database)
         flash(f"AI feedback deleted successfully: {feedback_name}.", "success")
         return redirect(redirect_to)
     except Exception as exc:

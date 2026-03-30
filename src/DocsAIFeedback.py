@@ -372,6 +372,65 @@ class DocsAIFeedback:
             )
             raise
 
+    def _request_openrouter_json(self, endpoint: str) -> dict:
+        if not self.api_key or self.api_key == "-":
+            raise ValueError("AI feedback api_key is missing in conf.json.")
+
+        base_origin = str(self.base_url or "").strip().rstrip("/")
+        if not base_origin:
+            base_origin = "https://openrouter.ai/api/v1/chat/completions"
+        if "/api/v1/" in base_origin:
+            base_origin = base_origin.split("/api/v1/", 1)[0]
+
+        target_url = f"{base_origin}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": self.http_referer,
+            "X-Title": self.app_title,
+        }
+        request_object = urllib_request.Request(target_url, headers=headers, method="GET")
+        with urllib_request.urlopen(request_object, timeout=self.request_timeout_seconds) as response:
+            return json.loads(self._read_response_with_deadline(response))
+
+    def _extract_credits_left(self, payload: dict) -> float | None:
+        if not isinstance(payload, dict):
+            return None
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            data = payload
+
+        direct_candidates = ("credits_left", "remaining", "remaining_credits", "credits")
+        for key in direct_candidates:
+            if key in data:
+                return self._normalize_score(data.get(key))
+
+        total = data.get("total_credits", data.get("limit"))
+        used = data.get("total_usage", data.get("usage"))
+        if total is not None and used is not None:
+            return self._normalize_score(total) - self._normalize_score(used)
+
+        return None
+
+    def fetch_openrouter_credits_left(self) -> float:
+        endpoints_to_try = ["/api/v1/credits", "/api/v1/auth/key"]
+        last_error: Exception | None = None
+
+        for endpoint in endpoints_to_try:
+            try:
+                payload = self._request_openrouter_json(endpoint)
+                credits_left = self._extract_credits_left(payload)
+                if credits_left is not None:
+                    return max(0.0, credits_left)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise RuntimeError(f"Failed to fetch OpenRouter credits: {last_error}") from last_error
+        raise RuntimeError("Failed to fetch OpenRouter credits: response did not include remaining credits.")
+
     def _request_ai_feedback(self, note_name: str, messages: list[dict]) -> dict:
         try:
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=True)
