@@ -442,6 +442,56 @@ class DocsAIFeedback:
             )
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=False)
 
+    def _request_ai_json_object_once(self, note_name: str, messages: list[dict], use_strict_schema: bool) -> dict:
+        payload = self._build_request_payload(messages, use_strict_schema=use_strict_schema)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": self.http_referer,
+            "X-Title": self.app_title,
+        }
+        request_object = urllib_request.Request(
+            self.base_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib_request.urlopen(request_object, timeout=self.request_timeout_seconds) as response:
+            response_json = json.loads(self._read_response_with_deadline(response))
+        return self._parse_json_payload(self._extract_response_content(response_json))
+
+    def generate_learning_questions(self, note_name: str, note_content: str, prompt_content: str) -> dict:
+        if not self.base_url:
+            raise ValueError("AI feedback base_url is missing in conf.json.")
+        if not self.api_key or self.api_key == "-":
+            raise ValueError("AI feedback api_key is missing in conf.json.")
+        if not self.model:
+            raise ValueError("AI feedback model is missing in conf.json.")
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Generate exam questions from markdown notes. "
+                    "Return exactly one JSON object with keys 'questions' and 'answers'."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Prompt instructions:\n{prompt_content}\n\n"
+                    f"Source note name: {note_name}\n"
+                    f"Source note markdown:\n{note_content}\n\n"
+                    "Return JSON only."
+                ),
+            },
+        ]
+        try:
+            return self._request_ai_json_object_once(note_name, messages, use_strict_schema=True)
+        except Exception:
+            logger.warning("Strict learning question generation failed. Retrying without json_schema.")
+            return self._request_ai_json_object_once(note_name, messages, use_strict_schema=False)
+
     def generate_feedback(self, file_name: str, previous_feedback: dict | None = None) -> dict:
         try:
             doc_path = self._resolve_doc_path(file_name)

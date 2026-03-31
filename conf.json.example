@@ -31,5 +31,10 @@
         "app_title": "The Knowledge Mapping",
         "timeout_seconds": 120,
         "error_output_path": "output/ai_feedback_error"
+    },
+    "learning": {
+        "learning_path": "/the-knowledge/07_LEARNINGS",
+        "learning_ai_prompt_path": "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md",
+        "learning_template_path": "/the-knowledge/03_TEMPLATES/2 - New Learning.md"
     }
 }

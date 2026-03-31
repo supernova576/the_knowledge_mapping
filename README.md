@@ -80,7 +80,24 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
   - Projects
     - create from Template
     - Status and todos
+    - Möglichkeit "Canvas" zu erstellen (Mindmap)
     - Mapping of project specific tag to docs
+    
 - Add Settings
   - Compliance Settings
     - customize parameters
+  - AI Feedback
+    - modify prompt
+  - AI Question generator
+    - modify prompt
+
+- Generate Questions to a doc using AI
+  - "exam simulator"
+    - select question set mapped to doc
+    - select by name or tag
+  - answer key generation
+  - question generation
+  - manualy add questions
+  - mapping to docs version
+  - export
+    - add question exporter

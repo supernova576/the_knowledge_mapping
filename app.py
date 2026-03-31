@@ -1094,6 +1094,60 @@ def _sync_ai_feedback_and_openrouter_credits(database: db) -> tuple[list[dict], 
     return synced_rows, credits_left_label
 
 
+def _load_learning_conf(conf: dict) -> dict:
+    return conf.get("learning", {})
+
+
+def _sanitize_learning_questions(raw_questions: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    allowed_types = {"MULTIPLE_CHOICE", "SINGLE_CHOICE", "FREETEXT"}
+    for index, question in enumerate(raw_questions, start=1):
+        if not isinstance(question, dict):
+            continue
+        qid = str(question.get("id", "")).strip() or f"Q{index:03d}"
+        qtype = str(question.get("type", "FREETEXT")).strip().upper()
+        if qtype not in allowed_types:
+            qtype = "FREETEXT"
+        text = re.sub(r"\s+", " ", str(question.get("text", "")).strip())
+        if not text:
+            continue
+        options = question.get("options", [])
+        if not isinstance(options, list):
+            options = []
+        options = [re.sub(r"\s+", " ", str(item).strip()) for item in options if str(item).strip()]
+        if qtype == "FREETEXT":
+            options = []
+        sanitized.append({"id": qid, "type": qtype, "text": text, "options": options})
+    return sanitized
+
+
+def _sanitize_learning_answers(raw_answers: list[dict], question_ids: set[str]) -> list[dict]:
+    sanitized: list[dict] = []
+    for answer in raw_answers:
+        if not isinstance(answer, dict):
+            continue
+        question_id = str(answer.get("question_id", "")).strip()
+        if not question_id or question_id not in question_ids:
+            continue
+        correct_answers = answer.get("correct_answers", [])
+        if not isinstance(correct_answers, list):
+            correct_answers = [str(correct_answers)]
+        cleaned_answers = [re.sub(r"\s+", " ", str(item).strip()) for item in correct_answers if str(item).strip()]
+        sanitized.append({"question_id": question_id, "correct_answers": cleaned_answers})
+    return sanitized
+
+
+def _sync_openrouter_credits_only(database: db) -> str | None:
+    try:
+        credits_left = DocsAIFeedback(_load_conf()).fetch_openrouter_credits_left()
+        credits_left_label = f"{credits_left:.4f}".rstrip("0").rstrip(".")
+        database.upsert_setting("openrouter_credits_left", credits_left_label)
+        return credits_left_label
+    except Exception:
+        logger.warning("Could not refresh OpenRouter credits\n%s", traceback.format_exc())
+        return None
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -2102,6 +2156,277 @@ def ai_feedback_delete(feedback_id: int):
     except Exception as exc:
         logger.error("AI feedback delete failed\n%s", traceback.format_exc())
         return render_template("500.html", error_message=str(exc)), 500
+
+
+@app.route("/learning", methods=["GET"])
+def learning_overview():
+    database = db()
+    name_query = request.args.get("name", "").strip().casefold()
+    learning_rows = database.get_all_learnings()
+    if name_query:
+        learning_rows = [row for row in learning_rows if name_query in str(row.get("file_name", "")).casefold()]
+    available_docs = sorted(
+        [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
+        key=lambda value: value.casefold(),
+    )
+    openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
+    return render_template(
+        "learning.html",
+        learning_rows=learning_rows,
+        total_learnings=len(database.get_all_learnings()),
+        selected_name=request.args.get("name", "").strip(),
+        available_docs=available_docs,
+        openrouter_credits_left=openrouter_credits_left,
+    )
+
+
+@app.route("/learning/sync", methods=["POST"])
+def learning_sync():
+    parser = DocsParser()
+    synced_rows = parser.sync_learning_to_db()
+    credits_left_label = _sync_openrouter_credits_only(db())
+    if credits_left_label is None:
+        flash(f"Synced {len(synced_rows)} learning file(s). OpenRouter credits could not be refreshed.", "warning")
+    else:
+        flash(f"Synced {len(synced_rows)} learning file(s). OpenRouter credits left: ${credits_left_label}.", "success")
+    return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/create", methods=["POST"])
+def learning_create():
+    selected_doc = str(request.form.get("selected_doc", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_doc)
+    if not normalized_doc:
+        flash("Please select a valid markdown note.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    conf = _load_conf()
+    learning_conf = _load_learning_conf(conf)
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    selected_doc_path = (docs_dir / normalized_doc).resolve()
+    if docs_dir not in selected_doc_path.parents or not selected_doc_path.exists():
+        flash("Selected markdown note does not exist.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    template_path = Path(learning_conf.get("learning_template_path", "/the-knowledge/03_TEMPLATES/2 - New Learning")).resolve()
+    output_dir = Path(learning_conf.get("learning_path", "/the-knowledge/07_LEARNINGS")).resolve()
+    try:
+        template_content = template_path.read_text(encoding="utf-8")
+        writer = DocsWriter()
+        note_name = selected_doc_path.stem.strip()
+        rendered = writer.render_learning_template(
+            template_content=template_content,
+            note_name=note_name,
+            creation_date=_today_dd_mm_yyyy(),
+            questions_payload={"questions": []},
+            answers_payload={"answers": []},
+        )
+        learning_path = writer.write_learning_file(output_dir=output_dir, note_name=note_name, rendered_content=rendered)
+        _set_rw_permissions_for_all_users(learning_path)
+        DocsParser().sync_learning_to_db()
+        flash(f"Learning file created: {learning_path.name}", "success")
+    except Exception as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/<int:learning_id>", methods=["GET"])
+def learning_detail(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    attempts = database.get_learning_exam_attempts(learning_id)
+    selected_attempt_id = request.args.get("attempt_id", "").strip()
+    selected_attempt = None
+    selected_answers = {}
+    if selected_attempt_id.isdigit():
+        selected_attempt = database.get_learning_exam_attempt_by_id(int(selected_attempt_id))
+        if selected_attempt and int(selected_attempt.get("learning_id", 0)) == learning_id:
+            try:
+                selected_answers = json.loads(selected_attempt.get("answers_json", "{}"))
+            except json.JSONDecodeError:
+                selected_answers = {}
+    grouped_questions = {"FREETEXT": [], "MULTIPLE_CHOICE": [], "SINGLE_CHOICE": []}
+    for question in parsed_learning.get("questions", []):
+        grouped_questions.setdefault(str(question.get("type", "FREETEXT")).upper(), []).append(question)
+    return render_template(
+        "learning_detail.html",
+        learning=learning_row,
+        parsed_learning=parsed_learning,
+        grouped_questions=grouped_questions,
+        attempts=attempts,
+        selected_attempt=selected_attempt,
+        selected_answers=selected_answers if isinstance(selected_answers, dict) else {},
+    )
+
+
+@app.route("/learning/<int:learning_id>/save", methods=["POST"])
+def learning_save(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    parsed_existing = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    questions_raw = request.form.get("questions_payload", "").strip()
+    answers_raw = request.form.get("answers_payload", "").strip()
+    try:
+        questions_json = json.loads(questions_raw) if questions_raw else {"questions": parsed_existing.get("questions", [])}
+        answers_json = json.loads(answers_raw) if answers_raw else {"answers": parsed_existing.get("answers", [])}
+    except json.JSONDecodeError:
+        flash("Questions/answers JSON is invalid.", "warning")
+        return redirect(url_for("learning_detail", learning_id=learning_id))
+
+    questions = _sanitize_learning_questions(questions_json.get("questions", []))
+    answers = _sanitize_learning_answers(answers_json.get("answers", []), {item["id"] for item in questions})
+    writer = DocsWriter()
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    writer.update_learning_file_questions_answers(
+        learning_path=learning_path,
+        questions_payload={"questions": questions},
+        answers_payload={"answers": answers},
+    )
+    flash("Learning questions saved.", "success")
+    return redirect(url_for("learning_detail", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/generate", methods=["POST"])
+def learning_generate_questions(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    try:
+        conf = _load_conf()
+        learning_conf = _load_learning_conf(conf)
+        docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+        source_note_name = str(learning_row.get("source_note_name", "")).strip()
+        source_doc_path = (docs_dir / _normalize_md_filename(source_note_name)).resolve()
+        if docs_dir not in source_doc_path.parents or not source_doc_path.exists():
+            raise FileNotFoundError(f"Source note not found: {source_note_name}")
+        prompt_path = Path(learning_conf.get("learning_ai_prompt_path", "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md")).resolve()
+        prompt_content = prompt_path.read_text(encoding="utf-8")
+        ai_service = DocsAIFeedback(conf)
+        generated = ai_service.generate_learning_questions(
+            note_name=source_note_name,
+            note_content=source_doc_path.read_text(encoding="utf-8"),
+            prompt_content=prompt_content,
+        )
+        questions = _sanitize_learning_questions(generated.get("questions", []))
+        answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
+        DocsWriter().update_learning_file_questions_answers(
+            learning_path=Path(learning_row["path_to_learning"]),
+            questions_payload={"questions": questions},
+            answers_payload={"answers": answers},
+        )
+        _sync_openrouter_credits_only(database)
+        flash("Learning questions generated successfully.", "success")
+    except Exception as exc:
+        logger.error("Learning question generation failed\n%s", traceback.format_exc())
+        flash(str(exc), "warning")
+    return redirect(url_for("learning_detail", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/delete", methods=["POST"])
+def learning_delete(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    if learning_path.exists() and learning_path.is_file():
+        learning_path.unlink()
+    database.delete_learning_by_id(learning_id)
+    flash("Learning deleted, including related drafts and attempts.", "success")
+    return redirect(url_for("learning_overview"))
+
+
+def _extract_user_answers_from_form(form_data, questions: list[dict]) -> dict[str, list[str]]:
+    answers: dict[str, list[str]] = {}
+    for question in questions:
+        qid = str(question.get("id", "")).strip()
+        if not qid:
+            continue
+        if str(question.get("type")) == "MULTIPLE_CHOICE":
+            raw_values = form_data.getlist(f"answer_{qid}")
+        else:
+            raw_values = [form_data.get(f"answer_{qid}", "")]
+        cleaned = [re.sub(r"\s+", " ", str(item).strip()) for item in raw_values if str(item).strip()]
+        answers[qid] = cleaned
+    return answers
+
+
+@app.route("/learning/<int:learning_id>/mode", methods=["GET"])
+def learning_mode(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    draft = database.get_learning_exam_draft(learning_id)
+    draft_answers = {}
+    if draft:
+        try:
+            draft_answers = json.loads(draft.get("answers_json", "{}"))
+        except json.JSONDecodeError:
+            draft_answers = {}
+    return render_template("learning_mode.html", learning=learning_row, parsed_learning=parsed_learning, draft_answers=draft_answers, review_attempt=None)
+
+
+@app.route("/learning/<int:learning_id>/mode/save", methods=["POST"])
+def learning_mode_save(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    answers = _extract_user_answers_from_form(request.form, parsed_learning.get("questions", []))
+    database.upsert_learning_exam_draft(learning_id, json.dumps(answers, ensure_ascii=False), now_in_zurich_str())
+    flash("Learning progress saved.", "success")
+    return redirect(url_for("learning_mode", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/mode/finish", methods=["POST"])
+def learning_mode_finish(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    questions = parsed_learning.get("questions", [])
+    answers_map = {str(item.get("question_id", "")): item.get("correct_answers", []) for item in parsed_learning.get("answers", []) if isinstance(item, dict)}
+    user_answers = _extract_user_answers_from_form(request.form, questions)
+    correct = 0
+    scored_questions = 0
+    for question in questions:
+        if str(question.get("type", "FREETEXT")).strip().upper() == "FREETEXT":
+            continue
+        qid = str(question.get("id", "")).strip()
+        expected = sorted([str(item).strip() for item in answers_map.get(qid, []) if str(item).strip()])
+        actual = sorted([str(item).strip() for item in user_answers.get(qid, []) if str(item).strip()])
+        scored_questions += 1
+        if expected == actual:
+            correct += 1
+    attempt_id = database.create_learning_exam_attempt(
+        learning_id=learning_id,
+        answers_json=json.dumps(user_answers, ensure_ascii=False),
+        score=float(correct),
+        total_questions=scored_questions,
+        created_at=now_in_zurich_str(),
+    )
+    database.delete_learning_exam_draft(learning_id)
+    attempt = database.get_learning_exam_attempt_by_id(attempt_id)
+    flash(f"Exam finished. Score: {correct}/{scored_questions}. Free-text questions are shown for review but are not scored.", "success")
+    return render_template("learning_mode.html", learning=learning_row, parsed_learning=parsed_learning, draft_answers=user_answers, review_attempt=attempt)
 
 
 @app.errorhandler(404)

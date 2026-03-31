@@ -24,6 +24,7 @@ class db:
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
+            self.cursor.execute("PRAGMA foreign_keys = ON")
 
             self.__init_db()
             logger.info("Database connected at %s", self.db_path)
@@ -81,6 +82,44 @@ class db:
                     score REAL NOT NULL,
                     path_to_feedback TEXT NOT NULL UNIQUE,
                     creation_date TEXT NOT NULL
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learnings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_name TEXT NOT NULL,
+                    source_note_name TEXT NOT NULL,
+                    path_to_learning TEXT NOT NULL UNIQUE,
+                    creation_date TEXT NOT NULL
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learning_exam_drafts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    learning_id INTEGER NOT NULL UNIQUE,
+                    answers_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learning_exam_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    learning_id INTEGER NOT NULL,
+                    answers_json TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    total_questions INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE
                 )
                 """
             )
@@ -488,6 +527,144 @@ class db:
             )
         except Exception:
             logger.error("sqlite_handler/get_latest_ai_feedback_for_file failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def upsert_learning(self, row: dict) -> None:
+        try:
+            self._execute(
+                """
+                INSERT INTO learnings (file_name, source_note_name, path_to_learning, creation_date)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(path_to_learning) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    source_note_name = excluded.source_note_name,
+                    creation_date = excluded.creation_date
+                """,
+                (
+                    str(row.get("file_name", "")).strip(),
+                    str(row.get("source_note_name", "")).strip(),
+                    str(row.get("path_to_learning", "")).strip(),
+                    str(row.get("creation_date", "N/A")).strip(),
+                ),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/upsert_learning failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_learnings(self) -> list[dict]:
+        try:
+            return self._fetch_all_dict("SELECT * FROM learnings ORDER BY lower(file_name) ASC, id DESC")
+        except Exception:
+            logger.error("sqlite_handler/get_all_learnings failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_by_id(self, learning_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learnings WHERE id = ?", (learning_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learning_by_id(self, learning_id: int) -> None:
+        try:
+            self._execute("DELETE FROM learnings WHERE id = ?", (learning_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learning_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learnings_not_in_paths(self, kept_paths: list[str]) -> None:
+        try:
+            normalized_paths = [str(path).strip() for path in kept_paths if str(path).strip()]
+            if not normalized_paths:
+                self._execute("DELETE FROM learnings")
+                self._commit()
+                return
+
+            placeholders = ",".join("?" for _ in normalized_paths)
+            self._execute(
+                f"DELETE FROM learnings WHERE path_to_learning NOT IN ({placeholders})",
+                tuple(normalized_paths),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learnings_not_in_paths failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def upsert_learning_exam_draft(self, learning_id: int, answers_json: str, updated_at: str) -> None:
+        try:
+            self._execute(
+                """
+                INSERT INTO learning_exam_drafts (learning_id, answers_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(learning_id) DO UPDATE SET
+                    answers_json = excluded.answers_json,
+                    updated_at = excluded.updated_at
+                """,
+                (learning_id, answers_json, updated_at),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/upsert_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_draft(self, learning_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learning_exam_drafts WHERE learning_id = ?", (learning_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learning_exam_draft(self, learning_id: int) -> None:
+        try:
+            self._execute("DELETE FROM learning_exam_drafts WHERE learning_id = ?", (learning_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def create_learning_exam_attempt(
+        self,
+        learning_id: int,
+        answers_json: str,
+        score: float,
+        total_questions: int,
+        created_at: str,
+    ) -> int:
+        try:
+            cursor = self._execute(
+                """
+                INSERT INTO learning_exam_attempts (learning_id, answers_json, score, total_questions, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (learning_id, answers_json, score, total_questions, created_at),
+            )
+            self._commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            logger.error("sqlite_handler/create_learning_exam_attempt failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_attempts(self, learning_id: int) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM learning_exam_attempts
+                WHERE learning_id = ?
+                ORDER BY id DESC
+                """,
+                (learning_id,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_attempts failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_attempt_by_id(self, attempt_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learning_exam_attempts WHERE id = ?", (attempt_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_attempt_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:

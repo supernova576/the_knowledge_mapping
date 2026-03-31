@@ -221,6 +221,64 @@ class DocsWriter:
             logger.error("Failed to write AI feedback markdown file\n%s", traceback.format_exc())
             raise
 
+    def _safe_learning_stem(self, note_name: str) -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(note_name).strip()).strip(" ._")
+        if not safe_name:
+            raise ValueError("Invalid note name for learning output file.")
+        return safe_name
+
+    def _render_learning_json_block(self, payload: dict) -> str:
+        return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n```"
+
+    def render_learning_template(
+        self,
+        template_content: str,
+        note_name: str,
+        creation_date: str,
+        questions_payload: dict,
+        answers_payload: dict,
+    ) -> str:
+        rendered = str(template_content)
+        replacements = {
+            "{{ note_name }}": str(note_name).strip(),
+            "{{ creation_date }}": str(creation_date).strip(),
+            "{{ questions }}": self._render_learning_json_block(questions_payload),
+            "{{ answers }}": self._render_learning_json_block(answers_payload),
+        }
+        for placeholder, value in replacements.items():
+            rendered = rendered.replace(placeholder, value)
+        return rendered
+
+    def write_learning_file(self, output_dir: Path, note_name: str, rendered_content: str) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = self._safe_learning_stem(note_name)
+        target_path = output_dir / f"{safe_stem} - Learning.md"
+        if target_path.exists():
+            raise FileExistsError(f"Learning file already exists: {target_path}")
+        target_path.write_text(rendered_content.rstrip() + "\n", encoding="utf-8")
+        return target_path
+
+    def update_learning_file_questions_answers(
+        self,
+        learning_path: Path,
+        questions_payload: dict,
+        answers_payload: dict,
+    ) -> None:
+        content = learning_path.read_text(encoding="utf-8")
+        questions_block = self._render_learning_json_block(questions_payload)
+        answers_block = self._render_learning_json_block(answers_payload)
+        updated_content = re.sub(
+            r"(?ims)(^##\s+Questions\s*$\n)(.*?)(?=^##\s+Answers\s*$)",
+            rf"\1{questions_block}\n\n",
+            content,
+        )
+        updated_content = re.sub(
+            r"(?ims)(^##\s+Answers\s*$\n)(.*?)(?=\Z)",
+            rf"\1{answers_block}\n",
+            updated_content,
+        )
+        learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
     def prepend_template_to_existing_note(
         self,
         target_path: Path,

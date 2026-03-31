@@ -34,6 +34,7 @@ class DocsParser:
                 self.deadlines_file_path: str = j.get("deadlines", {}).get("full_path_to_deadlines_file", "/the-knowledge/Deadlines.md")
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
                 self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
+                self.learning_path: str = j.get("learning", {}).get("learning_path", "/the-knowledge/07_LEARNINGS")
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
             logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
@@ -703,6 +704,71 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse AI feedback file %s\n%s", file_path, traceback.format_exc())
             raise
+
+    def _extract_markdown_section(self, content: str, section_name: str) -> str:
+        match = re.search(rf"(?ims)^##\s+{re.escape(section_name)}\s*$\n(.*?)(?=^##\s+|\Z)", content)
+        return match.group(1).strip() if match else ""
+
+    def _parse_json_code_block(self, raw_block: str) -> dict:
+        stripped = str(raw_block or "").strip()
+        if not stripped:
+            return {}
+
+        code_match = re.search(r"(?is)^```json\s*(.*?)\s*```$", stripped)
+        candidate = code_match.group(1).strip() if code_match else stripped
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def parse_learning_file(self, file_path: str | Path) -> dict:
+        target_path = Path(file_path).resolve()
+        content = target_path.read_text(encoding="utf-8")
+        note_name = self._extract_markdown_section(content, "Note Name") or target_path.stem.replace(" - Learning", "").strip()
+        creation_date = self._extract_markdown_section(content, "Creation") or "N/A"
+        questions_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Questions"))
+        answers_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Answers"))
+
+        parsed_questions = questions_payload.get("questions", [])
+        parsed_answers = answers_payload.get("answers", [])
+        if not isinstance(parsed_questions, list):
+            parsed_questions = []
+        if not isinstance(parsed_answers, list):
+            parsed_answers = []
+
+        return {
+            "file_name": target_path.stem.strip(),
+            "source_note_name": str(note_name).strip() or target_path.stem.strip(),
+            "path_to_learning": str(target_path),
+            "creation_date": str(creation_date).strip() or "N/A",
+            "questions": parsed_questions,
+            "answers": parsed_answers,
+        }
+
+    def parse_learning_files(self) -> list[dict]:
+        if not self.learning_path:
+            return []
+        learning_dir = Path(self.learning_path)
+        if not learning_dir.exists():
+            return []
+        rows: list[dict] = []
+        for file_path in sorted(learning_dir.rglob("*.md"), key=lambda item: str(item).casefold()):
+            try:
+                rows.append(self.parse_learning_file(file_path))
+            except Exception:
+                logger.warning("Skipping malformed learning file=%s", file_path)
+        return rows
+
+    def sync_learning_to_db(self) -> list[dict]:
+        rows = self.parse_learning_files()
+        database = db()
+        kept_paths: list[str] = []
+        for row in rows:
+            database.upsert_learning(row)
+            kept_paths.append(str(row.get("path_to_learning", "")).strip())
+        database.delete_learnings_not_in_paths(kept_paths)
+        return rows
 
     def parse_ai_feedback_files(self) -> list[dict]:
         try:
