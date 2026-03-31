@@ -17,11 +17,6 @@
                     <a class="nav-link {% if active_page == 'deadlines' %}active{% endif %}"
                         href="{{ url_for('deadlines_overview') }}">Deadlines</a>
                 </li>
-                
-                <li class="nav-item">
-                    <a class="nav-link {% if active_page == 'ai_feedback' %}active{% endif %}"
-                        href="{{ url_for('ai_feedback_overview') }}">AI Feedback</a>
-                </li>
             </ul>
 
             <!-- RIGHT SIDE -->
@@ -33,21 +28,27 @@
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end">
                         <li>
+                            <a class="dropdown-item {% if active_page == 'ai_feedback' %}active{% endif %}"
+                                href="{{ url_for('ai_feedback_overview') }}">
+                                AI Feedback
+                            </a>
+                        </li>
+                        <li>
                             <a class="dropdown-item {% if active_page == 'export' %}active{% endif %}"
                                 href="{{ url_for('export_page') }}">
                                 Export
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item {% if active_page == 'version_control' %}active{% endif %}"
-                                href="{{ url_for('version_control_overview') }}">
-                                Version Control
-                            </a>
-                        </li>
-                        <li>
                             <a class="dropdown-item {% if active_page == 'learning' %}active{% endif %}"
                                 href="{{ url_for('learning_overview') }}">
                                 Learning
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'version_control' %}active{% endif %}"
+                                href="{{ url_for('version_control_overview') }}">
+                                Version Control
                             </a>
                         </li>
                     </ul>

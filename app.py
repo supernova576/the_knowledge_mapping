@@ -1098,6 +1098,80 @@ def _load_learning_conf(conf: dict) -> dict:
     return conf.get("learning", {})
 
 
+def _find_learning_for_doc(database: db, doc_title: str) -> dict | None:
+    normalized_doc = _normalize_md_filename(doc_title)
+    if not normalized_doc:
+        return None
+
+    doc_stem = Path(normalized_doc).stem.strip()
+    if not doc_stem:
+        return None
+
+    doc_key = doc_stem.casefold()
+    matching_rows = [
+        row
+        for row in database.get_all_learnings()
+        if str(row.get("source_note_name", "")).strip().replace(".md", "").casefold() == doc_key
+        or str(row.get("file_name", "")).strip().replace(" - Learning", "").casefold() == doc_key
+    ]
+    if not matching_rows:
+        return None
+
+    return max(matching_rows, key=lambda row: int(row.get("id", 0)))
+
+
+def _create_learning_for_doc(normalized_doc: str) -> dict:
+    conf = _load_conf()
+    learning_conf = _load_learning_conf(conf)
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    selected_doc_path = (docs_dir / normalized_doc).resolve()
+    if docs_dir not in selected_doc_path.parents or not selected_doc_path.exists():
+        raise ValueError("Selected markdown note does not exist.")
+
+    template_path = Path(learning_conf.get("learning_template_path", "/the-knowledge/03_TEMPLATES/2 - New Learning")).resolve()
+    output_dir = Path(learning_conf.get("learning_path", "/the-knowledge/07_LEARNINGS")).resolve()
+    template_content = template_path.read_text(encoding="utf-8")
+    writer = DocsWriter()
+    note_name = selected_doc_path.stem.strip()
+    rendered = writer.render_learning_template(
+        template_content=template_content,
+        note_name=note_name,
+        creation_date=_today_dd_mm_yyyy(),
+        questions_payload={"questions": []},
+        answers_payload={"answers": []},
+    )
+    learning_path = writer.write_learning_file(output_dir=output_dir, note_name=note_name, rendered_content=rendered)
+    _set_rw_permissions_for_all_users(learning_path)
+    DocsParser().sync_learning_to_db()
+
+    learning_row = _find_learning_for_doc(db(), normalized_doc)
+    if not learning_row:
+        raise RuntimeError("Learning file was created but could not be loaded from the database.")
+
+    return learning_row
+
+
+def _learning_status_icon(learning_row: dict) -> str:
+    learning_path = str(learning_row.get("path_to_learning", "")).strip()
+    if not learning_path:
+        return "⚠️"
+
+    try:
+        parsed_learning = DocsParser().parse_learning_file(learning_path)
+    except Exception:
+        logger.warning("Could not parse learning for status display: %s", learning_path)
+        return "⚠️"
+
+    questions = parsed_learning.get("questions", [])
+    answers = parsed_learning.get("answers", [])
+    question_count = len(questions) if isinstance(questions, list) else 0
+    answer_count = len(answers) if isinstance(answers, list) else 0
+
+    if question_count >= 1 and answer_count >= 1:
+        return "✅"
+    return "⚠️"
+
+
 def _sanitize_learning_questions(raw_questions: list[dict]) -> list[dict]:
     sanitized: list[dict] = []
     allowed_types = {"MULTIPLE_CHOICE", "SINGLE_CHOICE", "FREETEXT"}
@@ -1173,6 +1247,7 @@ def index():
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
         row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
+        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip())
         if row["is_under_construction"] == "true":
             row["is_compliant"] = "Not Determined"
             row["noncompliance_reason_list"] = []
@@ -2165,6 +2240,11 @@ def learning_overview():
     learning_rows = database.get_all_learnings()
     if name_query:
         learning_rows = [row for row in learning_rows if name_query in str(row.get("file_name", "")).casefold()]
+    prepared_learning_rows = []
+    for row in learning_rows:
+        prepared_row = dict(row)
+        prepared_row["status_icon"] = _learning_status_icon(prepared_row)
+        prepared_learning_rows.append(prepared_row)
     available_docs = sorted(
         [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
         key=lambda value: value.casefold(),
@@ -2172,10 +2252,11 @@ def learning_overview():
     openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
     return render_template(
         "learning.html",
-        learning_rows=learning_rows,
+        learning_rows=prepared_learning_rows,
         total_learnings=len(database.get_all_learnings()),
         selected_name=request.args.get("name", "").strip(),
         available_docs=available_docs,
+        all_tags=database.get_all_tags(),
         openrouter_credits_left=openrouter_credits_left,
     )
 
@@ -2200,34 +2281,35 @@ def learning_create():
         flash("Please select a valid markdown note.", "warning")
         return redirect(url_for("learning_overview"))
 
-    conf = _load_conf()
-    learning_conf = _load_learning_conf(conf)
-    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
-    selected_doc_path = (docs_dir / normalized_doc).resolve()
-    if docs_dir not in selected_doc_path.parents or not selected_doc_path.exists():
-        flash("Selected markdown note does not exist.", "warning")
-        return redirect(url_for("learning_overview"))
-
-    template_path = Path(learning_conf.get("learning_template_path", "/the-knowledge/03_TEMPLATES/2 - New Learning")).resolve()
-    output_dir = Path(learning_conf.get("learning_path", "/the-knowledge/07_LEARNINGS")).resolve()
     try:
-        template_content = template_path.read_text(encoding="utf-8")
-        writer = DocsWriter()
-        note_name = selected_doc_path.stem.strip()
-        rendered = writer.render_learning_template(
-            template_content=template_content,
-            note_name=note_name,
-            creation_date=_today_dd_mm_yyyy(),
-            questions_payload={"questions": []},
-            answers_payload={"answers": []},
-        )
-        learning_path = writer.write_learning_file(output_dir=output_dir, note_name=note_name, rendered_content=rendered)
-        _set_rw_permissions_for_all_users(learning_path)
-        DocsParser().sync_learning_to_db()
-        flash(f"Learning file created: {learning_path.name}", "success")
+        learning_row = _create_learning_for_doc(normalized_doc)
+        flash(f"Learning file created: {Path(str(learning_row.get('path_to_learning', '')).strip()).name}", "success")
     except Exception as exc:
         flash(str(exc), "warning")
     return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/doc-action", methods=["POST"])
+def learning_doc_action():
+    selected_doc = str(request.form.get("selected_doc", "")).strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "index")
+    normalized_doc = _normalize_md_filename(selected_doc)
+    if not normalized_doc:
+        flash("Please select a valid markdown note.", "warning")
+        return redirect(redirect_to)
+
+    database = db()
+    existing_learning = _find_learning_for_doc(database, normalized_doc)
+    if existing_learning:
+        return redirect(url_for("learning_detail", learning_id=int(existing_learning["id"])))
+
+    try:
+        learning_row = _create_learning_for_doc(normalized_doc)
+        flash(f"Learning file created: {Path(str(learning_row.get('path_to_learning', '')).strip()).name}", "success")
+        return redirect(url_for("learning_detail", learning_id=int(learning_row["id"])))
+    except Exception as exc:
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
 
 
 @app.route("/learning/<int:learning_id>", methods=["GET"])
@@ -2362,6 +2444,42 @@ def _extract_user_answers_from_form(form_data, questions: list[dict]) -> dict[st
     return answers
 
 
+def _build_fused_learning_payload(learning_rows: list[dict]) -> dict:
+    parser = DocsParser()
+    fused_questions: list[dict] = []
+    fused_answers_map: dict[str, list[str]] = {}
+    included_learning_rows: list[dict] = []
+
+    for learning_row in learning_rows:
+        learning_id = int(learning_row.get("id", 0))
+        if learning_id <= 0:
+            continue
+        parsed_learning = parser.parse_learning_file(learning_row.get("path_to_learning", ""))
+        answer_map = {
+            str(item.get("question_id", "")).strip(): item.get("correct_answers", [])
+            for item in parsed_learning.get("answers", [])
+            if isinstance(item, dict)
+        }
+        for question in parsed_learning.get("questions", []):
+            qid = str(question.get("id", "")).strip()
+            if not qid:
+                continue
+            fused_qid = f"L{learning_id}__{qid}"
+            fused_questions.append(
+                {
+                    "id": fused_qid,
+                    "type": str(question.get("type", "FREETEXT")).strip().upper(),
+                    "text": str(question.get("text", "")).strip(),
+                    "options": question.get("options", []),
+                    "learning_file_name": str(learning_row.get("file_name", "")).strip(),
+                }
+            )
+            fused_answers_map[fused_qid] = [str(item).strip() for item in answer_map.get(qid, []) if str(item).strip()]
+        included_learning_rows.append(learning_row)
+
+    return {"questions": fused_questions, "answers_map": fused_answers_map, "learning_rows": included_learning_rows}
+
+
 @app.route("/learning/<int:learning_id>/mode", methods=["GET"])
 def learning_mode(learning_id: int):
     database = db()
@@ -2378,6 +2496,140 @@ def learning_mode(learning_id: int):
         except json.JSONDecodeError:
             draft_answers = {}
     return render_template("learning_mode.html", learning=learning_row, parsed_learning=parsed_learning, draft_answers=draft_answers, review_attempt=None)
+
+
+@app.route("/learning/mode/fused", methods=["POST"])
+def learning_mode_fused():
+    database = db()
+    exam_source = str(request.form.get("exam_source", "learnings")).strip().lower()
+    selected_rows: list[dict] = []
+
+    if exam_source == "tags":
+        selected_tags = [_normalize_tag_value(tag) for tag in request.form.getlist("selected_tags")]
+        selected_tags = sorted({tag for tag in selected_tags if tag}, key=lambda value: value.casefold())
+        if not selected_tags:
+            flash("Please select at least one tag.", "warning")
+            return redirect(url_for("learning_overview"))
+        allowed_tags = set(database.get_all_tags())
+        if any(tag not in allowed_tags for tag in selected_tags):
+            flash("One or more selected tags are invalid.", "danger")
+            return redirect(url_for("learning_overview"))
+
+        doc_learning_rows = database.get_learning_docs_by_tags(selected_tags)
+        docs_with_learning: list[dict] = []
+        docs_without_learning: list[dict] = []
+        selected_learning_ids: set[int] = set()
+        seen_docs_without_learning: set[int] = set()
+
+        for row in doc_learning_rows:
+            doc_id = int(row.get("doc_id", 0))
+            doc_title = str(row.get("doc_title", "")).strip()
+            learning_id = row.get("learning_id")
+            if learning_id is None:
+                if doc_id not in seen_docs_without_learning:
+                    docs_without_learning.append({"id": doc_id, "title": doc_title})
+                    seen_docs_without_learning.add(doc_id)
+                continue
+            docs_with_learning.append(
+                {"id": doc_id, "title": doc_title, "learning_file_name": str(row.get("learning_file_name", "")).strip()}
+            )
+            selected_learning_ids.add(int(learning_id))
+
+        if not selected_learning_ids:
+            flash("No learning entries found for the selected tags.", "warning")
+            return redirect(url_for("learning_overview"))
+
+        if docs_without_learning:
+            return render_template(
+                "learning_tag_warning.html",
+                selected_tags=selected_tags,
+                docs_with_learning=sorted(docs_with_learning, key=lambda value: value["title"].casefold()),
+                docs_without_learning=sorted(docs_without_learning, key=lambda value: value["title"].casefold()),
+                selected_learning_ids=sorted(selected_learning_ids),
+            )
+
+        for learning_id in sorted(selected_learning_ids):
+            learning_row = database.get_learning_by_id(learning_id)
+            if learning_row:
+                selected_rows.append(learning_row)
+    else:
+        raw_learning_ids = [str(value).strip() for value in request.form.getlist("selected_learning_ids")]
+        selected_learning_ids = sorted({int(value) for value in raw_learning_ids if value.isdigit() and int(value) > 0})
+        if not selected_learning_ids:
+            flash("Please select at least one learning.", "warning")
+            return redirect(url_for("learning_overview"))
+        for learning_id in selected_learning_ids:
+            learning_row = database.get_learning_by_id(learning_id)
+            if learning_row:
+                selected_rows.append(learning_row)
+
+    fused_payload = _build_fused_learning_payload(selected_rows)
+    if not fused_payload["questions"]:
+        flash("No questions found in the selected learning files.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    return render_template(
+        "learning_mode_fused.html",
+        selected_learning_rows=fused_payload["learning_rows"],
+        parsed_learning={"questions": fused_payload["questions"], "answers": []},
+        draft_answers={},
+        review_attempt=None,
+        answers_map=fused_payload["answers_map"],
+    )
+
+
+@app.route("/learning/mode/fused/finish", methods=["POST"])
+def learning_mode_fused_finish():
+    answers_map_raw = str(request.form.get("answers_map_json", "")).strip()
+    selected_learning_ids = [str(value).strip() for value in request.form.getlist("selected_learning_ids")]
+    selected_ids = sorted({int(value) for value in selected_learning_ids if value.isdigit() and int(value) > 0})
+    if not answers_map_raw or not selected_ids:
+        flash("Invalid fused exam payload.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    try:
+        answers_map = json.loads(answers_map_raw)
+    except json.JSONDecodeError:
+        flash("Invalid fused exam answer key.", "warning")
+        return redirect(url_for("learning_overview"))
+    if not isinstance(answers_map, dict):
+        flash("Invalid fused exam answer key.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    database = db()
+    selected_rows = [database.get_learning_by_id(learning_id) for learning_id in selected_ids]
+    selected_rows = [row for row in selected_rows if row]
+    fused_payload = _build_fused_learning_payload(selected_rows)
+    if not fused_payload["questions"]:
+        flash("No questions found in the selected learning files.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    questions = fused_payload["questions"]
+    user_answers = _extract_user_answers_from_form(request.form, questions)
+    correct = 0
+    scored_questions = 0
+    for question in questions:
+        if str(question.get("type", "FREETEXT")).strip().upper() == "FREETEXT":
+            continue
+        qid = str(question.get("id", "")).strip()
+        expected = sorted([str(item).strip() for item in answers_map.get(qid, []) if str(item).strip()])
+        actual = sorted([str(item).strip() for item in user_answers.get(qid, []) if str(item).strip()])
+        scored_questions += 1
+        if expected == actual:
+            correct += 1
+
+    flash(
+        f"Fused exam finished. Score: {correct}/{scored_questions}. Free-text questions are shown for review but are not scored.",
+        "success",
+    )
+    return render_template(
+        "learning_mode_fused.html",
+        selected_learning_rows=fused_payload["learning_rows"],
+        parsed_learning={"questions": questions, "answers": []},
+        draft_answers=user_answers,
+        review_attempt={"score": correct, "total_questions": scored_questions},
+        answers_map=answers_map,
+    )
 
 
 @app.route("/learning/<int:learning_id>/mode/save", methods=["POST"])

@@ -559,6 +559,54 @@ class db:
             logger.error("sqlite_handler/get_all_learnings failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def get_learning_docs_by_tags(self, tags: list[str]) -> list[dict]:
+        try:
+            normalized_tags = sorted({str(tag).strip() for tag in tags if str(tag).strip()}, key=lambda value: value.casefold())
+            if not normalized_tags:
+                return []
+
+            clauses: list[str] = []
+            params: list[str] = []
+            for tag in normalized_tags:
+                clauses.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM json_each(
+                            CASE
+                                WHEN docs.tags IS NULL OR trim(docs.tags) = '' OR trim(docs.tags) = 'N/A' THEN '[]'
+                                ELSE docs.tags
+                            END
+                        )
+                        WHERE lower(trim(json_each.value)) = lower(trim(?))
+                    )
+                    """
+                )
+                params.append(tag)
+
+            where_clause = " OR ".join(clauses)
+            query = f"""
+                SELECT
+                    docs.id AS doc_id,
+                    docs.title AS doc_title,
+                    docs.tags AS doc_tags,
+                    learnings.id AS learning_id,
+                    learnings.file_name AS learning_file_name,
+                    learnings.source_note_name AS learning_source_note_name,
+                    learnings.path_to_learning AS learning_path_to_learning,
+                    learnings.creation_date AS learning_creation_date
+                FROM docs
+                LEFT JOIN learnings
+                    ON lower(trim(replace(learnings.source_note_name, '.md', ''))) = lower(trim(replace(docs.title, '.md', '')))
+                    OR lower(trim(replace(learnings.file_name, ' - Learning', ''))) = lower(trim(replace(docs.title, '.md', '')))
+                WHERE {where_clause}
+                ORDER BY lower(docs.title) ASC, learnings.id DESC
+            """
+            return self._fetch_all_dict(query, tuple(params))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_docs_by_tags failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def get_learning_by_id(self, learning_id: int) -> dict | None:
         try:
             return self._fetch_one_dict("SELECT * FROM learnings WHERE id = ?", (learning_id,))
