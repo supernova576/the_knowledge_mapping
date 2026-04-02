@@ -10,6 +10,13 @@ from .timezone_utils import now_in_zurich_str
 logger = get_logger(__name__)
 class DocsParser:
     UNDER_CONSTRUCTION_MARKER = "> ==unter Bearbeitung=="
+    REQUIRED_NOTE_STRUCTURE_STRINGS = [
+        "## Zusätzliche Ressourcen",
+        "#### Erklärvideo",
+        "#### Externe Referenzen",
+        "#### Page History",
+        "#### Page Tags",
+    ]
     PROGRESS_ICON_TO_STATE = {
         "![[not started.png]]": "Not Started",
         "![[in progress.png]]": "In Progress",
@@ -188,6 +195,9 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
+            note_structure_ok = self.__has_required_note_structure(cleaned)
+            if not note_structure_ok:
+                noncompliance_reasons.append("Struktur: Nicht alle Kapitel da")
             created_at = self.__parse_created_at_from_doc(cleaned)
             created_at_ok = created_at != "N/A"
             if not created_at_ok:
@@ -220,10 +230,29 @@ class DocsParser:
                     )
             else:
                 video_ok = True
-            is_compliant = "true" if (created_at_ok and beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
+            is_compliant = (
+                "true"
+                if (
+                    note_structure_ok
+                    and created_at_ok
+                    and beschreibung_ok
+                    and external_links_ok
+                    and tags_ok
+                    and video_ok
+                )
+                else "false"
+            )
             return is_compliant, self.__to_db_text(noncompliance_reasons)
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __has_required_note_structure(self, doc_content: str) -> bool:
+        try:
+            normalized_content = str(doc_content or "")
+            return all(required_string in normalized_content for required_string in self.REQUIRED_NOTE_STRUCTURE_STRINGS)
+        except Exception:
+            logger.error("Failed to check note structure compliance\n%s", traceback.format_exc())
             adieu(1)
 
     def __extract_beschreibung_text(self, doc_content: str) -> str:

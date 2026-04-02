@@ -90,8 +90,3 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - modify prompt
   - AI Question generators
     - modify prompt
-
-- Generate Questions to a doc using AI
-  - "exam simulator"
-    - exporter
-      - export as js html site

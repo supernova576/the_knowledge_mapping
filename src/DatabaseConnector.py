@@ -98,14 +98,6 @@ class db:
                 )
                 """
             )
-            learning_columns = {
-                str(row["name"]).strip().casefold()
-                for row in self._execute("PRAGMA table_info(learnings)").fetchall()
-            }
-            if "last_modified_date" not in learning_columns:
-                self._execute(
-                    "ALTER TABLE learnings ADD COLUMN last_modified_date TEXT NOT NULL DEFAULT 'N/A'"
-                )
 
             self.cursor.execute(
                 """
