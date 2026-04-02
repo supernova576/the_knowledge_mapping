@@ -13,7 +13,7 @@ from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
 from src.DatabaseConnector import db
-from src.DocsAIFeedback import DocsAIFeedback
+from src.DocsAIFeedback import DocsAIFeedback, OpenRouterImageNotSupportedError
 from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
@@ -1022,6 +1022,59 @@ def _ensure_doc_can_receive_ai_feedback(database: db, selected_doc: str) -> None
         raise ValueError(
             "The note is under construction. The feedback was thus not requested. Change the note status and try again."
         )
+
+
+def _load_latest_feedback_context(database: db, parser: DocsParser, selected_doc_note_name: str) -> dict | None:
+    latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
+    if not latest_feedback_for_context or not latest_feedback_for_context.get("path_to_feedback"):
+        return None
+
+    parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
+    return {
+        "version": parsed_latest_feedback.get("version"),
+        "score": parsed_latest_feedback.get("score"),
+        "creation_date": parsed_latest_feedback.get("creation_date"),
+        "feedback": parsed_latest_feedback.get("feedback"),
+    }
+
+
+def _create_ai_feedback_for_document(selected_doc: str, include_images: bool) -> dict:
+    conf = _load_conf()
+    database = db()
+    _ensure_doc_can_receive_ai_feedback(database, selected_doc)
+    parser = DocsParser()
+    _sync_ai_feedback_and_openrouter_credits(database)
+    ai_feedback_service = DocsAIFeedback(conf)
+    selected_doc_note_name = Path(selected_doc).stem.strip()
+    latest_feedback_context = _load_latest_feedback_context(database, parser, selected_doc_note_name)
+
+    feedback_payload = ai_feedback_service.generate_feedback(
+        selected_doc,
+        previous_feedback=latest_feedback_context,
+        include_images=include_images,
+    )
+
+    latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
+    next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
+
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    rendered_feedback = writer.render_ai_feedback_template(
+        template_content=feedback_payload["feedback_template"],
+        note_name=feedback_payload["note_name"],
+        version=next_version,
+        creation_date=feedback_payload["creation_date"],
+        score=_format_feedback_score(feedback_payload["score"]),
+        feedback=feedback_payload["feedback"],
+    )
+    output_path = writer.write_ai_feedback_file(
+        output_dir=ai_feedback_service.output_path,
+        note_name=feedback_payload["note_name"],
+        version=next_version,
+        rendered_content=rendered_feedback,
+    )
+    _set_rw_permissions_for_all_users(output_path)
+    _sync_ai_feedback_and_openrouter_credits(database)
+    return feedback_payload
 
 
 def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> list[dict]:
@@ -2239,52 +2292,17 @@ def generate_ai_feedback():
         return redirect(redirect_to)
 
     try:
-        conf = _load_conf()
-        database = db()
-        _ensure_doc_can_receive_ai_feedback(database, selected_doc)
-        parser = DocsParser()
-        _sync_ai_feedback_and_openrouter_credits(database)
-        ai_feedback_service = DocsAIFeedback(conf)
-        selected_doc_note_name = Path(selected_doc).stem.strip()
-        latest_feedback_context = None
-        latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
-        if latest_feedback_for_context and latest_feedback_for_context.get("path_to_feedback"):
-            parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
-            latest_feedback_context = {
-                "version": parsed_latest_feedback.get("version"),
-                "score": parsed_latest_feedback.get("score"),
-                "creation_date": parsed_latest_feedback.get("creation_date"),
-                "feedback": parsed_latest_feedback.get("feedback"),
-            }
-
-        feedback_payload = ai_feedback_service.generate_feedback(
-            selected_doc,
-            previous_feedback=latest_feedback_context,
-        )
-
-        latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
-        next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
-
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        rendered_feedback = writer.render_ai_feedback_template(
-            template_content=feedback_payload["feedback_template"],
-            note_name=feedback_payload["note_name"],
-            version=next_version,
-            creation_date=feedback_payload["creation_date"],
-            score=_format_feedback_score(feedback_payload["score"]),
-            feedback=feedback_payload["feedback"],
-        )
-        output_path = writer.write_ai_feedback_file(
-            output_dir=ai_feedback_service.output_path,
-            note_name=feedback_payload["note_name"],
-            version=next_version,
-            rendered_content=rendered_feedback,
-        )
-        _set_rw_permissions_for_all_users(output_path)
-
-        _sync_ai_feedback_and_openrouter_credits(database)
+        feedback_payload = _create_ai_feedback_for_document(selected_doc, include_images=True)
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
+    except OpenRouterImageNotSupportedError as exc:
+        logger.warning("OpenRouter model does not support image input for %s\n%s", selected_doc, traceback.format_exc())
+        return render_template(
+            "ai_feedback_image_fallback.html",
+            selected_doc=selected_doc,
+            redirect_to=redirect_to,
+            error_message=str(exc),
+        )
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         logger.error("AI feedback generation failed\n%s", traceback.format_exc())
         flash(str(exc), "warning")
@@ -2297,6 +2315,39 @@ def generate_ai_feedback():
         logger.error("AI feedback generation failed with BaseException\n%s", traceback.format_exc())
         flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
         return redirect(redirect_to)
+
+
+@app.route("/ai_feedback/generate/retry_without_images", methods=["POST"])
+def generate_ai_feedback_without_images():
+    selected_doc = request.form.get("selected_doc", "").strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    if not selected_doc:
+        flash("Please select a document for AI feedback.", "warning")
+        return redirect(redirect_to)
+
+    try:
+        feedback_payload = _create_ai_feedback_for_document(selected_doc, include_images=False)
+        flash(f"AI feedback created successfully for {feedback_payload['note_name']} without images.", "success")
+        return redirect(redirect_to)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        logger.error("AI feedback text-only retry failed\n%s", traceback.format_exc())
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
+    except SystemExit:
+        logger.error("AI feedback text-only retry aborted by SystemExit\n%s", traceback.format_exc())
+        flash("AI feedback generation failed due to a file, database, or parser exit. Check logs and paths.", "danger")
+        return redirect(redirect_to)
+    except BaseException as exc:
+        logger.error("AI feedback text-only retry failed with BaseException\n%s", traceback.format_exc())
+        flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
+        return redirect(redirect_to)
+
+
+@app.route("/ai_feedback/generate/cancel", methods=["POST"])
+def cancel_ai_feedback_generation():
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    flash("AI feedback generation was cancelled.", "warning")
+    return redirect(redirect_to)
 
 
 @app.route("/ai_feedback/<int:feedback_id>", methods=["GET"])

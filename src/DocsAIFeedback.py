@@ -1,7 +1,9 @@
 import json
+import mimetypes
 import re
 import socket
 import traceback
+from base64 import b64encode
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -15,13 +17,19 @@ from .timezone_utils import now_in_zurich
 logger = get_logger(__name__)
 
 
+class OpenRouterImageNotSupportedError(RuntimeError):
+    pass
+
+
 class DocsAIFeedback:
     def __init__(self, conf: dict | None = None) -> None:
         self.conf = conf or self._load_conf()
         ai_conf = self.conf.get("ai_feedback", {})
         docs_conf = self.conf.get("docs", {})
+        pictures_conf = self.conf.get("pictures", {})
 
         self.docs_path = Path(docs_conf.get("full_path_to_docs", "")).resolve()
+        self.pictures_path = Path(pictures_conf.get("full_path_to_pictures", "")).resolve()
         self.output_path = Path(ai_conf.get("output_path") or ai_conf.get("the_knowledge_path", "")).resolve()
         self.prompt_template_path = Path(
             ai_conf.get("prompt_template_path", "/the-knowledge/03_TEMPLATES/2 - AI Prompt.md")
@@ -37,6 +45,8 @@ class DocsAIFeedback:
         self.request_timeout_seconds = int(ai_conf.get("timeout_seconds", 120))
         self.http_referer = str(ai_conf.get("http_referer", "http://localhost")).strip()
         self.app_title = str(ai_conf.get("app_title", "The Knowledge Mapping")).strip()
+        self.max_images_per_request = int(ai_conf.get("max_images_per_request", 8))
+        self.max_image_size_bytes = int(ai_conf.get("max_image_size_bytes", 5 * 1024 * 1024))
 
     def _load_conf(self) -> dict:
         conf_path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -102,8 +112,24 @@ class DocsAIFeedback:
         doc_content: str,
         evaluation_context: str,
         previous_feedback: dict | None = None,
+        include_images: bool = True,
     ) -> list[dict]:
         previous_feedback_context = self._build_previous_feedback_section(previous_feedback)
+        image_parts = self._build_image_message_parts(doc_content) if include_images else []
+        user_text = (
+            f"Evaluate the markdown note named '{note_name}'.\n\n"
+            "Use the following evaluation context:\n"
+            f"{evaluation_context}\n\n"
+            f"{previous_feedback_context}"
+            "Now review this markdown note:\n"
+            f"{doc_content}\n\n"
+            "Return JSON only, with this schema:\n"
+            '{"score": <number>, "feedback": "<markdown feedback>"}'
+        )
+        user_content: str | list[dict] = user_text
+        if image_parts:
+            user_content = [{"type": "text", "text": user_text}, *image_parts]
+
         return [
             {
                 "role": "system",
@@ -116,18 +142,69 @@ class DocsAIFeedback:
             },
             {
                 "role": "user",
-                "content": (
-                    f"Evaluate the markdown note named '{note_name}'.\n\n"
-                    "Use the following evaluation context:\n"
-                    f"{evaluation_context}\n\n"
-                    f"{previous_feedback_context}"
-                    "Now review this markdown note:\n"
-                    f"{doc_content}\n\n"
-                    "Return JSON only, with this schema:\n"
-                    '{"score": <number>, "feedback": "<markdown feedback>"}'
-                ),
+                "content": user_content,
             },
         ]
+
+    def _extract_referenced_image_names(self, doc_content: str) -> list[str]:
+        markdown_text = str(doc_content or "")
+        matches: list[str] = []
+        matches.extend(re.findall(r"!\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", markdown_text))
+        matches.extend(re.findall(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", markdown_text))
+
+        unique_names: list[str] = []
+        seen: set[str] = set()
+        for raw_name in matches:
+            candidate = Path(str(raw_name or "").strip()).name
+            if not candidate:
+                continue
+            lowered = candidate.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            unique_names.append(candidate)
+
+        return unique_names
+
+    def _build_image_data_url(self, file_name: str) -> str | None:
+        if not self.pictures_path.exists() or not self.pictures_path.is_dir():
+            logger.warning("Configured pictures directory is unavailable: %s", self.pictures_path)
+            return None
+
+        candidate_name = Path(str(file_name or "").strip()).name
+        if not candidate_name:
+            return None
+
+        image_path = (self.pictures_path / candidate_name).resolve()
+        if self.pictures_path != image_path and self.pictures_path not in image_path.parents:
+            logger.warning("Rejected image outside configured pictures directory: %s", file_name)
+            return None
+        if not image_path.exists() or not image_path.is_file():
+            logger.warning("Referenced image not found for AI feedback: %s", candidate_name)
+            return None
+
+        mime_type, _ = mimetypes.guess_type(str(image_path))
+        if mime_type not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+            logger.warning("Skipped unsupported image format for AI feedback: %s", image_path)
+            return None
+
+        if image_path.stat().st_size > self.max_image_size_bytes:
+            logger.warning("Skipped image exceeding size limit (%s bytes): %s", self.max_image_size_bytes, image_path)
+            return None
+
+        image_bytes = image_path.read_bytes()
+        encoded = b64encode(image_bytes).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    def _build_image_message_parts(self, doc_content: str) -> list[dict]:
+        parts: list[dict] = []
+        image_names = self._extract_referenced_image_names(doc_content)
+        for image_name in image_names[: max(0, self.max_images_per_request)]:
+            data_url = self._build_image_data_url(image_name)
+            if not data_url:
+                continue
+            parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        return parts
 
     def _build_request_payload(self, messages: list[dict], use_strict_schema: bool) -> dict:
         payload: dict = {
@@ -274,6 +351,21 @@ class DocsAIFeedback:
 
         return b"".join(chunks).decode("utf-8")
 
+    def _is_image_input_unsupported_error(self, http_status: int, parsed_error_body: dict | None, raw_error_body: str) -> bool:
+        if http_status != 404:
+            return False
+
+        error_message = ""
+        if isinstance(parsed_error_body, dict):
+            error_data = parsed_error_body.get("error", {})
+            if isinstance(error_data, dict):
+                error_message = str(error_data.get("message", "")).strip()
+
+        if not error_message:
+            error_message = str(raw_error_body or "").strip()
+
+        return "support image input" in error_message.casefold()
+
     def _request_ai_feedback_once(self, note_name: str, messages: list[dict], use_strict_schema: bool) -> dict:
         if not self.base_url:
             raise ValueError("AI feedback base_url is missing in conf.json.")
@@ -319,6 +411,10 @@ class DocsAIFeedback:
                 http_status=exc.code,
             )
             logger.error("OpenRouter request failed\n%s", traceback.format_exc())
+            if self._is_image_input_unsupported_error(exc.code, parsed_error_body, error_body):
+                raise OpenRouterImageNotSupportedError(
+                    f"OpenRouter request failed: HTTP {exc.code} - {error_body}"
+                ) from exc
             raise RuntimeError(f"OpenRouter request failed: HTTP {exc.code} - {error_body}") from exc
         except (TimeoutError, socket.timeout) as exc:
             self._dump_error_payload(
@@ -434,6 +530,8 @@ class DocsAIFeedback:
     def _request_ai_feedback(self, note_name: str, messages: list[dict]) -> dict:
         try:
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=True)
+        except OpenRouterImageNotSupportedError:
+            raise
         except (ValueError, RuntimeError) as exc:
             logger.warning(
                 "Strict AI feedback request failed for model %s. Retrying without json_schema. Reason: %s",
@@ -492,7 +590,12 @@ class DocsAIFeedback:
             logger.warning("Strict learning question generation failed. Retrying without json_schema.")
             return self._request_ai_json_object_once(note_name, messages, use_strict_schema=False)
 
-    def generate_feedback(self, file_name: str, previous_feedback: dict | None = None) -> dict:
+    def generate_feedback(
+        self,
+        file_name: str,
+        previous_feedback: dict | None = None,
+        include_images: bool = True,
+    ) -> dict:
         try:
             doc_path = self._resolve_doc_path(file_name)
             note_name = doc_path.stem.strip()
@@ -507,6 +610,7 @@ class DocsAIFeedback:
                     doc_content,
                     evaluation_context,
                     previous_feedback=previous_feedback,
+                    include_images=include_images,
                 ),
             )
             return {
