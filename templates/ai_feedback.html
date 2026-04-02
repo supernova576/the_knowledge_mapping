@@ -148,16 +148,27 @@
                                     <span style="color: {{ row.score_color }}; font-weight: 600;">{{ row.score_display }}</span>
                                 </td>
                                 <td>
-                                    <a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('ai_feedback_detail', feedback_id=row.id) }}">
-                                        Show Feedback
-                                    </a>
-                                    <form method="post" action="{{ url_for('ai_feedback_delete', feedback_id=row.id) }}" class="d-inline-block ai-feedback-delete-form">
-                                        <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}">
-                                        <input type="hidden" name="feedback_name" value="{{ row.path_to_feedback.split('/')[-1] if row.path_to_feedback else row.file_name }}">
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">
-                                            Delete
+                                    <div class="dropdown">
+                                        <button class="btn btn-secondary btn-sm dropdown-toggle km-actions-dropdown-toggle" type="button" id="dropdownMenuButton-{{ row.id }}" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            Actions
                                         </button>
-                                    </form>
+                                        <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-{{ row.id }}">
+                                            <li>
+                                                <a class="dropdown-item" href="{{ url_for('ai_feedback_detail', feedback_id=row.id) }}">
+                                                    Show Feedback
+                                                </a>
+                                            </li>
+                                            <li>
+                                                <form method="post" action="{{ url_for('ai_feedback_delete', feedback_id=row.id) }}" class="ai-feedback-delete-form">
+                                                    <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}">
+                                                    <input type="hidden" name="feedback_name" value="{{ row.path_to_feedback.split('/')[-1] if row.path_to_feedback else row.file_name }}">
+                                                    <button type="submit" class="dropdown-item text-danger">
+                                                        Delete
+                                                    </button>
+                                                </form>
+                                            </li>
+                                        </ul>
+                                    </div>
                                 </td>
                             </tr>
                             {% else %}

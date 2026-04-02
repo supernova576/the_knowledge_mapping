@@ -140,3 +140,24 @@ body {
   border-radius: 0.2rem;
   transition: width 0.3s ease, background-color 0.3s ease;
 }
+
+.km-actions-dropdown-toggle {
+  background-color: var(--bs-secondary-bg-subtle);
+  border-color: var(--bs-border-color);
+  color: var(--bs-body-color);
+}
+
+.km-actions-dropdown-toggle:hover,
+.km-actions-dropdown-toggle:focus,
+.km-actions-dropdown-toggle:active,
+.km-actions-dropdown-toggle.show {
+  background-color: rgba(var(--bs-secondary-rgb), 0.35);
+  border-color: var(--bs-secondary-color);
+  color: var(--bs-body-color);
+}
+
+[data-bs-theme="dark"] .km-actions-dropdown-toggle {
+  background-color: rgba(var(--bs-secondary-rgb), 0.25);
+  border-color: rgba(var(--bs-light-rgb), 0.2);
+  color: var(--bs-light);
+}

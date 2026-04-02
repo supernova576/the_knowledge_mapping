@@ -88,16 +88,14 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - customize parameters
   - AI Feedback
     - modify prompt
-  - AI Question generator
+  - AI Question generators
     - modify prompt
 
 - Generate Questions to a doc using AI
   - "exam simulator"
-    - select question set mapped to doc
-    - select by name or tag
-  - answer key generation
-  - question generation
-  - manualy add questions
-  - mapping to docs version
-  - export
-    - add question exporter
+    - show version of exam (last changed)
+    - exporter
+      - export as js html site
+
+- Document viewer
+  - add a docs viewer
