@@ -104,6 +104,9 @@
                     <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-{{ row.id }}">
                         <li><a class="dropdown-item" href="{{ url_for('learning_detail', learning_id=row.id) }}">Show Learning</a></li>
                         <li><a class="dropdown-item" href="{{ url_for('learning_mode', learning_id=row.id) }}">Learning Mode</a></li>
+                        {% if row.doc_preview_url %}
+                        <li><a class="dropdown-item" href="{{ row.doc_preview_url }}">View Documentation</a></li>
+                        {% endif %}
                         <li><form method="post" action="{{ url_for('learning_delete', learning_id=row.id) }}"><button class="dropdown-item text-danger">Delete</button></form></li>
                     </ul>
                 </div>

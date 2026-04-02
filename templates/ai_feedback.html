@@ -158,6 +158,13 @@
                                                     Show Feedback
                                                 </a>
                                             </li>
+                                            {% if row.doc_preview_url %}
+                                            <li>
+                                                <a class="dropdown-item" href="{{ row.doc_preview_url }}">
+                                                    View Documentation
+                                                </a>
+                                            </li>
+                                            {% endif %}
                                             <li>
                                                 <form method="post" action="{{ url_for('ai_feedback_delete', feedback_id=row.id) }}" class="ai-feedback-delete-form">
                                                     <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}">

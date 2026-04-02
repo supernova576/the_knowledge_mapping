@@ -1036,6 +1036,7 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
         prepared["score_color"] = _feedback_score_color(prepared.get("score"))
         prepared["version_display"] = str(prepared.get("version", "N/A"))
         prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
+        prepared["doc_preview_url"] = _ai_feedback_doc_preview_url(prepared)
 
         file_name = str(prepared.get("file_name", "")).strip()
         if name_filter and name_filter not in file_name.casefold():
@@ -1172,6 +1173,23 @@ def _learning_status_icon(learning_row: dict) -> str:
     if question_count >= 1 and answer_count >= 1:
         return "✅"
     return "⚠️"
+
+
+def _learning_doc_preview_url(learning_row: dict) -> str | None:
+    source_note_name = str(learning_row.get("source_note_name", "")).strip()
+    return _doc_preview_url_from_note_name(source_note_name)
+
+
+def _doc_preview_url_from_note_name(note_name: str) -> str | None:
+    normalized_doc = _normalize_md_filename(note_name)
+    if not normalized_doc:
+        return None
+
+    return url_for("view_doc_by_path", relative_path=normalized_doc)
+
+
+def _ai_feedback_doc_preview_url(feedback_row: dict) -> str | None:
+    return _doc_preview_url_from_note_name(str(feedback_row.get("file_name", "")).strip())
 
 
 def _sanitize_learning_questions(raw_questions: list[dict]) -> list[dict]:
@@ -2347,6 +2365,7 @@ def learning_overview():
     for row in learning_rows:
         prepared_row = dict(row)
         prepared_row["status_icon"] = _learning_status_icon(prepared_row)
+        prepared_row["doc_preview_url"] = _learning_doc_preview_url(prepared_row)
         prepared_learning_rows.append(prepared_row)
     available_docs = sorted(
         [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
@@ -2430,6 +2449,7 @@ def learning_detail(learning_id: int):
     return render_template(
         "learning_detail.html",
         learning=learning_row,
+        doc_preview_url=_learning_doc_preview_url(learning_row),
         parsed_learning=parsed_learning,
         grouped_questions=grouped_questions,
         attempts=attempts,
@@ -2483,6 +2503,7 @@ def learning_attempt_review(learning_id: int, attempt_id: int):
     return render_template(
         "learning_attempt_review.html",
         learning=learning_row,
+        doc_preview_url=_learning_doc_preview_url(learning_row),
         attempt=attempt,
         comparison_rows=rows,
     )

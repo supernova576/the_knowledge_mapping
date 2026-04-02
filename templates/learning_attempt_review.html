@@ -15,7 +15,12 @@
 
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h1 class="h3 mb-0">Attempt #{{ attempt.id }} — {{ learning.file_name }}</h1>
-        <a class="btn btn-outline-secondary" href="{{ url_for('learning_detail', learning_id=learning.id) }}">Back to Learning</a>
+        <div class="d-flex gap-2">
+            {% if doc_preview_url %}
+            <a class="btn btn-outline-secondary" href="{{ doc_preview_url }}">View Documentation</a>
+            {% endif %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('learning_detail', learning_id=learning.id) }}">Back to Learning</a>
+        </div>
     </div>
 
     <div class="alert alert-info d-flex justify-content-between align-items-center">
