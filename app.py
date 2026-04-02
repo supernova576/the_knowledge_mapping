@@ -1,6 +1,7 @@
 import html
 import json
 import os
+import errno
 import re
 import stat
 import traceback
@@ -441,6 +442,67 @@ def _load_conf() -> dict:
     conf_path = Path(__file__).resolve().parent / "conf.json"
     with open(conf_path, "r", encoding="utf-8") as conf_file:
         return json.loads(conf_file.read())
+
+
+def _save_conf(conf_data: dict) -> None:
+    conf_path = Path(__file__).resolve().parent / "conf.json"
+    conf_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = conf_path.with_suffix(".json.tmp")
+    serialized = json.dumps(conf_data, indent=4)
+    payload = f"{serialized}\n"
+
+    try:
+        with open(temp_path, "w", encoding="utf-8") as conf_file:
+            conf_file.write(payload)
+            conf_file.flush()
+            os.fsync(conf_file.fileno())
+        os.replace(temp_path, conf_path)
+        return
+    except OSError as exc:
+        if exc.errno not in {errno.EBUSY, errno.EXDEV, errno.EPERM, errno.EACCES}:
+            raise
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+    # Docker bind mounts can reject atomic replacement even after the temp file is written.
+    with open(conf_path, "r+", encoding="utf-8") as conf_file:
+        conf_file.seek(0)
+        conf_file.write(payload)
+        conf_file.truncate()
+        conf_file.flush()
+        os.fsync(conf_file.fileno())
+
+
+def _sanitize_conf_text(value: str | None, field_name: str, max_length: int = 500) -> str:
+    sanitized = str(value or "").strip()
+    if not sanitized:
+        raise ValueError(f"{field_name} is required.")
+    if len(sanitized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if any(char in sanitized for char in ("\x00", "\r", "\n")):
+        raise ValueError(f"{field_name} contains invalid characters.")
+    return sanitized
+
+
+def _parse_provider_list(raw_value: str | None) -> list[str]:
+    candidate = str(raw_value or "").strip()
+    if not candidate:
+        raise ValueError("Openrouter Provider is required.")
+
+    parts = [item.strip() for item in re.split(r"[\n,]+", candidate) if item.strip()]
+    normalized = []
+    for provider in parts:
+        if len(provider) > 100:
+            raise ValueError("Openrouter Provider values must be 100 characters or fewer.")
+        if any(char in provider for char in ("\x00", "\r", "\n")):
+            raise ValueError("Openrouter Provider contains invalid characters.")
+        if provider not in normalized:
+            normalized.append(provider)
+
+    if not normalized:
+        raise ValueError("Openrouter Provider is required.")
+    return normalized
 
 
 def _today_dd_mm() -> str:
@@ -1510,6 +1572,82 @@ def export_docs_pdf():
         return redirect(url_for("export_page"))
 
     return send_file(output_pdf, as_attachment=True, download_name=output_pdf.name, mimetype="application/pdf")
+
+
+@app.route("/settings", methods=["GET"])
+def settings_page():
+    try:
+        conf = _load_conf()
+    except Exception as exc:
+        flash(f"Unable to load conf.json: {exc}", "danger")
+        conf = {}
+
+    ai_conf = conf.get("ai_feedback", {}) if isinstance(conf.get("ai_feedback", {}), dict) else {}
+    db_conf = conf.get("db", {}) if isinstance(conf.get("db", {}), dict) else {}
+    log_conf = conf.get("log", {}) if isinstance(conf.get("log", {}), dict) else {}
+    provider_value = ", ".join(_parse_json_array(ai_conf.get("provider", [])))
+
+    settings_form = {
+        "openrouter_model": str(ai_conf.get("model", "")).strip(),
+        "openrouter_provider": provider_value,
+        "openrouter_api_key": str(ai_conf.get("api_key", "")).strip(),
+        "db_path": str(db_conf.get("db_path", "")).strip(),
+        "log_file_path": str(log_conf.get("log_file_path", "")).strip(),
+    }
+    return render_template("settings.html", settings=settings_form)
+
+
+@app.route("/settings", methods=["POST"])
+def settings_save():
+    try:
+        conf = _load_conf()
+    except Exception as exc:
+        flash(f"Unable to load conf.json: {exc}", "danger")
+        return redirect(url_for("settings_page"))
+
+    try:
+        openrouter_model = _sanitize_conf_text(request.form.get("openrouter_model"), "Openrouter Model", max_length=200)
+        openrouter_api_key = _sanitize_conf_text(
+            request.form.get("openrouter_api_key"), "Openrouter API Key", max_length=500
+        )
+        db_path = _sanitize_conf_text(request.form.get("db_path"), "DB Path", max_length=500)
+        log_file_path = _sanitize_conf_text(request.form.get("log_file_path"), "Log File Path", max_length=500)
+        openrouter_provider = _parse_provider_list(request.form.get("openrouter_provider"))
+    except ValueError as validation_error:
+        flash(str(validation_error), "danger")
+        return redirect(url_for("settings_page"))
+
+    ai_conf = conf.setdefault("ai_feedback", {})
+    if not isinstance(ai_conf, dict):
+        ai_conf = {}
+        conf["ai_feedback"] = ai_conf
+
+    db_conf = conf.setdefault("db", {})
+    if not isinstance(db_conf, dict):
+        db_conf = {}
+        conf["db"] = db_conf
+
+    log_conf = conf.setdefault("log", {})
+    if not isinstance(log_conf, dict):
+        log_conf = {}
+        conf["log"] = log_conf
+
+    ai_conf["model"] = openrouter_model
+    ai_conf["provider"] = openrouter_provider
+    ai_conf["api_key"] = openrouter_api_key
+    db_conf["db_path"] = db_path
+    log_conf["log_file_path"] = log_file_path
+
+    try:
+        _save_conf(conf)
+    except Exception as exc:
+        logger.error("Failed to save settings\n%s", traceback.format_exc())
+        flash(f"Unable to save settings: {exc}", "danger")
+        return redirect(url_for("settings_page"))
+
+    flash("Settings saved successfully.", "success")
+    flash("Changes apply only after rebuilding the Docker container.", "warning")
+    return redirect(url_for("settings_page"))
 
 
 @app.route("/scan", methods=["POST"])

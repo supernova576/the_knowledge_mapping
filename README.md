@@ -86,7 +86,8 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - Add Settings
   - Compliance Settings
     - customize parameters
-  - AI Feedback
-    - modify prompt
-  - AI Question generators
-    - modify prompt
+  - AI
+    - change provider / model
+    - change db path
+    - change log file path
+    
