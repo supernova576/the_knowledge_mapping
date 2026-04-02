@@ -727,6 +727,7 @@ class DocsParser:
         content = target_path.read_text(encoding="utf-8")
         note_name = self._extract_markdown_section(content, "Note Name") or target_path.stem.replace(" - Learning", "").strip()
         creation_date = self._extract_markdown_section(content, "Creation") or "N/A"
+        last_modified_date = self._extract_markdown_section(content, "Last Modified") or "N/A"
         questions_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Questions"))
         answers_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Answers"))
 
@@ -742,6 +743,7 @@ class DocsParser:
             "source_note_name": str(note_name).strip() or target_path.stem.strip(),
             "path_to_learning": str(target_path),
             "creation_date": str(creation_date).strip() or "N/A",
+            "last_modified_date": str(last_modified_date).strip() or "N/A",
             "questions": parsed_questions,
             "answers": parsed_answers,
         }

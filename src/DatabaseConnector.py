@@ -93,10 +93,19 @@ class db:
                     file_name TEXT NOT NULL,
                     source_note_name TEXT NOT NULL,
                     path_to_learning TEXT NOT NULL UNIQUE,
-                    creation_date TEXT NOT NULL
+                    creation_date TEXT NOT NULL,
+                    last_modified_date TEXT NOT NULL DEFAULT 'N/A'
                 )
                 """
             )
+            learning_columns = {
+                str(row["name"]).strip().casefold()
+                for row in self._execute("PRAGMA table_info(learnings)").fetchall()
+            }
+            if "last_modified_date" not in learning_columns:
+                self._execute(
+                    "ALTER TABLE learnings ADD COLUMN last_modified_date TEXT NOT NULL DEFAULT 'N/A'"
+                )
 
             self.cursor.execute(
                 """
@@ -533,18 +542,20 @@ class db:
         try:
             self._execute(
                 """
-                INSERT INTO learnings (file_name, source_note_name, path_to_learning, creation_date)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO learnings (file_name, source_note_name, path_to_learning, creation_date, last_modified_date)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(path_to_learning) DO UPDATE SET
                     file_name = excluded.file_name,
                     source_note_name = excluded.source_note_name,
-                    creation_date = excluded.creation_date
+                    creation_date = excluded.creation_date,
+                    last_modified_date = excluded.last_modified_date
                 """,
                 (
                     str(row.get("file_name", "")).strip(),
                     str(row.get("source_note_name", "")).strip(),
                     str(row.get("path_to_learning", "")).strip(),
                     str(row.get("creation_date", "N/A")).strip(),
+                    str(row.get("last_modified_date", "N/A")).strip(),
                 ),
             )
             self._commit()

@@ -1137,6 +1137,7 @@ def _create_learning_for_doc(normalized_doc: str) -> dict:
         template_content=template_content,
         note_name=note_name,
         creation_date=_today_dd_mm_yyyy(),
+        last_modified_date="N/A",
         questions_payload={"questions": []},
         answers_payload={"answers": []},
     )
@@ -2321,16 +2322,6 @@ def learning_detail(learning_id: int):
         return redirect(url_for("learning_overview"))
     parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
     attempts = database.get_learning_exam_attempts(learning_id)
-    selected_attempt_id = request.args.get("attempt_id", "").strip()
-    selected_attempt = None
-    selected_answers = {}
-    if selected_attempt_id.isdigit():
-        selected_attempt = database.get_learning_exam_attempt_by_id(int(selected_attempt_id))
-        if selected_attempt and int(selected_attempt.get("learning_id", 0)) == learning_id:
-            try:
-                selected_answers = json.loads(selected_attempt.get("answers_json", "{}"))
-            except json.JSONDecodeError:
-                selected_answers = {}
     grouped_questions = {"FREETEXT": [], "MULTIPLE_CHOICE": [], "SINGLE_CHOICE": []}
     for question in parsed_learning.get("questions", []):
         grouped_questions.setdefault(str(question.get("type", "FREETEXT")).upper(), []).append(question)
@@ -2340,8 +2331,58 @@ def learning_detail(learning_id: int):
         parsed_learning=parsed_learning,
         grouped_questions=grouped_questions,
         attempts=attempts,
-        selected_attempt=selected_attempt,
-        selected_answers=selected_answers if isinstance(selected_answers, dict) else {},
+    )
+
+@app.route("/learning/<int:learning_id>/attempts/<int:attempt_id>", methods=["GET"])
+def learning_attempt_review(learning_id: int, attempt_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    attempt = database.get_learning_exam_attempt_by_id(attempt_id)
+    if not attempt or int(attempt.get("learning_id", 0)) != learning_id:
+        flash("Attempt entry not found.", "warning")
+        return redirect(url_for("learning_detail", learning_id=learning_id))
+
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    answer_key_map = {
+        str(item.get("question_id", "")).strip(): [str(value).strip() for value in item.get("correct_answers", []) if str(value).strip()]
+        for item in parsed_learning.get("answers", [])
+        if isinstance(item, dict)
+    }
+    try:
+        submitted_answers = json.loads(attempt.get("answers_json", "{}"))
+    except json.JSONDecodeError:
+        submitted_answers = {}
+    if not isinstance(submitted_answers, dict):
+        submitted_answers = {}
+
+    rows: list[dict] = []
+    for question in parsed_learning.get("questions", []):
+        question_id = str(question.get("id", "")).strip()
+        expected_answers = sorted(answer_key_map.get(question_id, []))
+        given_answers = sorted([str(value).strip() for value in submitted_answers.get(question_id, []) if str(value).strip()])
+        question_type = str(question.get("type", "FREETEXT")).strip().upper()
+        is_scored = question_type != "FREETEXT"
+        rows.append(
+            {
+                "id": question_id or "N/A",
+                "text": str(question.get("text", "")).strip() or "N/A",
+                "question_type": question_type,
+                "given_answers": given_answers,
+                "expected_answers": expected_answers,
+                "is_scored": is_scored,
+                "is_correct": (expected_answers == given_answers) if is_scored else None,
+            }
+        )
+
+    return render_template(
+        "learning_attempt_review.html",
+        learning=learning_row,
+        attempt=attempt,
+        comparison_rows=rows,
     )
 
 
@@ -2369,6 +2410,7 @@ def learning_save(learning_id: int):
     learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
     writer.update_learning_file_questions_answers(
         learning_path=learning_path,
+        last_modified_date=_today_dd_mm_yyyy(),
         questions_payload={"questions": questions},
         answers_payload={"answers": answers},
     )
@@ -2403,6 +2445,7 @@ def learning_generate_questions(learning_id: int):
         answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
         DocsWriter().update_learning_file_questions_answers(
             learning_path=Path(learning_row["path_to_learning"]),
+            last_modified_date=_today_dd_mm_yyyy(),
             questions_payload={"questions": questions},
             answers_payload={"answers": answers},
         )

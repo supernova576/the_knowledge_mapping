@@ -235,6 +235,7 @@ class DocsWriter:
         template_content: str,
         note_name: str,
         creation_date: str,
+        last_modified_date: str,
         questions_payload: dict,
         answers_payload: dict,
     ) -> str:
@@ -242,6 +243,7 @@ class DocsWriter:
         replacements = {
             "{{ note_name }}": str(note_name).strip(),
             "{{ creation_date }}": str(creation_date).strip(),
+            "{{ last_modified }}": str(last_modified_date).strip(),
             "{{ questions }}": self._render_learning_json_block(questions_payload),
             "{{ answers }}": self._render_learning_json_block(answers_payload),
         }
@@ -261,6 +263,7 @@ class DocsWriter:
     def update_learning_file_questions_answers(
         self,
         learning_path: Path,
+        last_modified_date: str,
         questions_payload: dict,
         answers_payload: dict,
     ) -> None:
@@ -268,9 +271,20 @@ class DocsWriter:
         questions_block = self._render_learning_json_block(questions_payload)
         answers_block = self._render_learning_json_block(answers_payload)
         updated_content = re.sub(
+            r"(?ims)(^##\s+Last Modified\s*$\n)(.*?)(?=^##\s+Questions\s*$)",
+            rf"\1{str(last_modified_date).strip() or 'N/A'}\n\n",
+            content,
+        )
+        if updated_content == content:
+            updated_content = re.sub(
+                r"(?ims)(^##\s+Creation\s*$\n.*?)(?=^##\s+Questions\s*$)",
+                rf"\1\n## Last Modified\n{str(last_modified_date).strip() or 'N/A'}\n\n",
+                content,
+            )
+        updated_content = re.sub(
             r"(?ims)(^##\s+Questions\s*$\n)(.*?)(?=^##\s+Answers\s*$)",
             rf"\1{questions_block}\n\n",
-            content,
+            updated_content,
         )
         updated_content = re.sub(
             r"(?ims)(^##\s+Answers\s*$\n)(.*?)(?=\Z)",

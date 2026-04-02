@@ -49,10 +49,16 @@
 
     <div class="card shadow-sm mb-3"><div class="card-body">
         <h2 class="h5">Previously completed attempts</h2>
-        <form method="get" action="{{ url_for('learning_detail', learning_id=learning.id) }}" class="row g-2 align-items-end">
-            <div class="col-md-10"><select class="form-select" name="attempt_id"><option value="">Select attempt for side-by-side review</option>{% for attempt in attempts %}<option value="{{ attempt.id }}" {% if selected_attempt and selected_attempt.id == attempt.id %}selected{% endif %}>Attempt #{{ attempt.id }} — {{ attempt.created_at }} — {{ attempt.score }}/{{ attempt.total_questions }}</option>{% endfor %}</select></div>
-            <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Load</button></div>
-        </form>
+        <div class="list-group">
+            {% for attempt in attempts %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('learning_attempt_review', learning_id=learning.id, attempt_id=attempt.id) }}">
+                <span>Attempt #{{ attempt.id }} — {{ attempt.created_at }}</span>
+                <span class="badge text-bg-primary rounded-pill">{{ attempt.score }}/{{ attempt.total_questions }}</span>
+            </a>
+            {% else %}
+            <div class="text-muted">No attempts yet.</div>
+            {% endfor %}
+        </div>
     </div></div>
 
     {% for group_name, questions in grouped_questions.items() %}
@@ -62,7 +68,6 @@
         <div class="mb-2 border rounded p-2">
             <div><strong>{{ question.id }}</strong> — {{ question.text }}</div>
             {% if question.options %}<ul class="mb-1">{% for option in question.options %}<li>{{ option }}</li>{% endfor %}</ul>{% endif %}
-            {% if selected_attempt %}<div class="small text-muted">Submitted answer: {{ (selected_answers.get(question.id, [])|join(', ')) or '-' }}</div>{% endif %}
         </div>
         {% else %}<p class="text-muted mb-0">No questions in this section.</p>{% endfor %}
     </div></div>

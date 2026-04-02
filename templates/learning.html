@@ -90,11 +90,12 @@
             </select>
         </form>
 
-        <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Title</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+        <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Title</th><th>Created</th><th>Last Modified</th><th>Actions</th></tr></thead><tbody>
         {% for row in learning_rows %}
         <tr>
             <td>{{ row.status_icon }} {{ row.file_name }}</td>
             <td>{{ row.creation_date }}</td>
+            <td>{{ row.last_modified_date }}</td>
             <td>
                 <div class="dropdown">
                     <button class="btn btn-secondary btn-sm dropdown-toggle km-actions-dropdown-toggle" type="button" id="dropdownMenuButton-{{ row.id }}" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -109,7 +110,7 @@
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="3" class="text-center text-muted py-4">No learning files found for this filter.</td></tr>
+        <tr><td colspan="4" class="text-center text-muted py-4">No learning files found for this filter.</td></tr>
         {% endfor %}
         </tbody></table></div>
     </div></div>

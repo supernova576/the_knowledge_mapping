@@ -93,7 +93,6 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 
 - Generate Questions to a doc using AI
   - "exam simulator"
-    - show version of exam (last changed)
     - exporter
       - export as js html site
 
