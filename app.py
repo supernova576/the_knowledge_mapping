@@ -18,6 +18,7 @@ from src.DocsParser import DocsParser
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.DocsExporter import DocsExporter
+from src.DocsViewer import DocsViewer
 from src.logger import get_logger
 from src.timezone_utils import now_in_zurich, now_in_zurich_str
 
@@ -1891,6 +1892,58 @@ def create_doc_from_todo_template():
 
     return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
+
+
+
+@app.route("/docs/<int:doc_id>/view", methods=["GET"])
+def view_doc(doc_id: int):
+    database = db()
+    doc_map = database.get_docs_by_id(doc_id)
+    if not doc_map:
+        flash("Document not found.", "warning")
+        return redirect(url_for("index"))
+
+    doc = next(iter(doc_map.values()))
+    doc_title = str(doc.get("title", "")).strip()
+    if not doc_title:
+        flash("Document title is missing.", "danger")
+        return redirect(url_for("index"))
+
+    try:
+        viewer = DocsViewer(_load_conf())
+        title, content_html = viewer.render_doc_to_html(doc_title)
+    except FileNotFoundError:
+        flash("Markdown file for selected document was not found.", "danger")
+        return redirect(url_for("index"))
+    except ValueError:
+        flash("Invalid document file name.", "danger")
+        return redirect(url_for("index"))
+    except Exception:
+        logger.error("Markdown view route failed for doc_id=%s\n%s", doc_id, traceback.format_exc())
+        flash("Failed to render markdown preview.", "danger")
+        return redirect(url_for("index"))
+
+    return render_template("doc_view.html", doc=doc, title=title, content_html=content_html)
+
+
+@app.route("/docs/view/by-name/<slug>", methods=["GET"])
+def view_doc_by_slug(slug: str):
+    try:
+        viewer = DocsViewer(_load_conf())
+        resolved_file_name = viewer.find_filename_by_slug(slug)
+    except Exception:
+        flash("Could not resolve linked note.", "warning")
+        return redirect(url_for("index"))
+
+    database = db()
+    resolved_title = Path(resolved_file_name).stem
+    doc_map = database.get_docs_by_name(resolved_title, exact_match=True)
+    if not doc_map:
+        flash("Linked note exists on disk but is missing in the index. Run full scan first.", "warning")
+        return redirect(url_for("index"))
+
+    doc_id = int(next(iter(doc_map.keys())))
+    return redirect(url_for("view_doc", doc_id=doc_id))
 
 @app.route("/docs/<int:doc_id>/edit", methods=["GET"])
 def edit_doc_resources(doc_id: int):

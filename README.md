@@ -95,6 +95,3 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
   - "exam simulator"
     - exporter
       - export as js html site
-
-- Document viewer
-  - add a docs viewer

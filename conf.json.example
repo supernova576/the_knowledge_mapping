@@ -15,6 +15,9 @@
         "full_path_to_git_dir": "/the-knowledge/.git",
         "executable": "git"
     },
+    "pictures": {
+        "full_path_to_pictures": "/the-knowledge/04_IMAGES"
+    },
     "log": {
         "log_file_path": "logs/app.log"
     },

@@ -161,3 +161,42 @@ body {
   border-color: rgba(var(--bs-light-rgb), 0.2);
   color: var(--bs-light);
 }
+
+.km-markdown-preview {
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
+.km-markdown-preview h1,
+.km-markdown-preview h2,
+.km-markdown-preview h3,
+.km-markdown-preview h4,
+.km-markdown-preview h5,
+.km-markdown-preview h6 {
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.km-markdown-preview pre,
+.km-markdown-preview code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.km-markdown-preview pre {
+    background-color: rgba(127, 127, 127, 0.12);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+}
+
+.km-markdown-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+}
+
+.km-markdown-preview th,
+.km-markdown-preview td {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    padding: 0.5rem;
+    text-align: left;
+}
