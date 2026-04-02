@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
@@ -1944,6 +1944,55 @@ def view_doc_by_slug(slug: str):
 
     doc_id = int(next(iter(doc_map.keys())))
     return redirect(url_for("view_doc", doc_id=doc_id))
+
+
+@app.route("/docs/view/by-path/<path:relative_path>", methods=["GET"])
+def view_doc_by_path(relative_path: str):
+    try:
+        viewer = DocsViewer(_load_conf())
+        title, content_html = viewer.render_doc_to_html_by_relative_path(relative_path)
+    except FileNotFoundError:
+        flash("Linked note not found on disk.", "warning")
+        return redirect(url_for("index"))
+    except ValueError:
+        flash("Invalid linked note path.", "warning")
+        return redirect(url_for("index"))
+    except Exception:
+        logger.error("Markdown view route failed for relative_path=%s\n%s", relative_path, traceback.format_exc())
+        flash("Failed to render linked note preview.", "danger")
+        return redirect(url_for("index"))
+
+    docs_root = Path(viewer.conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    resolved_doc = (docs_root / relative_path).resolve()
+    resolved_title = resolved_doc.stem
+
+    database = db()
+    doc_map = database.get_docs_by_name(resolved_title, exact_match=True)
+    doc_for_template = next(iter(doc_map.values())) if doc_map else {"id": None}
+
+    return render_template("doc_view.html", doc=doc_for_template, title=title, content_html=content_html)
+
+
+@app.route("/docs/pictures/<path:file_name>", methods=["GET"])
+def view_doc_picture(file_name: str):
+    try:
+        conf = _load_conf()
+        pictures_root = Path(conf.get("pictures", {}).get("full_path_to_pictures", "")).resolve()
+        if not pictures_root.exists() or not pictures_root.is_dir():
+            raise FileNotFoundError("Configured pictures directory does not exist.")
+
+        requested_name = Path(file_name).name.strip()
+        if not requested_name:
+            raise ValueError("Invalid picture file name.")
+
+        return send_from_directory(str(pictures_root), requested_name, as_attachment=False)
+    except FileNotFoundError:
+        return ("Picture not found.", 404)
+    except ValueError:
+        return ("Invalid picture path.", 400)
+    except Exception:
+        logger.error("Picture route failed for file_name=%s\n%s", file_name, traceback.format_exc())
+        return ("Failed to load picture.", 500)
 
 @app.route("/docs/<int:doc_id>/edit", methods=["GET"])
 def edit_doc_resources(doc_id: int):
