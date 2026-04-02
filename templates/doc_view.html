@@ -23,6 +23,14 @@
                 {% if doc.id %}
                 <a href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}" class="btn btn-outline-primary">Edit</a>
                 {% endif %}
+                {% set ai_feedback_doc_name = doc.title if doc.title else title %}
+                {% if ai_feedback_doc_name %}
+                <form method="post" action="{{ url_for('generate_ai_feedback') }}" class="m-0">
+                    <input type="hidden" name="selected_doc" value="{{ ai_feedback_doc_name }}" />
+                    <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" />
+                    <button type="submit" class="btn btn-outline-success">AI Feedback</button>
+                </form>
+                {% endif %}
                 <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Back</a>
             </div>
         </div>
