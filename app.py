@@ -6,7 +6,7 @@ import re
 import stat
 import traceback
 from urllib.parse import urlencode, urlparse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
@@ -64,6 +64,46 @@ def _normalize_todo_priority(value: str | None) -> str:
     if normalized not in {"low", "medium", "high"}:
         return "Medium"
     return normalized.capitalize()
+
+
+def _parse_todo_last_update(value: str | None, reference_date: date | None = None) -> date | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+
+    today = reference_date or now_in_zurich().date()
+    for value_format in ("%d.%m.%Y", "%d.%m"):
+        try:
+            parsed = datetime.strptime(raw_value, value_format).date()
+            if value_format == "%d.%m":
+                parsed = parsed.replace(year=today.year)
+                if parsed > today:
+                    parsed = parsed.replace(year=today.year - 1)
+            return parsed
+        except ValueError:
+            continue
+
+    return None
+
+
+def _todo_last_update_is_stale(todo: dict, reference_date: date | None = None) -> bool:
+    priority_to_threshold = {
+        "High": 5,
+        "Medium": 10,
+        "Low": 15,
+    }
+    priority = _normalize_todo_priority(todo.get("priority"))
+    threshold_days = priority_to_threshold.get(priority, 0)
+
+    parsed_last_update = _parse_todo_last_update(todo.get("last_update"), reference_date=reference_date)
+    if parsed_last_update is None:
+        return True
+
+    today = reference_date or now_in_zurich().date()
+    days_since_update = (today - parsed_last_update).days
+    if days_since_update < 0:
+        days_since_update = 0
+    return days_since_update > threshold_days
 
 
 def _sort_todos_by_priority(todos: list[dict]) -> list[dict]:
@@ -776,12 +816,14 @@ def _load_todos(parser: DocsParser, query: str) -> list[dict]:
     todos = parser.parse_todos_from_markdown()
     processed_rows: list[dict] = []
     normalized_query = query.casefold()
+    today = now_in_zurich().date()
 
     for index, row in enumerate(todos, start=1):
         prepared = dict(row)
         prepared["id"] = index
         prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
         prepared["priority"] = _normalize_todo_priority(prepared.get("priority"))
+        prepared["last_update_is_stale"] = _todo_last_update_is_stale(prepared, reference_date=today)
         if normalized_query and normalized_query not in str(prepared.get("note", "")).casefold():
             continue
         processed_rows.append(prepared)

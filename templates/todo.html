@@ -65,7 +65,7 @@
                          alt="{{ todo.progress }}"
                          height="24" />
                 </td>
-                <td>{{ todo.last_update }}</td>
+                <td class="{% if todo.last_update_is_stale %}text-danger fw-semibold{% endif %}">{{ todo.last_update }}</td>
                 <td>
                     <button
                         class="btn btn-success btn-sm make-doc-btn"
