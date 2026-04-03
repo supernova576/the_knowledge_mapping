@@ -505,6 +505,40 @@ def _parse_provider_list(raw_value: str | None) -> list[str]:
     return normalized
 
 
+def _parse_checkbox_bool(raw_value: str | None) -> bool:
+    return str(raw_value or "").strip().casefold() in {"1", "true", "on", "yes"}
+
+
+def _sanitize_non_negative_int(value: str | None, field_name: str, minimum: int = 0, maximum: int = 1000000) -> int:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError(f"{field_name} is required.")
+    if not re.fullmatch(r"\d+", raw):
+        raise ValueError(f"{field_name} must be a whole number.")
+    parsed = int(raw)
+    if parsed < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum}.")
+    if parsed > maximum:
+        raise ValueError(f"{field_name} is too large.")
+    return parsed
+
+
+def _parse_multiline_conf_strings(raw_value: str | None, field_name: str, max_items: int = 50) -> list[str]:
+    values = [line.strip() for line in str(raw_value or "").splitlines() if line.strip()]
+    if not values:
+        raise ValueError(f"{field_name} requires at least one value.")
+    if len(values) > max_items:
+        raise ValueError(f"{field_name} allows at most {max_items} values.")
+    cleaned: list[str] = []
+    for value in values:
+        if len(value) > 200:
+            raise ValueError(f"{field_name} entries must be 200 characters or fewer.")
+        if any(char in value for char in ("\x00", "\r")):
+            raise ValueError(f"{field_name} entries contain invalid characters.")
+        cleaned.append(value)
+    return cleaned
+
+
 def _today_dd_mm() -> str:
     return datetime.now().strftime("%d.%m")
 
@@ -1620,7 +1654,19 @@ def settings_page():
     ai_conf = conf.get("ai_feedback", {}) if isinstance(conf.get("ai_feedback", {}), dict) else {}
     db_conf = conf.get("db", {}) if isinstance(conf.get("db", {}), dict) else {}
     log_conf = conf.get("log", {}) if isinstance(conf.get("log", {}), dict) else {}
+    compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
+    compliance_defaults = DocsParser.DEFAULT_COMPLIANCE_CHECK
+    structure_conf = compliance_conf.get("structure", {}) if isinstance(compliance_conf.get("structure", {}), dict) else {}
+    created_conf = compliance_conf.get("created", {}) if isinstance(compliance_conf.get("created", {}), dict) else {}
+    beschreibung_conf = compliance_conf.get("beschreibung", {}) if isinstance(compliance_conf.get("beschreibung", {}), dict) else {}
+    external_links_conf = compliance_conf.get("external_links", {}) if isinstance(compliance_conf.get("external_links", {}), dict) else {}
+    tags_conf = compliance_conf.get("tags", {}) if isinstance(compliance_conf.get("tags", {}), dict) else {}
+    video_links_conf = compliance_conf.get("video_links", {}) if isinstance(compliance_conf.get("video_links", {}), dict) else {}
     provider_value = ", ".join(_parse_json_array(ai_conf.get("provider", [])))
+    structure_strings = structure_conf.get("strings_to_check", compliance_defaults["structure"]["strings_to_check"])
+    if not isinstance(structure_strings, list):
+        structure_strings = compliance_defaults["structure"]["strings_to_check"]
+    structure_strings_text = "\n".join([str(item).strip() for item in structure_strings if str(item).strip()])
 
     settings_form = {
         "openrouter_model": str(ai_conf.get("model", "")).strip(),
@@ -1628,6 +1674,31 @@ def settings_page():
         "openrouter_api_key": str(ai_conf.get("api_key", "")).strip(),
         "db_path": str(db_conf.get("db_path", "")).strip(),
         "log_file_path": str(log_conf.get("log_file_path", "")).strip(),
+        "compliance_structure_enabled": bool(
+            structure_conf.get("enabled", compliance_defaults["structure"]["enabled"])
+        ),
+        "compliance_structure_strings_to_check": structure_strings_text,
+        "compliance_created_enabled": bool(created_conf.get("enabled", compliance_defaults["created"]["enabled"])),
+        "compliance_beschreibung_enabled": bool(
+            beschreibung_conf.get("enabled", compliance_defaults["beschreibung"]["enabled"])
+        ),
+        "compliance_beschreibung_max": str(
+            beschreibung_conf.get("max", compliance_defaults["beschreibung"]["max"])
+        ).strip(),
+        "compliance_external_links_enabled": bool(
+            external_links_conf.get("enabled", compliance_defaults["external_links"]["enabled"])
+        ),
+        "compliance_external_links_min": str(
+            external_links_conf.get("min", compliance_defaults["external_links"]["min"])
+        ).strip(),
+        "compliance_tags_enabled": bool(tags_conf.get("enabled", compliance_defaults["tags"]["enabled"])),
+        "compliance_tags_min": str(tags_conf.get("min", compliance_defaults["tags"]["min"])).strip(),
+        "compliance_video_links_enabled": bool(
+            video_links_conf.get("enabled", compliance_defaults["video_links"]["enabled"])
+        ),
+        "compliance_video_links_char": str(
+            video_links_conf.get("char", compliance_defaults["video_links"]["char"])
+        ).strip(),
     }
     return render_template("settings.html", settings=settings_form)
 
@@ -1648,6 +1719,36 @@ def settings_save():
         db_path = _sanitize_conf_text(request.form.get("db_path"), "DB Path", max_length=500)
         log_file_path = _sanitize_conf_text(request.form.get("log_file_path"), "Log File Path", max_length=500)
         openrouter_provider = _parse_provider_list(request.form.get("openrouter_provider"))
+        compliance_structure_enabled = _parse_checkbox_bool(request.form.get("compliance_structure_enabled"))
+        compliance_structure_strings_to_check = _parse_multiline_conf_strings(
+            request.form.get("compliance_structure_strings_to_check"),
+            "Compliance Structure Strings",
+        )
+        compliance_created_enabled = _parse_checkbox_bool(request.form.get("compliance_created_enabled"))
+        compliance_beschreibung_enabled = _parse_checkbox_bool(request.form.get("compliance_beschreibung_enabled"))
+        compliance_beschreibung_max = _sanitize_non_negative_int(
+            request.form.get("compliance_beschreibung_max"),
+            "Compliance Beschreibung Max",
+            minimum=1,
+        )
+        compliance_external_links_enabled = _parse_checkbox_bool(request.form.get("compliance_external_links_enabled"))
+        compliance_external_links_min = _sanitize_non_negative_int(
+            request.form.get("compliance_external_links_min"),
+            "Compliance External Links Min",
+            minimum=0,
+        )
+        compliance_tags_enabled = _parse_checkbox_bool(request.form.get("compliance_tags_enabled"))
+        compliance_tags_min = _sanitize_non_negative_int(
+            request.form.get("compliance_tags_min"),
+            "Compliance Tags Min",
+            minimum=0,
+        )
+        compliance_video_links_enabled = _parse_checkbox_bool(request.form.get("compliance_video_links_enabled"))
+        compliance_video_links_char = _sanitize_non_negative_int(
+            request.form.get("compliance_video_links_char"),
+            "Compliance Video Links Character Threshold",
+            minimum=1,
+        )
     except ValueError as validation_error:
         flash(str(validation_error), "danger")
         return redirect(url_for("settings_page"))
@@ -1666,12 +1767,39 @@ def settings_save():
     if not isinstance(log_conf, dict):
         log_conf = {}
         conf["log"] = log_conf
+    compliance_conf = conf.setdefault("compliance_check", {})
+    if not isinstance(compliance_conf, dict):
+        compliance_conf = {}
+        conf["compliance_check"] = compliance_conf
 
     ai_conf["model"] = openrouter_model
     ai_conf["provider"] = openrouter_provider
     ai_conf["api_key"] = openrouter_api_key
     db_conf["db_path"] = db_path
     log_conf["log_file_path"] = log_file_path
+    compliance_conf["structure"] = {
+        "enabled": compliance_structure_enabled,
+        "strings_to_check": compliance_structure_strings_to_check,
+    }
+    compliance_conf["created"] = {
+        "enabled": compliance_created_enabled,
+    }
+    compliance_conf["beschreibung"] = {
+        "enabled": compliance_beschreibung_enabled,
+        "max": compliance_beschreibung_max,
+    }
+    compliance_conf["external_links"] = {
+        "enabled": compliance_external_links_enabled,
+        "min": compliance_external_links_min,
+    }
+    compliance_conf["tags"] = {
+        "enabled": compliance_tags_enabled,
+        "min": compliance_tags_min,
+    }
+    compliance_conf["video_links"] = {
+        "enabled": compliance_video_links_enabled,
+        "char": compliance_video_links_char,
+    }
 
     try:
         _save_conf(conf)

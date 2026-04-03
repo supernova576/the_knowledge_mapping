@@ -80,6 +80,114 @@
                             value="{{ settings.log_file_path }}">
                     </div>
 
+                    <h2>Compliance Check</h2>
+                    <div class="col-12">
+                        <div class="alert alert-info mb-0" role="alert">
+                            Configure each compliance rule separately. Every rule has its own <strong>Enable</strong> toggle and related parameters.
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">1) Structure Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_structure_enabled"
+                                        name="compliance_structure_enabled" {% if settings.compliance_structure_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_structure_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">All listed strings must exist in the document.</p>
+                            <label class="form-label" for="compliance_structure_strings_to_check">Required strings (one per line)</label>
+                            <textarea class="form-control" id="compliance_structure_strings_to_check" name="compliance_structure_strings_to_check"
+                                rows="5" maxlength="5000" required>{{ settings.compliance_structure_strings_to_check }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">2) Created Date Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_created_enabled"
+                                        name="compliance_created_enabled" {% if settings.compliance_created_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_created_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-0">Requires a valid "Erstellt" date in the document metadata.</p>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">3) Beschreibung Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_beschreibung_enabled"
+                                        name="compliance_beschreibung_enabled" {% if settings.compliance_beschreibung_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_beschreibung_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">The description section must not exceed the configured sentence limit.</p>
+                            <label class="form-label" for="compliance_beschreibung_max">Maximum sentence count</label>
+                            <input type="number" class="form-control" id="compliance_beschreibung_max" name="compliance_beschreibung_max"
+                                min="1" step="1" required value="{{ settings.compliance_beschreibung_max }}">
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">4) External Links Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_external_links_enabled"
+                                        name="compliance_external_links_enabled" {% if settings.compliance_external_links_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_external_links_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">Requires at least this number of external links.</p>
+                            <label class="form-label" for="compliance_external_links_min">Minimum external links</label>
+                            <input type="number" class="form-control" id="compliance_external_links_min" name="compliance_external_links_min"
+                                min="0" step="1" required value="{{ settings.compliance_external_links_min }}">
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">5) Tags Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_tags_enabled"
+                                        name="compliance_tags_enabled" {% if settings.compliance_tags_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_tags_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">Requires at least this number of tags in "Page Tags".</p>
+                            <label class="form-label" for="compliance_tags_min">Minimum tags</label>
+                            <input type="number" class="form-control" id="compliance_tags_min" name="compliance_tags_min"
+                                min="0" step="1" required value="{{ settings.compliance_tags_min }}">
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">6) Video Links Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_video_links_enabled"
+                                        name="compliance_video_links_enabled" {% if settings.compliance_video_links_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_video_links_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">
+                                If document length is above this threshold, at least one video link is required.
+                            </p>
+                            <label class="form-label" for="compliance_video_links_char">Character threshold</label>
+                            <input type="number" class="form-control" id="compliance_video_links_char" name="compliance_video_links_char"
+                                min="1" step="1" required value="{{ settings.compliance_video_links_char }}">
+                        </div>
+                    </div>
+
                     <div class="col-12 d-flex justify-content-end">
                         <button class="btn btn-primary" type="submit">Save Settings</button>
                     </div>

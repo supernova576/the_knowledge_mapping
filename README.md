@@ -83,11 +83,3 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
     - Möglichkeit "Canvas" zu erstellen (Mindmap)
     - Mapping of project specific tag to docs
     
-- Add Settings
-  - Compliance Settings
-    - customize parameters
-  - AI
-    - change provider / model
-    - change db path
-    - change log file path
-    

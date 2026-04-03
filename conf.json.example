@@ -5,6 +5,37 @@
     "docs": {
         "full_path_to_docs": "/the-knowledge/02_DOCS"
     },
+    "compliance_check": {
+        "structure": {
+            "enabled": true,
+            "strings_to_check": [
+                "## Zusätzliche Ressourcen",
+                "#### Erklärvideo",
+                "#### Externe Referenzen",
+                "#### Page History",
+                "#### Page Tags"
+            ]
+        },
+        "created": {
+            "enabled": true
+        },
+        "beschreibung": {
+            "enabled": true,
+            "max": 3
+        },
+        "external_links": {
+            "enabled": true,
+            "min": 1
+        },
+        "tags": {
+            "enabled": true,
+            "min": 2
+        },
+        "video_links": {
+            "enabled": true,
+            "char": 6000
+        }
+    },
     "todo": {
         "full_path_to_todo_file": "/the-knowledge/README.md"
     },

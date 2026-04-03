@@ -10,13 +10,38 @@ from .timezone_utils import now_in_zurich_str
 logger = get_logger(__name__)
 class DocsParser:
     UNDER_CONSTRUCTION_MARKER = "> ==unter Bearbeitung=="
-    REQUIRED_NOTE_STRUCTURE_STRINGS = [
+    DEFAULT_REQUIRED_NOTE_STRUCTURE_STRINGS = [
         "## Zusätzliche Ressourcen",
         "#### Erklärvideo",
         "#### Externe Referenzen",
         "#### Page History",
         "#### Page Tags",
     ]
+    DEFAULT_COMPLIANCE_CHECK = {
+        "structure": {
+            "enabled": True,
+            "strings_to_check": DEFAULT_REQUIRED_NOTE_STRUCTURE_STRINGS,
+        },
+        "created": {
+            "enabled": True,
+        },
+        "beschreibung": {
+            "enabled": True,
+            "max": 3,
+        },
+        "external_links": {
+            "enabled": True,
+            "min": 1,
+        },
+        "tags": {
+            "enabled": True,
+            "min": 2,
+        },
+        "video_links": {
+            "enabled": True,
+            "char": 6000,
+        },
+    }
     PROGRESS_ICON_TO_STATE = {
         "![[not started.png]]": "Not Started",
         "![[in progress.png]]": "In Progress",
@@ -42,6 +67,7 @@ class DocsParser:
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
                 self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
                 self.learning_path: str = j.get("learning", {}).get("learning_path", "/the-knowledge/07_LEARNINGS")
+                self.compliance_check: dict = self.__load_compliance_check_config(j.get("compliance_check", {}))
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
             logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
@@ -121,6 +147,68 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse markdown link map\n%s", traceback.format_exc())
             adieu(1)
+    def __coerce_bool(self, value: object, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().casefold()
+            if lowered in {"true", "1", "yes", "y", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "n", "off"}:
+                return False
+        return fallback
+    def __coerce_int(self, value: object, fallback: int, minimum: int = 0) -> int:
+        try:
+            parsed = int(str(value).strip())
+            if parsed < minimum:
+                return fallback
+            return parsed
+        except (TypeError, ValueError):
+            return fallback
+    def __coerce_string_list(self, value: object, fallback: list[str]) -> list[str]:
+        if not isinstance(value, list):
+            return fallback
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return normalized if normalized else fallback
+    def __load_compliance_check_config(self, raw_config: object) -> dict:
+        defaults = self.DEFAULT_COMPLIANCE_CHECK
+        config = raw_config if isinstance(raw_config, dict) else {}
+
+        structure_raw = config.get("structure", {}) if isinstance(config.get("structure", {}), dict) else {}
+        created_raw = config.get("created", {}) if isinstance(config.get("created", {}), dict) else {}
+        beschreibung_raw = config.get("beschreibung", {}) if isinstance(config.get("beschreibung", {}), dict) else {}
+        external_links_raw = config.get("external_links", {}) if isinstance(config.get("external_links", {}), dict) else {}
+        tags_raw = config.get("tags", {}) if isinstance(config.get("tags", {}), dict) else {}
+        video_links_raw = config.get("video_links", {}) if isinstance(config.get("video_links", {}), dict) else {}
+
+        return {
+            "structure": {
+                "enabled": self.__coerce_bool(structure_raw.get("enabled"), defaults["structure"]["enabled"]),
+                "strings_to_check": self.__coerce_string_list(
+                    structure_raw.get("strings_to_check"),
+                    defaults["structure"]["strings_to_check"],
+                ),
+            },
+            "created": {
+                "enabled": self.__coerce_bool(created_raw.get("enabled"), defaults["created"]["enabled"]),
+            },
+            "beschreibung": {
+                "enabled": self.__coerce_bool(beschreibung_raw.get("enabled"), defaults["beschreibung"]["enabled"]),
+                "max": self.__coerce_int(beschreibung_raw.get("max"), defaults["beschreibung"]["max"], minimum=1),
+            },
+            "external_links": {
+                "enabled": self.__coerce_bool(external_links_raw.get("enabled"), defaults["external_links"]["enabled"]),
+                "min": self.__coerce_int(external_links_raw.get("min"), defaults["external_links"]["min"], minimum=0),
+            },
+            "tags": {
+                "enabled": self.__coerce_bool(tags_raw.get("enabled"), defaults["tags"]["enabled"]),
+                "min": self.__coerce_int(tags_raw.get("min"), defaults["tags"]["min"], minimum=0),
+            },
+            "video_links": {
+                "enabled": self.__coerce_bool(video_links_raw.get("enabled"), defaults["video_links"]["enabled"]),
+                "char": self.__coerce_int(video_links_raw.get("char"), defaults["video_links"]["char"], minimum=1),
+            },
+        }
     def __to_db_text(self, value: str | list[str] | dict[str, str]) -> str:
         try:
             if isinstance(value, (list, dict)):
@@ -195,38 +283,55 @@ class DocsParser:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
-            note_structure_ok = self.__has_required_note_structure(cleaned)
-            if not note_structure_ok:
+            compliance_conf = self.compliance_check
+
+            structure_enabled = compliance_conf["structure"]["enabled"]
+            note_structure_ok = (not structure_enabled) or self.__has_required_note_structure(cleaned)
+            if structure_enabled and not note_structure_ok:
                 noncompliance_reasons.append("Struktur: Nicht alle Kapitel da")
+
             created_at = self.__parse_created_at_from_doc(cleaned)
-            created_at_ok = created_at != "N/A"
-            if not created_at_ok:
+            created_enabled = compliance_conf["created"]["enabled"]
+            created_at_ok = (not created_enabled) or (created_at != "N/A")
+            if created_enabled and not created_at_ok:
                 noncompliance_reasons.append("Erstelldatum: Nicht vorhanden")
+
+            beschreibung_max = compliance_conf["beschreibung"]["max"]
             beschreibung_text = self.__extract_beschreibung_text(cleaned)
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
-            beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
-            if not beschreibung_ok:
+            beschreibung_enabled = compliance_conf["beschreibung"]["enabled"]
+            beschreibung_ok = (not beschreibung_enabled) or (sentence_count <= beschreibung_max and bool(beschreibung_text))
+            if beschreibung_enabled and not beschreibung_ok:
                 noncompliance_reasons.append(
-                    "Beschreibung: Maximal 3 Sätze!"
+                    f"Beschreibung: Maximal {beschreibung_max} Sätze!"
                 )
+
             external_refs_block = self.__extract_subsection_block(cleaned, "Externe Referenzen")
             external_links = self.__extract_markdown_links(external_refs_block) if external_refs_block else []
-            external_links_ok = len(external_links) >= 1
-            if not external_links_ok:
-                noncompliance_reasons.append("Links: Mind. 1 externer Link")
+            external_links_min = compliance_conf["external_links"]["min"]
+            external_links_enabled = compliance_conf["external_links"]["enabled"]
+            external_links_ok = (not external_links_enabled) or (len(external_links) >= external_links_min)
+            if external_links_enabled and not external_links_ok:
+                noncompliance_reasons.append(f"Links: Mind. {external_links_min} externer Link")
+
             tags_block = self.__extract_subsection_block(cleaned, "Page Tags")
             tags = list(dict.fromkeys(re.findall(r"(?<!\w)#[-\w]+", tags_block)))
-            tags_ok = len(tags) >= 2
-            if not tags_ok:
-                noncompliance_reasons.append("Tags: Mind. 2 Tags")
-            requires_video = len(cleaned) > 6000
+            tags_min = compliance_conf["tags"]["min"]
+            tags_enabled = compliance_conf["tags"]["enabled"]
+            tags_ok = (not tags_enabled) or (len(tags) >= tags_min)
+            if tags_enabled and not tags_ok:
+                noncompliance_reasons.append(f"Tags: Mind. {tags_min} Tags")
+
+            video_char_threshold = compliance_conf["video_links"]["char"]
+            video_links_enabled = compliance_conf["video_links"]["enabled"]
+            requires_video = video_links_enabled and (len(cleaned) > video_char_threshold)
             if requires_video:
                 video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
                 video_links = self.__extract_markdown_links(video_block) if video_block else []
                 video_ok = len(video_links) >= 1
                 if not video_ok:
                     noncompliance_reasons.append(
-                        "Erklärvideo: ab 6000 Zeichen"
+                        f"Erklärvideo: ab {video_char_threshold} Zeichen"
                     )
             else:
                 video_ok = True
@@ -250,7 +355,8 @@ class DocsParser:
     def __has_required_note_structure(self, doc_content: str) -> bool:
         try:
             normalized_content = str(doc_content or "")
-            return all(required_string in normalized_content for required_string in self.REQUIRED_NOTE_STRUCTURE_STRINGS)
+            required_strings = self.compliance_check["structure"]["strings_to_check"]
+            return all(required_string in normalized_content for required_string in required_strings)
         except Exception:
             logger.error("Failed to check note structure compliance\n%s", traceback.format_exc())
             adieu(1)
