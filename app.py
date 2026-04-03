@@ -757,6 +757,12 @@ def _append_todo(note: str, todo_type: str, progress: str, priority: str = "Medi
     writer.write_todos_table(todos)
 
 
+def _normalize_update_reason(raw_reason: str) -> str:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", str(raw_reason or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:300]
+
+
 def _normalize_todo_types(value):
     normalized = _normalize_value(value)
     if isinstance(normalized, list):
@@ -2186,19 +2192,19 @@ def create_doc_from_todo_template():
     todo_id = request.form.get("todo_id", "").strip()
     template_key = request.form.get("template_name", "").strip().lower()
     file_name = request.form.get("file_name", "").strip()
-    reason = request.form.get("reason", "").strip()
+    reason = _normalize_update_reason(request.form.get("reason", ""))
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
     create_history = request.form.get("create_history", "false").strip().lower() == "true"
 
     from_index = request.form.get("from_index", "false").strip().lower() == "true"
     selected_doc = request.form.get("selected_doc", "").strip()
 
-    if from_index:
-        template_key = "update"
+    if from_index and selected_doc:
         file_name = selected_doc
 
     if template_key not in {"new", "update"}:
         flash("Invalid template action request.", "warning")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     normalized_file_name = _normalize_md_filename(file_name)
     if not normalized_file_name:
@@ -2225,16 +2231,26 @@ def create_doc_from_todo_template():
     if template_key == "new":
         if target_path.exists():
             flash("A note with this file name already exists. Please choose another file name.", "danger")
-            return redirect(url_for("todo_overview"))
+            return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
         try:
             writer.create_note_from_template(target_path, template_content)
             _set_rw_permissions_for_all_users(target_path)
+            if from_index:
+                _append_todo(
+                    note=Path(normalized_file_name).stem,
+                    todo_type="New",
+                    progress="In Progress",
+                    priority=priority,
+                )
+                flash("New note created and todo added successfully.", "success")
+                return redirect(url_for("index"))
+
             _set_todo_in_progress(todo_id, normalized_file_name)
             flash("New note created from template successfully.", "success")
         except BaseException:
             flash("Failed to create note from template.", "danger")
-        return redirect(url_for("todo_overview"))
+        return redirect(url_for("index") if from_index else url_for("todo_overview"))
 
     if not reason:
         flash("Reason is required for update template.", "warning")
@@ -2278,7 +2294,7 @@ def create_doc_from_todo_template():
                 note=f"{Path(normalized_file_name).stem} ({reason})",
                 todo_type="Update",
                 progress="In Progress",
-                priority="Medium",
+                priority=priority,
             )
             flash("Update note request created and todo added.", "success")
             return redirect(url_for("index"))
