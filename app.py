@@ -124,6 +124,30 @@ def _sync_banner_state(sync_time: str | None) -> str:
     return "danger"
 
 
+
+
+def _openrouter_media_support(conf: dict) -> dict[str, bool]:
+    modality_aliases: dict[str, set[str]] = {
+        "text": {"text"},
+        "image": {"image"},
+        "file": {"file", "document", "pdf"},
+        "audio": {"audio", "input_audio"},
+        "video": {"video"},
+    }
+    supported_modalities: set[str] = set()
+
+    try:
+        supported_modalities = DocsAIFeedback(conf).fetch_openrouter_input_modalities()
+    except Exception:
+        logger.warning("Unable to fetch OpenRouter input modalities for settings page.\n%s", traceback.format_exc())
+
+    normalized_modalities = {str(modality).strip().lower() for modality in supported_modalities if str(modality).strip()}
+
+    return {
+        key: any(alias in normalized_modalities for alias in aliases)
+        for key, aliases in modality_aliases.items()
+    }
+
 def _safe_redirect_target(target: str | None, fallback_endpoint: str) -> str:
     redirect_target = str(target or "").strip()
     if redirect_target.startswith("/"):
@@ -1700,7 +1724,9 @@ def settings_page():
             video_links_conf.get("char", compliance_defaults["video_links"]["char"])
         ).strip(),
     }
-    return render_template("settings.html", settings=settings_form)
+    media_support = _openrouter_media_support(conf)
+
+    return render_template("settings.html", settings=settings_form, media_support=media_support)
 
 
 @app.route("/settings", methods=["POST"])

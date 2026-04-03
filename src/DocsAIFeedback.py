@@ -509,6 +509,76 @@ class DocsAIFeedback:
 
         return None
 
+
+    def _extract_input_modalities(self, payload: dict) -> set[str]:
+        if not isinstance(payload, dict):
+            return set()
+
+        data = payload.get("data")
+        model_data = data if isinstance(data, dict) else payload
+        architecture = model_data.get("architecture", {}) if isinstance(model_data, dict) else {}
+
+        candidates: list = []
+        if isinstance(architecture, dict):
+            candidates.append(architecture.get("input_modalities"))
+            candidates.append(architecture.get("modalities"))
+
+        if isinstance(model_data, dict):
+            candidates.append(model_data.get("input_modalities"))
+            candidates.append(model_data.get("modalities"))
+
+        supported: set[str] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, list):
+                continue
+            for entry in candidate:
+                normalized = str(entry or "").strip().lower()
+                if normalized:
+                    supported.add(normalized)
+
+        return supported
+
+    def _extract_openrouter_model_entries(self, payload: dict) -> list[dict]:
+        if not isinstance(payload, dict):
+            return []
+
+        data = payload.get("data")
+        if isinstance(data, list):
+            return [entry for entry in data if isinstance(entry, dict)]
+        if isinstance(data, dict):
+            return [data]
+        if isinstance(payload, dict):
+            return [payload]
+        return []
+
+    def _find_openrouter_model_payload(self, payload: dict, model_name: str) -> dict | None:
+        normalized_model_name = str(model_name or "").strip().lower()
+        if not normalized_model_name:
+            return None
+
+        for model_entry in self._extract_openrouter_model_entries(payload):
+            candidate_identifiers = {
+                str(model_entry.get("id", "")).strip().lower(),
+                str(model_entry.get("canonical_slug", "")).strip().lower(),
+                str(model_entry.get("name", "")).strip().lower(),
+            }
+            if normalized_model_name in candidate_identifiers:
+                return model_entry
+
+        return None
+
+    def fetch_openrouter_input_modalities(self) -> set[str]:
+        model_name = str(self.model or "").strip()
+        if not model_name:
+            return set()
+
+        payload = self._request_openrouter_json("/api/v1/models")
+        matched_model_payload = self._find_openrouter_model_payload(payload, model_name)
+        if matched_model_payload is None:
+            logger.info("OpenRouter model metadata not found for configured model: %s", model_name)
+            return set()
+        return self._extract_input_modalities(matched_model_payload)
+
     def fetch_openrouter_credits_left(self) -> float:
         endpoints_to_try = ["/api/v1/credits", "/api/v1/auth/key"]
         last_error: Exception | None = None
