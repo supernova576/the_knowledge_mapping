@@ -3089,6 +3089,10 @@ def learning_generate_questions(learning_id: int):
             prompt_content=prompt_content,
         )
         questions = _sanitize_learning_questions(generated.get("questions", []))
+        if not questions:
+            raise ValueError(
+                "Question generation returned no valid questions. Please review the prompt/model output and try again."
+            )
         answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
         DocsWriter().update_learning_file_questions_answers(
             learning_path=Path(learning_row["path_to_learning"]),

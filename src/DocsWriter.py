@@ -272,7 +272,7 @@ class DocsWriter:
         answers_block = self._render_learning_json_block(answers_payload)
         updated_content = re.sub(
             r"(?ims)(^##\s+Last Modified\s*$\n)(.*?)(?=^##\s+Questions\s*$)",
-            rf"\1{str(last_modified_date).strip() or 'N/A'}\n\n",
+            lambda match: f"{match.group(1)}{str(last_modified_date).strip() or 'N/A'}\n\n",
             content,
         )
         if updated_content == content:
@@ -283,12 +283,12 @@ class DocsWriter:
             )
         updated_content = re.sub(
             r"(?ims)(^##\s+Questions\s*$\n)(.*?)(?=^##\s+Answers\s*$)",
-            rf"\1{questions_block}\n\n",
+            lambda match: f"{match.group(1)}{questions_block}\n\n",
             updated_content,
         )
         updated_content = re.sub(
             r"(?ims)(^##\s+Answers\s*$\n)(.*?)(?=\Z)",
-            rf"\1{answers_block}\n",
+            lambda match: f"{match.group(1)}{answers_block}\n",
             updated_content,
         )
         learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")

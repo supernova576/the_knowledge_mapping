@@ -206,7 +206,13 @@ class DocsAIFeedback:
             parts.append({"type": "image_url", "image_url": {"url": data_url}})
         return parts
 
-    def _build_request_payload(self, messages: list[dict], use_strict_schema: bool) -> dict:
+    def _build_request_payload(
+        self,
+        messages: list[dict],
+        use_strict_schema: bool,
+        strict_schema_name: str = "ai_feedback",
+        strict_schema: dict | None = None,
+    ) -> dict:
         payload: dict = {
             "model": self.model,
             "messages": messages,
@@ -219,20 +225,21 @@ class DocsAIFeedback:
         }
 
         if use_strict_schema:
+            schema_payload = strict_schema or {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "score": {"type": "number"},
+                    "feedback": {"type": "string"},
+                },
+                "required": ["score", "feedback"],
+            }
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "ai_feedback",
+                    "name": strict_schema_name,
                     "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "score": {"type": "number"},
-                            "feedback": {"type": "string"},
-                        },
-                        "required": ["score", "feedback"],
-                    },
+                    "schema": schema_payload,
                 },
             }
 
@@ -610,8 +617,20 @@ class DocsAIFeedback:
             )
             return self._request_ai_feedback_once(note_name, messages, use_strict_schema=False)
 
-    def _request_ai_json_object_once(self, note_name: str, messages: list[dict], use_strict_schema: bool) -> dict:
-        payload = self._build_request_payload(messages, use_strict_schema=use_strict_schema)
+    def _request_ai_json_object_once(
+        self,
+        note_name: str,
+        messages: list[dict],
+        use_strict_schema: bool,
+        strict_schema_name: str = "ai_feedback",
+        strict_schema: dict | None = None,
+    ) -> dict:
+        payload = self._build_request_payload(
+            messages,
+            use_strict_schema=use_strict_schema,
+            strict_schema_name=strict_schema_name,
+            strict_schema=strict_schema,
+        )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -654,11 +673,30 @@ class DocsAIFeedback:
                 ),
             },
         ]
+        learning_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "questions": {"type": "array"},
+                "answers": {"type": "array"},
+            },
+            "required": ["questions", "answers"],
+        }
         try:
-            return self._request_ai_json_object_once(note_name, messages, use_strict_schema=True)
+            return self._request_ai_json_object_once(
+                note_name,
+                messages,
+                use_strict_schema=True,
+                strict_schema_name="learning_questions",
+                strict_schema=learning_schema,
+            )
         except Exception:
             logger.warning("Strict learning question generation failed. Retrying without json_schema.")
-            return self._request_ai_json_object_once(note_name, messages, use_strict_schema=False)
+            return self._request_ai_json_object_once(
+                note_name,
+                messages,
+                use_strict_schema=False,
+            )
 
     def generate_feedback(
         self,
