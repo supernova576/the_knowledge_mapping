@@ -1350,6 +1350,10 @@ def _load_learning_conf(conf: dict) -> dict:
     return conf.get("learning", {})
 
 
+def _doc_addon_flag_enabled(value: object) -> bool:
+    return str(value or "").strip().casefold() == "true"
+
+
 def _find_learning_for_doc(database: db, doc_title: str) -> dict | None:
     normalized_doc = _normalize_md_filename(doc_title)
     if not normalized_doc:
@@ -1370,6 +1374,30 @@ def _find_learning_for_doc(database: db, doc_title: str) -> dict | None:
         return None
 
     return max(matching_rows, key=lambda row: int(row.get("id", 0)))
+
+
+def _find_latest_ai_feedback_for_doc(database: db, doc_title: str) -> dict | None:
+    normalized_doc = _normalize_md_filename(doc_title)
+    if not normalized_doc:
+        return None
+
+    doc_stem = Path(normalized_doc).stem.strip()
+    if not doc_stem:
+        return None
+
+    doc_key = doc_stem.casefold()
+    matching_rows = [
+        row
+        for row in database.get_all_ai_feedback()
+        if Path(str(row.get("file_name", "")).strip()).stem.casefold() == doc_key
+    ]
+    if not matching_rows:
+        return None
+
+    return max(
+        matching_rows,
+        key=lambda row: (int(row.get("version", 0)), int(row.get("id", 0))),
+    )
 
 
 def _create_learning_for_doc(normalized_doc: str) -> dict:
@@ -1523,7 +1551,12 @@ def index():
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
         row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
         row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
-        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip())
+        row["has_learning"] = _doc_addon_flag_enabled(row.get("has_learning", "false"))
+        row["has_ai_feedback"] = _doc_addon_flag_enabled(row.get("has_ai_feedback", "false"))
+        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip()) if row["has_learning"] else None
+        row["latest_ai_feedback"] = (
+            _find_latest_ai_feedback_for_doc(database, str(row.get("title", "")).strip()) if row["has_ai_feedback"] else None
+        )
         if row["is_under_construction"] == "true":
             row["is_compliant"] = "Not Determined"
             row["noncompliance_reason_list"] = []

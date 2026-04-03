@@ -50,9 +50,21 @@ class db:
                     is_compliant TEXT,
                     noncompliance_reason TEXT,
                     manual_compliant_override TEXT,
-                    is_under_construction TEXT
+                    is_under_construction TEXT,
+                    has_learning TEXT NOT NULL DEFAULT 'false',
+                    has_ai_feedback TEXT NOT NULL DEFAULT 'false'
                 )
                 """
+            )
+            self._ensure_column(
+                table_name="docs",
+                column_name="has_learning",
+                column_definition="TEXT NOT NULL DEFAULT 'false'",
+            )
+            self._ensure_column(
+                table_name="docs",
+                column_name="has_ai_feedback",
+                column_definition="TEXT NOT NULL DEFAULT 'false'",
             )
 
             self.cursor.execute(
@@ -130,6 +142,15 @@ class db:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def _ensure_column(self, table_name: str, column_name: str, column_definition: str) -> None:
+        existing_columns = {
+            str(row["name"]).strip().casefold()
+            for row in self._execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name.casefold() in existing_columns:
+            return
+        self._execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+
     def _execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         self.cursor.execute(query, params)
         return self.cursor
@@ -148,7 +169,7 @@ class db:
     def create_new_docs_entry(self, ndd: dict) -> None:
         try:
             self._execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction, has_learning, has_ai_feedback) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -160,6 +181,8 @@ class db:
                     ndd.get("noncompliance_reason", "N/A"),
                     ndd.get("manual_compliant_override", ""),
                     ndd.get("is_under_construction", "false"),
+                    ndd.get("has_learning", "false"),
+                    ndd.get("has_ai_feedback", "false"),
                 ),
             )
             self._commit()
@@ -244,7 +267,7 @@ class db:
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
             self._execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ? WHERE id = ?",
+                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ?, has_learning = ?, has_ai_feedback = ? WHERE id = ?",
                 (
                     udd.get("title", "N/A"),
                     udd.get("created_at", "N/A"),
@@ -256,6 +279,8 @@ class db:
                     udd.get("noncompliance_reason", "N/A"),
                     udd.get("manual_compliant_override", ""),
                     udd.get("is_under_construction", "false"),
+                    udd.get("has_learning", "false"),
+                    udd.get("has_ai_feedback", "false"),
                     id,
                 ),
             )

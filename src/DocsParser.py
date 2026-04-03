@@ -288,6 +288,22 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse tags\n%s", traceback.format_exc())
             adieu(1)
+    def __normalize_doc_key(self, value: str) -> str:
+        return re.sub(r"\.md$", "", str(value or "").strip(), flags=re.IGNORECASE).casefold()
+
+    def __build_learning_doc_keys(self, learning_row: dict) -> set[str]:
+        keys: set[str] = set()
+        for raw_value in (
+            learning_row.get("source_note_name", ""),
+            learning_row.get("file_name", ""),
+        ):
+            normalized = self.__normalize_doc_key(raw_value)
+            if not normalized:
+                continue
+            keys.add(normalized)
+            keys.add(re.sub(r"\s*-\s*learning$", "", normalized, flags=re.IGNORECASE).strip())
+        return {item for item in keys if item}
+
     def __enumerate_compliance(self, doc_content: str, doc_title: str, database: db) -> tuple[str, str]:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
@@ -422,10 +438,19 @@ class DocsParser:
             logger.info("Starting full docs sync at %s", sync_time)
             scanned_doc_titles: set[str] = set()
             collected_tags: set[str] = set()
+            learning_doc_keys: set[str] = set()
+            ai_feedback_doc_keys = {
+                self.__normalize_doc_key(row.get("file_name", ""))
+                for row in db_object.get_all_ai_feedback()
+                if self.__normalize_doc_key(row.get("file_name", ""))
+            }
+            for learning_row in db_object.get_all_learnings():
+                learning_doc_keys.update(self.__build_learning_doc_keys(learning_row))
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
                 doc_title = self.__parse_title_from_doc(doc_full_path)
+                normalized_doc_title = self.__normalize_doc_key(doc_title)
                 is_under_construction = self.__is_under_construction(file_contents)
                 if is_under_construction:
                     is_compliant = "Not Determined"
@@ -443,6 +468,8 @@ class DocsParser:
                     "noncompliance_reason": noncompliance_reason,
                     "manual_compliant_override": "false",
                     "is_under_construction": "true" if is_under_construction else "false",
+                    "has_learning": "true" if normalized_doc_title in learning_doc_keys else "false",
+                    "has_ai_feedback": "true" if normalized_doc_title in ai_feedback_doc_keys else "false",
                 }
                 raw_tags = append_dict.get("tags", "N/A")
                 if isinstance(raw_tags, str) and raw_tags.startswith("[") and raw_tags.endswith("]"):
