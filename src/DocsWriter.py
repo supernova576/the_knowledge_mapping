@@ -293,6 +293,30 @@ class DocsWriter:
         )
         learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
 
+    def _update_markdown_h2_section(self, content: str, section_name: str, section_value: str) -> str:
+        replacement_value = str(section_value).strip() or "N/A"
+        section_pattern = re.compile(
+            rf"(?ims)(^##\s+{re.escape(section_name)}\s*$\n)(.*?)(?=^##\s+|\Z)"
+        )
+        updated_content, match_count = section_pattern.subn(
+            lambda match: f"{match.group(1)}{replacement_value}\n\n",
+            content,
+            count=1,
+        )
+        if match_count == 0:
+            updated_content = f"## {section_name}\n{replacement_value}\n\n{content.lstrip()}"
+        return updated_content
+
+    def update_learning_file_note_name(self, learning_path: Path, note_name: str) -> None:
+        content = learning_path.read_text(encoding="utf-8")
+        updated_content = self._update_markdown_h2_section(content, "Note Name", note_name)
+        learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
+    def update_ai_feedback_file_note_name(self, feedback_path: Path, note_name: str) -> None:
+        content = feedback_path.read_text(encoding="utf-8")
+        updated_content = self._update_markdown_h2_section(content, "Note Name", note_name)
+        feedback_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
     def prepend_template_to_existing_note(
         self,
         target_path: Path,

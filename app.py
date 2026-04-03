@@ -527,6 +527,34 @@ def _normalize_md_filename(file_name: str) -> str:
     return sanitized
 
 
+def _docs_root_path_from_conf(conf: dict | None = None) -> Path:
+    loaded_conf = conf if isinstance(conf, dict) else _load_conf()
+    return Path(loaded_conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+
+
+def _docs_note_exists(note_name: str, conf: dict | None = None) -> bool:
+    normalized_doc = _normalize_md_filename(note_name)
+    if not normalized_doc:
+        return False
+
+    docs_dir = _docs_root_path_from_conf(conf)
+    target_path = (docs_dir / normalized_doc).resolve()
+    return docs_dir in target_path.parents and target_path.exists() and target_path.is_file()
+
+
+def _list_existing_doc_note_names(conf: dict | None = None) -> list[str]:
+    docs_dir = _docs_root_path_from_conf(conf)
+    if not docs_dir.exists() or not docs_dir.is_dir():
+        return []
+
+    note_names = {
+        doc_path.stem.strip()
+        for doc_path in docs_dir.rglob("*.md")
+        if doc_path.stem.strip()
+    }
+    return sorted(note_names, key=lambda value: value.casefold())
+
+
 
 
 def _normalize_tag_value(tag: str) -> str:
@@ -1152,6 +1180,7 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
         prepared["version_display"] = str(prepared.get("version", "N/A"))
         prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
         prepared["doc_preview_url"] = _ai_feedback_doc_preview_url(prepared)
+        prepared["title_icon"] = "✅" if prepared["doc_preview_url"] else "❓"
 
         file_name = str(prepared.get("file_name", "")).strip()
         if name_filter and name_filter not in file_name.casefold():
@@ -1270,6 +1299,10 @@ def _create_learning_for_doc(normalized_doc: str) -> dict:
 
 
 def _learning_status_icon(learning_row: dict) -> str:
+    source_note_name = str(learning_row.get("source_note_name", "")).strip()
+    if source_note_name and not _docs_note_exists(source_note_name):
+        return "❓"
+
     learning_path = str(learning_row.get("path_to_learning", "")).strip()
     if not learning_path:
         return "⚠️"
@@ -1298,6 +1331,8 @@ def _learning_doc_preview_url(learning_row: dict) -> str | None:
 def _doc_preview_url_from_note_name(note_name: str) -> str | None:
     normalized_doc = _normalize_md_filename(note_name)
     if not normalized_doc:
+        return None
+    if not _docs_note_exists(normalized_doc):
         return None
 
     return url_for("view_doc_by_path", relative_path=normalized_doc)
@@ -2398,6 +2433,7 @@ def ai_feedback_overview():
         selected_score=score_query,
         available_docs=available_docs,
         openrouter_credits_left=openrouter_credits_left,
+        remap_docs=_list_existing_doc_note_names(),
     )
 
 
@@ -2543,6 +2579,41 @@ def ai_feedback_delete(feedback_id: int):
         return render_template("500.html", error_message=str(exc)), 500
 
 
+@app.route("/ai_feedback/<int:feedback_id>/remap", methods=["POST"])
+def ai_feedback_remap(feedback_id: int):
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    selected_note_name = str(request.form.get("selected_note_name", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_note_name)
+    if not normalized_doc:
+        flash("Please select a valid markdown note name for remapping.", "warning")
+        return redirect(redirect_to)
+
+    database = db()
+    feedback_row = database.get_ai_feedback_by_id(feedback_id)
+    if not feedback_row:
+        flash("AI feedback entry not found.", "warning")
+        return redirect(redirect_to)
+
+    if not _docs_note_exists(normalized_doc):
+        flash("The selected note does not exist in the configured docs folder.", "warning")
+        return redirect(redirect_to)
+
+    feedback_path = Path(str(feedback_row.get("path_to_feedback", "")).strip()).resolve()
+    if not feedback_path.exists() or not feedback_path.is_file():
+        flash("AI feedback file not found for remapping.", "warning")
+        return redirect(redirect_to)
+
+    try:
+        DocsWriter().update_ai_feedback_file_note_name(feedback_path, Path(normalized_doc).stem.strip())
+        _set_rw_permissions_for_all_users(feedback_path)
+        _sync_ai_feedback_and_openrouter_credits(database)
+        flash("AI feedback was remapped successfully.", "success")
+    except Exception as exc:
+        logger.error("AI feedback remap failed\n%s", traceback.format_exc())
+        flash(f"Failed to remap AI feedback: {exc}", "danger")
+    return redirect(redirect_to)
+
+
 @app.route("/learning", methods=["GET"])
 def learning_overview():
     database = db()
@@ -2569,6 +2640,7 @@ def learning_overview():
         available_docs=available_docs,
         all_tags=database.get_all_tags(),
         openrouter_credits_left=openrouter_credits_left,
+        remap_docs=_list_existing_doc_note_names(),
     )
 
 
@@ -2621,6 +2693,40 @@ def learning_doc_action():
     except Exception as exc:
         flash(str(exc), "warning")
         return redirect(redirect_to)
+
+
+@app.route("/learning/<int:learning_id>/remap", methods=["POST"])
+def learning_remap(learning_id: int):
+    selected_note_name = str(request.form.get("selected_note_name", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_note_name)
+    if not normalized_doc:
+        flash("Please select a valid markdown note name for remapping.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    if not _docs_note_exists(normalized_doc):
+        flash("The selected note does not exist in the configured docs folder.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    if not learning_path.exists() or not learning_path.is_file():
+        flash("Learning file not found for remapping.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    try:
+        DocsWriter().update_learning_file_note_name(learning_path, Path(normalized_doc).stem.strip())
+        _set_rw_permissions_for_all_users(learning_path)
+        DocsParser().sync_learning_to_db()
+        flash("Learning was remapped successfully.", "success")
+    except Exception as exc:
+        logger.error("Learning remap failed\n%s", traceback.format_exc())
+        flash(f"Failed to remap learning: {exc}", "danger")
+    return redirect(url_for("learning_overview"))
 
 
 @app.route("/learning/<int:learning_id>", methods=["GET"])

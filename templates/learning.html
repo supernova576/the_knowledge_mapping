@@ -107,6 +107,17 @@
                         {% if row.doc_preview_url %}
                         <li><a class="dropdown-item" href="{{ row.doc_preview_url }}">View Documentation</a></li>
                         {% endif %}
+                        <li>
+                            <button
+                                type="button"
+                                class="dropdown-item learning-remap-trigger"
+                                data-learning-id="{{ row.id }}"
+                                data-learning-title="{{ row.file_name }}"
+                                data-current-note-name="{{ row.source_note_name }}"
+                            >
+                                Remap Learning
+                            </button>
+                        </li>
                         <li><form method="post" action="{{ url_for('learning_delete', learning_id=row.id) }}"><button class="dropdown-item text-danger">Delete</button></form></li>
                     </ul>
                 </div>
@@ -120,7 +131,67 @@
 
     {% include '_footer.html' %}
 </div>
+
+<div class="modal fade" id="learningRemapModal" tabindex="-1" aria-labelledby="learningRemapModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title fs-5" id="learningRemapModalLabel">Remap Learning</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="learning-remap-form" method="post">
+                <div class="modal-body">
+                    <p class="mb-3" id="learning-remap-message"></p>
+                    <label class="form-label" for="learning-remap-selected-note">New Note Name</label>
+                    <select id="learning-remap-selected-note" class="form-select" name="selected_note_name" required>
+                        <option value="" selected disabled>Select a markdown note</option>
+                        {% for note_name in remap_docs %}
+                        <option value="{{ note_name }}">{{ note_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="learning-remap-submit">Remap Learning</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script>
+    (function () {
+        const modalElement = document.getElementById("learningRemapModal");
+        const remapForm = document.getElementById("learning-remap-form");
+        const remapSubmit = document.getElementById("learning-remap-submit");
+        const remapMessage = document.getElementById("learning-remap-message");
+        const remapSelect = document.getElementById("learning-remap-selected-note");
+        if (!modalElement || !remapForm || !remapSubmit || !remapMessage || !remapSelect) {
+            return;
+        }
+
+        const remapModal = new bootstrap.Modal(modalElement);
+        document.querySelectorAll(".learning-remap-trigger").forEach(function (button) {
+            button.addEventListener("click", function () {
+                const learningId = button.dataset.learningId || "";
+                const learningTitle = button.dataset.learningTitle || "this learning";
+                const currentNoteName = button.dataset.currentNoteName || "";
+                remapForm.action = "/learning/" + encodeURIComponent(learningId) + "/remap";
+                remapMessage.textContent = "Select the new note mapping for " + learningTitle + ".";
+                remapSubmit.disabled = false;
+                remapSubmit.textContent = "Remap Learning";
+                remapSelect.value = currentNoteName;
+                remapModal.show();
+            });
+        });
+
+        remapForm.addEventListener("submit", function () {
+            remapSubmit.disabled = true;
+            remapSubmit.textContent = "Remapping...";
+        });
+    })();
+</script>
 {% include '_theme_toggle_script.html' %}
 </body>
 </html>
