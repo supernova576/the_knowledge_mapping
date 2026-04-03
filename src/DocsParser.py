@@ -41,6 +41,10 @@ class DocsParser:
             "enabled": True,
             "char": 6000,
         },
+        "ai_feedback": {
+            "enabled": True,
+            "min": 80,
+        },
     }
     PROGRESS_ICON_TO_STATE = {
         "![[not started.png]]": "Not Started",
@@ -180,6 +184,7 @@ class DocsParser:
         external_links_raw = config.get("external_links", {}) if isinstance(config.get("external_links", {}), dict) else {}
         tags_raw = config.get("tags", {}) if isinstance(config.get("tags", {}), dict) else {}
         video_links_raw = config.get("video_links", {}) if isinstance(config.get("video_links", {}), dict) else {}
+        ai_feedback_raw = config.get("ai_feedback", {}) if isinstance(config.get("ai_feedback", {}), dict) else {}
 
         return {
             "structure": {
@@ -207,6 +212,10 @@ class DocsParser:
             "video_links": {
                 "enabled": self.__coerce_bool(video_links_raw.get("enabled"), defaults["video_links"]["enabled"]),
                 "char": self.__coerce_int(video_links_raw.get("char"), defaults["video_links"]["char"], minimum=1),
+            },
+            "ai_feedback": {
+                "enabled": self.__coerce_bool(ai_feedback_raw.get("enabled"), defaults["ai_feedback"]["enabled"]),
+                "min": self.__coerce_int(ai_feedback_raw.get("min"), defaults["ai_feedback"]["min"], minimum=0),
             },
         }
     def __to_db_text(self, value: str | list[str] | dict[str, str]) -> str:
@@ -279,7 +288,7 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse tags\n%s", traceback.format_exc())
             adieu(1)
-    def __enumerate_compliance(self, doc_content: str) -> tuple[str, str]:
+    def __enumerate_compliance(self, doc_content: str, doc_title: str, database: db) -> tuple[str, str]:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
@@ -335,6 +344,22 @@ class DocsParser:
                     )
             else:
                 video_ok = True
+
+            ai_feedback_conf = compliance_conf["ai_feedback"]
+            ai_feedback_enabled = ai_feedback_conf["enabled"]
+            ai_feedback_min = ai_feedback_conf["min"]
+            ai_feedback_ok = True
+            if ai_feedback_enabled:
+                latest_feedback = database.get_latest_ai_feedback_for_file(doc_title)
+                if latest_feedback is not None:
+                    try:
+                        latest_score = float(latest_feedback.get("score"))
+                        ai_feedback_ok = latest_score >= ai_feedback_min
+                    except (TypeError, ValueError):
+                        ai_feedback_ok = False
+                    if not ai_feedback_ok:
+                        noncompliance_reasons.append("AI Feedback: Wert zu niedrig")
+
             is_compliant = (
                 "true"
                 if (
@@ -344,6 +369,7 @@ class DocsParser:
                     and external_links_ok
                     and tags_ok
                     and video_ok
+                    and ai_feedback_ok
                 )
                 else "false"
             )
@@ -399,14 +425,15 @@ class DocsParser:
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
+                doc_title = self.__parse_title_from_doc(doc_full_path)
                 is_under_construction = self.__is_under_construction(file_contents)
                 if is_under_construction:
                     is_compliant = "Not Determined"
                     noncompliance_reason = "N/A"
                 else:
-                    is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents)
+                    is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents, doc_title, db_object)
                 append_dict = {
-                    "title": self.__parse_title_from_doc(doc_full_path),
+                    "title": doc_title,
                     "created_at": self.__parse_created_at_from_doc(file_contents),
                     "changed_at": self.__parse_changed_at_from_doc(file_contents),
                     "links": self.__parse_links_from_doc(file_contents),

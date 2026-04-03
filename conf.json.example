@@ -35,6 +35,10 @@
         "video_links": {
             "enabled": true,
             "char": 6000
+        },
+        "ai_feedback": {
+            "enabled": true,
+            "min": 80
         }
     },
     "todo": {

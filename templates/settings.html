@@ -214,6 +214,25 @@
                         </div>
                     </div>
 
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h3 class="h5 mb-0">7) AI Feedback Score Rule</h3>
+                                <div class="form-check m-0">
+                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_ai_feedback_enabled"
+                                        name="compliance_ai_feedback_enabled" {% if settings.compliance_ai_feedback_enabled %}checked{% endif %}>
+                                    <label class="form-check-label" for="compliance_ai_feedback_enabled">Enable</label>
+                                </div>
+                            </div>
+                            <p class="text-body-secondary mb-2">
+                                Uses the latest AI feedback score of the note. If the score is below the threshold, the note is marked incompliant.
+                            </p>
+                            <label class="form-label" for="compliance_ai_feedback_min">Minimum score</label>
+                            <input type="number" class="form-control" id="compliance_ai_feedback_min" name="compliance_ai_feedback_min"
+                                min="0" step="1" required value="{{ settings.compliance_ai_feedback_min }}">
+                        </div>
+                    </div>
+
                     <div class="col-12 d-flex justify-content-end">
                         <button class="btn btn-primary" type="submit">Save Settings</button>
                     </div>

@@ -1734,6 +1734,7 @@ def settings_page():
     external_links_conf = compliance_conf.get("external_links", {}) if isinstance(compliance_conf.get("external_links", {}), dict) else {}
     tags_conf = compliance_conf.get("tags", {}) if isinstance(compliance_conf.get("tags", {}), dict) else {}
     video_links_conf = compliance_conf.get("video_links", {}) if isinstance(compliance_conf.get("video_links", {}), dict) else {}
+    ai_feedback_conf = compliance_conf.get("ai_feedback", {}) if isinstance(compliance_conf.get("ai_feedback", {}), dict) else {}
     provider_value = ", ".join(_parse_json_array(ai_conf.get("provider", [])))
     structure_strings = structure_conf.get("strings_to_check", compliance_defaults["structure"]["strings_to_check"])
     if not isinstance(structure_strings, list):
@@ -1770,6 +1771,12 @@ def settings_page():
         ),
         "compliance_video_links_char": str(
             video_links_conf.get("char", compliance_defaults["video_links"]["char"])
+        ).strip(),
+        "compliance_ai_feedback_enabled": bool(
+            ai_feedback_conf.get("enabled", compliance_defaults["ai_feedback"]["enabled"])
+        ),
+        "compliance_ai_feedback_min": str(
+            ai_feedback_conf.get("min", compliance_defaults["ai_feedback"]["min"])
         ).strip(),
     }
     media_support = _openrouter_media_support(conf)
@@ -1823,6 +1830,12 @@ def settings_save():
             "Compliance Video Links Character Threshold",
             minimum=1,
         )
+        compliance_ai_feedback_enabled = _parse_checkbox_bool(request.form.get("compliance_ai_feedback_enabled"))
+        compliance_ai_feedback_min = _sanitize_non_negative_int(
+            request.form.get("compliance_ai_feedback_min"),
+            "Compliance AI Feedback Minimum Score",
+            minimum=0,
+        )
     except ValueError as validation_error:
         flash(str(validation_error), "danger")
         return redirect(url_for("settings_page"))
@@ -1873,6 +1886,10 @@ def settings_save():
     compliance_conf["video_links"] = {
         "enabled": compliance_video_links_enabled,
         "char": compliance_video_links_char,
+    }
+    compliance_conf["ai_feedback"] = {
+        "enabled": compliance_ai_feedback_enabled,
+        "min": compliance_ai_feedback_min,
     }
 
     try:
