@@ -75,5 +75,11 @@
         "learning_path": "/the-knowledge/07_LEARNINGS",
         "learning_ai_prompt_path": "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md",
         "learning_template_path": "/the-knowledge/03_TEMPLATES/2 - New Learning.md"
+    },
+    "playbooks": {
+        "enabled": true,
+        "path": "/the-knowledge/08_PLAYBOOKS",
+        "max_depth": 30,
+        "dry_run": false
     }
 }
