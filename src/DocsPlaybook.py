@@ -30,6 +30,7 @@ class DocsPlaybook:
         "create_todo",
         "create_deadline",
         "inform_user",
+        "perform_note_sync",
     }
     SUPPORTED_FLOW_OPS = {"if_else", "switch_case"}
 
@@ -166,6 +167,10 @@ class DocsPlaybook:
                 operator = str(payload.get("operator", "")).strip().lower()
                 if operator not in self.SUPPORTED_FLOW_OPS:
                     raise PlaybookValidationError("Unsupported flow operator.")
+                next_edges = [edge for edge in outgoing if edge["branch"] == "next"]
+                if len(next_edges) > 1:
+                    raise PlaybookValidationError("Flow block may only have one next edge.")
+                next_steps = _walk(next_edges[0]["target"], depth + 1) if next_edges else []
                 if operator == "if_else":
                     true_edges = [edge for edge in outgoing if edge["branch"] == "true"]
                     false_edges = [edge for edge in outgoing if edge["branch"] == "false"]
@@ -180,6 +185,7 @@ class DocsPlaybook:
                             "input": payload.get("input", {}),
                             "true_branch": _walk(true_edges[0]["target"], depth + 1),
                             "false_branch": _walk(false_edges[0]["target"], depth + 1),
+                            "next_steps": next_steps,
                         }
                     ]
 
@@ -229,6 +235,7 @@ class DocsPlaybook:
                         "input": payload.get("input", {}),
                         "cases": switch_cases,
                         "default_branch": _walk(default_edges[0]["target"], depth + 1),
+                        "next_steps": next_steps,
                     }
                 ]
 
@@ -569,7 +576,8 @@ class DocsPlaybook:
                     })
                     success = False
                     continue
-                success = success and branch_ok
+                continuation_ok = self._execute_steps(step.get("next_steps", []), context, logs)
+                success = success and branch_ok and continuation_ok
             else:
                 logs.append({
                     "step_id": step.get("id"),

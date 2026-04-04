@@ -1457,6 +1457,13 @@ def _append_deadline(name: str, date_label: str, time_label: str, status: str) -
     writer.write_deadlines_table(current_deadlines)
 
 
+def _perform_full_scan() -> None:
+    logger.info("UI requested full scan")
+    parser = DocsParser()
+    parser.parse_and_add_ALL_docs_to_db()
+    logger.info("UI full scan completed")
+
+
 def _playbook_action_handlers() -> dict:
     def _action_create_note(action_input: dict, _: dict) -> dict:
         note_name = str(action_input.get("note_name", "")).strip()
@@ -1573,6 +1580,11 @@ def _playbook_action_handlers() -> dict:
             raise ValueError("inform_user requires a message.")
         return {"status": "shown", "prompt_message": message}
 
+    def _action_perform_note_sync(_: dict, __: dict) -> dict:
+        logger.info("Playbook handler perform_note_sync called")
+        _perform_full_scan()
+        return {"status": "synced"}
+
     return {
         "create_note": _action_create_note,
         "update_note": _action_update_note,
@@ -1582,6 +1594,7 @@ def _playbook_action_handlers() -> dict:
         "create_todo": _action_create_todo,
         "create_deadline": _action_create_deadline,
         "inform_user": _action_inform_user,
+        "perform_note_sync": _action_perform_note_sync,
     }
 
 
@@ -2309,10 +2322,7 @@ def settings_save():
 @app.route("/scan", methods=["POST"])
 def scan_docs():
     try:
-        logger.info("UI requested full scan")
-        parser = DocsParser()
-        parser.parse_and_add_ALL_docs_to_db()
-        logger.info("UI full scan completed")
+        _perform_full_scan()
         flash("Scan completed successfully.", "success")
     except BaseException as exc:
         if isinstance(exc, SystemExit):

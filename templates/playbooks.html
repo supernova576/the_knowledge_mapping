@@ -20,6 +20,7 @@
             <button class="btn btn-primary" id="savePlaybookBtn">Save</button>
         </div>
     </div>
+    <div id="runLog" class="alert alert-info d-none" role="status" aria-live="polite"></div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -45,7 +46,7 @@
                         </div>
                     </div>
                     <div id="actionPalette" class="d-grid gap-2">
-                        {% for action in ['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user'] %}
+                        {% for action in ['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user','perform_note_sync'] %}
                         <button type="button" class="btn text-start km-playbook-palette-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ action }}</button>
                         {% endfor %}
                     </div>
@@ -73,7 +74,6 @@
                         <button class="btn btn-outline-danger btn-sm" id="deletePlaybookBtn">Delete</button>
                     </div>
                     <div class="mt-3">
-                        <div id="runLog" class="small text-muted mb-2" role="status" aria-live="polite"></div>
                         <div class="km-playbook-output card d-none" id="runOutputPanel">
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -185,7 +185,7 @@
     let draggedPaletteItem = {kind:'', value:''};
     let pendingPaletteAction = '';
 
-    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user']);
+    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user','perform_note_sync']);
     const allowedFlows = new Set(['if_else', 'switch_case']);
     const actionInputSchemas = {
         create_note: [
@@ -219,6 +219,7 @@
         inform_user: [
             {key:'message', label:'Message text', type:'textarea', placeholder:'Your note was flagged for follow-up.', help:'Stored directly in the playbook. This message is shown to the user in an HTML prompt.', required:false, context_key:'-', data_type:'string', manual:true},
         ],
+        perform_note_sync: [],
     };
     const actionOutputSchemas = {
         create_note: [{label:'Created note name', context_key:'note_name', data_type:'string'}],
@@ -288,8 +289,12 @@
         return branch;
     }
 
-    function updateStatus(message='') {
-        runLog.textContent = message;
+    function updateStatus(message='', variant='info') {
+        const text = String(message || '').trim();
+        runLog.textContent = text;
+        runLog.classList.toggle('d-none', !text);
+        runLog.classList.remove('alert-info', 'alert-success', 'alert-danger', 'alert-warning');
+        runLog.classList.add(`alert-${text ? variant : 'info'}`);
     }
 
     function refreshPaletteSelection() {
@@ -955,16 +960,17 @@
         }
 
         const id = uid();
-        const ordered = [...current.layout.blocks]
-            .filter((block) => block.type !== 'flow')
-            .sort((a, b) => (a.y - b.y) || (a.x - b.x));
-        const previous = ordered[ordered.length - 1];
+        const insertionY = typeof y === 'number' ? Math.round(y) : null;
+        const insertion = resolveLinearInsertionPoint(insertionY);
+        const previous = insertion.previous;
+        const next = insertion.next;
         const nextX = typeof x === 'number' ? Math.round(x) : 120;
-        const nextY = typeof y === 'number' ? Math.round(y) : ((previous?.y || 40) + 90);
-        current.layout.blocks.push({id, type:'action', x:nextX, y:nextY, payload:{action, label:action, input:{}}});
-        if (previous) {
-            current.layout.edges.push({source: previous.id, target: id, branch:'next'});
-        }
+        const nextY = typeof y === 'number'
+            ? Math.round(y)
+            : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || 40) + 90));
+        const newBlock = {id, type:'action', x:nextX, y:nextY, payload:{action, label:action, input:{}}};
+        current.layout.blocks.push(newBlock);
+        insertBlockIntoLinearFlow(newBlock, insertionY);
         renderCanvas();
         updateStatus(`${action} added to the playbook.`);
     }
@@ -978,22 +984,22 @@
             updateStatus('Invalid flow dropped.');
             return;
         }
+        const insertionY = typeof y === 'number' ? Math.round(y) : null;
+        const insertion = resolveLinearInsertionPoint(insertionY);
+        const previous = insertion.previous;
+        const next = insertion.next;
         const base = typeof y === 'number' ? {x: Math.round(x || 120), y: Math.round(y)} : getLastBlockPosition();
         const newId = uid();
         const flowX = (typeof x === 'number' ? Math.round(x) : 120);
-        const flowY = base.y + (typeof y === 'number' ? 0 : 90);
+        const flowY = typeof y === 'number'
+            ? Math.round(y)
+            : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || base.y || 40) + 90));
         const flowPayload = operator === 'switch_case'
             ? {operator, label:'switch_case', input:{value_to_compare:'', source:'context'}, cases:[{key:caseUid(), label:'Case 1', value:'value_1'}]}
             : {operator, label:operator, input:{value_to_compare:'', equals:'true', source:'literal'}};
-        current.layout.blocks.push({id:newId, type:'flow', x:flowX, y:flowY, payload:flowPayload});
-        const previousBlock = [...current.layout.blocks]
-            .filter((block) => block.id !== newId)
-            .sort((a, b) => (a.y - b.y) || (a.x - b.x))
-            .reverse()
-            .find((block) => block.type === 'action' || block.type === 'trigger' || block.type === 'flow');
-        if (previousBlock) {
-            current.layout.edges.push({source: previousBlock.id, target: newId, branch:'next'});
-        }
+        const newFlowBlock = {id:newId, type:'flow', x:flowX, y:flowY, payload:flowPayload};
+        current.layout.blocks.push(newFlowBlock);
+        insertBlockIntoLinearFlow(newFlowBlock, insertionY);
         const branchStartY = (typeof y === 'number' ? Math.round(y) : base.y + 90);
         if (operator === 'switch_case') {
             const caseBranchId = uid();
@@ -1055,6 +1061,66 @@
 
     function findIncomingEdge(blockId) {
         return (current?.layout?.edges || []).find((edge) => edge.target === blockId) || null;
+    }
+
+    function nextEdgeForBlock(blockId) {
+        return (current?.layout?.edges || []).find((edge) => edge.source === blockId && edge.branch === 'next') || null;
+    }
+
+    function buildTopLevelNextChain() {
+        if (!current) return [];
+        const trigger = (current.layout.blocks || []).find((block) => block.type === 'trigger');
+        if (!trigger) return [];
+        const chain = [trigger];
+        let cursor = trigger.id;
+        let safety = 0;
+        while (safety < 200) {
+            safety += 1;
+            const nextEdge = nextEdgeForBlock(cursor);
+            if (!nextEdge) break;
+            const nextBlock = (current.layout.blocks || []).find((block) => block.id === nextEdge.target);
+            if (!nextBlock || chain.some((block) => block.id === nextBlock.id)) break;
+            chain.push(nextBlock);
+            cursor = nextBlock.id;
+        }
+        return chain;
+    }
+
+    function resolveLinearInsertionPoint(requestedY=null) {
+        const chain = buildTopLevelNextChain();
+        if (!chain.length) return {previous:null, next:null};
+        const chainAfterTrigger = chain.slice(1);
+        if (!chainAfterTrigger.length) return {previous:chain[0], next:null};
+        if (typeof requestedY === 'number') {
+            const target = chainAfterTrigger.find((block) => (Number(block.y) || 0) >= requestedY);
+            if (target) {
+                const incoming = findIncomingEdge(target.id);
+                const previous = incoming ? (current.layout.blocks || []).find((block) => block.id === incoming.source) : chain[0];
+                return {previous: previous || chain[0], next: target};
+            }
+        }
+        return {previous: chain[chain.length - 1], next:null};
+    }
+
+    function insertBlockIntoLinearFlow(newBlock, requestedY=null) {
+        const {previous, next} = resolveLinearInsertionPoint(requestedY);
+        if (!previous) return;
+        const previousNext = nextEdgeForBlock(previous.id);
+        if (next && previousNext && previousNext.target === next.id) {
+            previousNext.target = newBlock.id;
+            current.layout.edges.push({source:newBlock.id, target:next.id, branch:'next'});
+            return;
+        }
+        if (previousNext && !next) {
+            const oldTarget = previousNext.target;
+            previousNext.target = newBlock.id;
+            current.layout.edges.push({source:newBlock.id, target:oldTarget, branch:'next'});
+            return;
+        }
+        current.layout.edges.push({source:previous.id, target:newBlock.id, branch:'next'});
+        if (next) {
+            current.layout.edges.push({source:newBlock.id, target:next.id, branch:'next'});
+        }
     }
 
     function branchIndentForBlock(blockId, cache=new Map()) {
@@ -1461,9 +1527,17 @@
 
     document.getElementById('savePlaybookBtn').addEventListener('click', async () => {
         if (!current) return;
-        const response = await fetch('/api/playbooks', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(serializePayload())});
-        const payload = await response.json();
-        updateStatus(payload.ok ? `Saved ${payload.playbook?.name || current.name}.` : (payload.error || 'Unable to save playbook.'));
+        try {
+            const response = await fetch('/api/playbooks', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(serializePayload())});
+            const payload = await response.json();
+            const ok = Boolean(payload.ok);
+            updateStatus(
+                ok ? `Saved ${payload.playbook?.name || current.name}.` : (payload.error || 'Unable to save playbook.'),
+                ok ? 'success' : 'danger'
+            );
+        } catch (error) {
+            updateStatus('Unable to save playbook.', 'danger');
+        }
         await fetchPlaybooks();
     });
 
