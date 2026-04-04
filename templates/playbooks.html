@@ -16,6 +16,7 @@
         <h1 class="h3 mb-0">Playbooks</h1>
         <div class="d-flex gap-2">
             <button class="btn btn-outline-light" id="newPlaybookBtn">New</button>
+            <button class="btn btn-outline-info" id="editPlaybookPropertiesBtn" disabled>Properties</button>
             <button class="btn btn-outline-success" id="runPlaybookTopBtn">Run</button>
             <button class="btn btn-primary" id="savePlaybookBtn">Save</button>
         </div>
@@ -37,7 +38,7 @@
             <div class="card shadow-sm km-playbook-shell h-100">
                 <div class="card-body">
                     <input id="playbookSearch" class="form-control mb-2" placeholder="Search..." />
-                    <div id="playbookList" class="list-group small mb-3"></div>
+                    <div id="playbookList" class="km-playbook-list small mb-3"></div>
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h2 class="h6 text-uppercase mb-0">Palette</h2>
                         <div class="btn-group btn-group-sm" role="group" aria-label="Palette Tabs">
@@ -159,6 +160,7 @@
     const runOutputBadge = document.getElementById('runOutputBadge');
     const runOutputEntries = document.getElementById('runOutputEntries');
     const searchEl = document.getElementById('playbookSearch');
+    const editPropertiesButton = document.getElementById('editPlaybookPropertiesBtn');
     const actionPalette = document.getElementById('actionPalette');
     const flowPalette = document.getElementById('flowPalette');
     const paletteActionsTab = document.getElementById('paletteActionsTab');
@@ -181,6 +183,8 @@
     const promptModal = new bootstrap.Modal(promptModalElement);
     const runModal = new bootstrap.Modal(runModalElement);
     let current = null;
+    let currentPersistedName = null;
+    let listedPlaybooks = [];
     let activeEditor = null;
     let draggedPaletteItem = {kind:'', value:''};
     let pendingPaletteAction = '';
@@ -250,6 +254,17 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function formatDateLabel(value) {
+        if (!value) return 'Unknown update time';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return 'Unknown update time';
+        return parsed.toLocaleString();
+    }
+
+    function refreshPlaybookControlState() {
+        editPropertiesButton.disabled = !current;
     }
 
     function getNestedValue(source, key) {
@@ -1443,12 +1458,21 @@
         const response = await fetch('/api/playbooks');
         const data = await response.json();
         const query = (searchEl.value || '').toLowerCase();
+        listedPlaybooks = (data.playbooks || []).slice();
         listElement.innerHTML = '';
-        (data.playbooks || []).filter(item => item.name.toLowerCase().includes(query)).forEach((item) => {
-            const btn = document.createElement('button');
-            btn.className = 'list-group-item list-group-item-action';
-            btn.textContent = item.name;
-            btn.onclick = async () => {
+        listedPlaybooks.filter((item) => item.name.toLowerCase().includes(query)).forEach((item) => {
+            const entry = document.createElement('button');
+            const isSelected = current && item.name === current.name;
+            entry.className = `km-playbook-list-item ${isSelected ? 'is-selected' : ''}`;
+            entry.type = 'button';
+            entry.innerHTML = `
+                <div class="km-playbook-list-row">
+                    <div class="km-playbook-list-name">${escapeHtml(item.name)}</div>
+                </div>
+                <div class="km-playbook-list-description">${escapeHtml(item.config?.description || 'No description yet.')}</div>
+                <div class="km-playbook-list-meta">Updated ${escapeHtml(formatDateLabel(item.modified_at))}</div>
+            `;
+            entry.onclick = async () => {
                 const detailResponse = await fetch(`/api/playbooks/${encodeURIComponent(item.name)}`);
                 const detail = await detailResponse.json();
                 current = {
@@ -1456,12 +1480,18 @@
                     description: detail.playbook.config.description,
                     layout: detail.playbook.config.layout,
                 };
+                currentPersistedName = detail.playbook.name;
+                refreshPlaybookControlState();
                 renderCanvas();
                 clearRunOutput();
                 updateStatus(`Loaded ${detail.playbook.name}.`);
+                await fetchPlaybooks();
             };
-            listElement.appendChild(btn);
+            listElement.appendChild(entry);
         });
+        if (!listElement.childElementCount) {
+            listElement.innerHTML = '<div class="text-muted small py-2 px-1">No playbooks match your search.</div>';
+        }
     }
 
     editorForm.addEventListener('submit', (event) => {
@@ -1492,9 +1522,9 @@
         openEditor({
             title: 'Create Playbook',
             submitLabel: 'Save Playbook',
-            help: 'Start a new playbook by giving it a clear name and an optional description. The name becomes the saved filename after server-side sanitization.',
+            help: 'Start a new playbook by giving it a clear name and an optional description.',
             fields: [
-                {key:'name', label:'Playbook name', type:'text', placeholder:'Weekly Review Automation', help:'Displayed in the sidebar and used to derive the `.md` filename.'},
+                {key:'name', label:'Playbook name', type:'text', placeholder:'Weekly Review Automation', help:'Displayed in the sidebar and saved with a sanitized internal filename.'},
                 {key:'description', label:'Description', type:'textarea', placeholder:'Summarize what this playbook automates and when it should be used.', help:'Optional context to help identify the workflow later.'},
             ],
             getValue: (field) => field.key === 'name' ? 'New Playbook' : '',
@@ -1506,9 +1536,36 @@
                 }
                 current = defaultPlaybook(name);
                 current.description = (formData.get('description') || '').toString().trim();
+                currentPersistedName = null;
+                refreshPlaybookControlState();
                 renderCanvas();
                 clearRunOutput();
                 updateStatus(`Editing ${name}.`);
+            },
+        });
+    });
+
+    editPropertiesButton.addEventListener('click', () => {
+        if (!current) return;
+        openEditor({
+            title: 'Edit Playbook Properties',
+            submitLabel: 'Update Properties',
+            help: 'Update the playbook name and description. Renaming creates the new file and removes the old one when you save.',
+            fields: [
+                {key:'name', label:'Playbook name', type:'text', placeholder:'Weekly Review Automation', help:'Required. Saved with a sanitized internal filename.'},
+                {key:'description', label:'Description', type:'textarea', placeholder:'Summarize what this playbook automates and when it should be used.', help:'Optional context shown in the playbook list.'},
+            ],
+            getValue: (field) => current[field.key] || '',
+            onSubmit: (formData) => {
+                const updatedName = (formData.get('name') || '').toString().trim();
+                if (!updatedName) {
+                    updateStatus('Playbook name is required.');
+                    return false;
+                }
+                current.name = updatedName;
+                current.description = (formData.get('description') || '').toString().trim();
+                updateStatus(`Updated properties for ${updatedName}. Save to persist changes.`, 'success');
+                fetchPlaybooks();
             },
         });
     });
@@ -1527,10 +1584,19 @@
 
     document.getElementById('savePlaybookBtn').addEventListener('click', async () => {
         if (!current) return;
+        const previousPersistedName = currentPersistedName;
         try {
             const response = await fetch('/api/playbooks', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(serializePayload())});
             const payload = await response.json();
             const ok = Boolean(payload.ok);
+            if (ok && payload.playbook?.name) {
+                current.name = payload.playbook.name;
+                currentPersistedName = payload.playbook.name;
+                if (previousPersistedName && previousPersistedName !== currentPersistedName) {
+                    await fetch(`/api/playbooks/${encodeURIComponent(previousPersistedName)}`, {method:'DELETE'});
+                }
+                refreshPlaybookControlState();
+            }
             updateStatus(
                 ok ? `Saved ${payload.playbook?.name || current.name}.` : (payload.error || 'Unable to save playbook.'),
                 ok ? 'success' : 'danger'
@@ -1550,6 +1616,8 @@
         await fetch(`/api/playbooks/${encodeURIComponent(current.name)}`, {method:'DELETE'});
         const deletedName = current.name;
         current = null;
+        currentPersistedName = null;
+        refreshPlaybookControlState();
         renderCanvas();
         clearRunOutput();
         updateStatus(`${deletedName} was deleted.`);
@@ -1660,6 +1728,7 @@
     setPaletteTab('actions');
     refreshPaletteSelection();
     clearRunOutput();
+    refreshPlaybookControlState();
     fetchPlaybooks();
     renderCanvas();
 })();
