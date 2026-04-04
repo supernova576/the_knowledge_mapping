@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 from src.DatabaseConnector import db
 from src.DocsAIFeedback import DocsAIFeedback, OpenRouterImageNotSupportedError
 from src.DocsParser import DocsParser
+from src.DocsPlaybook import DocsPlaybook, PlaybookValidationError
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.DocsExporter import DocsExporter
@@ -742,6 +743,80 @@ def _render_doc_template(template_content: str) -> str:
             rendered += "\n"
         rendered += f"> Erstellt: {today}\n"
     return rendered
+
+
+def _apply_doc_template(
+    template_key: str,
+    file_name: str,
+    *,
+    reason: str = "",
+    create_history: bool = False,
+    auto_create_history_if_missing: bool = False,
+) -> dict:
+    normalized_template_key = str(template_key or "").strip().lower()
+    if normalized_template_key not in {"new", "update"}:
+        raise ValueError("Invalid template action request.")
+
+    normalized_file_name = _normalize_md_filename(file_name)
+    if not normalized_file_name:
+        raise ValueError("Invalid file name. Please use a valid markdown file name.")
+
+    template_options = _load_template_options()
+    template_path = template_options.get(normalized_template_key)
+    if template_path is None or not template_path.exists():
+        raise FileNotFoundError("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.")
+
+    conf = _load_conf()
+    docs_dir = _docs_root_path_from_conf(conf)
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    target_path = (docs_dir / normalized_file_name).resolve()
+
+    if docs_dir not in target_path.parents:
+        raise ValueError("Invalid note path.")
+
+    try:
+        template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError("Failed to read template file.") from exc
+
+    if normalized_template_key == "new":
+        if target_path.exists():
+            return {"status": "exists", "path": target_path, "file_name": normalized_file_name}
+
+        writer.create_note_from_template(target_path, template_content)
+        _set_rw_permissions_for_all_users(target_path)
+        return {"status": "created", "path": target_path, "file_name": normalized_file_name}
+
+    normalized_reason = _normalize_update_reason(reason)
+    if not normalized_reason:
+        raise ValueError("Reason is required for update template.")
+
+    if not target_path.exists():
+        raise FileNotFoundError("Note file not found in 02_DOCS. Please provide an existing file name.")
+
+    success, missing_sections = writer.prepend_template_to_existing_note(
+        target_path=target_path,
+        template_content=template_content,
+        reason=normalized_reason,
+        create_history=create_history,
+    )
+    if not success and auto_create_history_if_missing and "#### Page History" in missing_sections:
+        success, missing_sections = writer.prepend_template_to_existing_note(
+            target_path=target_path,
+            template_content=template_content,
+            reason=normalized_reason,
+            create_history=True,
+        )
+
+    if not success:
+        if "#### Page History" in missing_sections:
+            raise ValueError("'#### Page History' not found in the target note.")
+        raise RuntimeError("Failed to update note from template.")
+
+    _set_rw_permissions_for_all_users(target_path)
+    return {"status": "updated", "path": target_path, "file_name": normalized_file_name}
+
+
 def _set_rw_permissions_for_all_users(path: Path) -> None:
     if os.name == "nt":
         # On Windows, chmod mainly controls read-only flag.
@@ -1350,6 +1425,172 @@ def _load_learning_conf(conf: dict) -> dict:
     return conf.get("learning", {})
 
 
+def _load_playbooks_conf(conf_data: dict) -> dict:
+    defaults = {
+        "enabled": True,
+        "path": "/the-knowledge/08_PLAYBOOKS",
+        "max_depth": 30,
+        "dry_run": False,
+    }
+    raw = conf_data.get("playbooks", {}) if isinstance(conf_data.get("playbooks", {}), dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled", defaults["enabled"])),
+        "path": str(raw.get("path", defaults["path"])).strip() or defaults["path"],
+        "max_depth": max(1, int(raw.get("max_depth", defaults["max_depth"]))),
+        "dry_run": bool(raw.get("dry_run", defaults["dry_run"])),
+    }
+
+
+def _append_deadline(name: str, date_label: str, time_label: str, status: str) -> None:
+    parser = DocsParser()
+    current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    current_deadlines.append(
+        {
+            "name": str(name).strip(),
+            "description": "Created by Playbook",
+            "date": str(date_label).strip(),
+            "time": str(time_label).strip(),
+            "status": str(status).strip() if str(status).strip() in DEADLINE_STATUS_OPTIONS else "Not Started",
+        }
+    )
+    writer = DocsWriter(deadlines_file_path=_load_conf().get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+    writer.write_deadlines_table(current_deadlines)
+
+
+def _playbook_action_handlers() -> dict:
+    def _action_create_note(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler create_note called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("create_note requires note_name.")
+        result = _apply_doc_template(template_key="new", file_name=note_name)
+        return {
+            "status": result["status"],
+            "note_name": Path(result["file_name"]).stem,
+        }
+
+    def _action_update_note(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        reason = str(action_input.get("reason", "")).strip()
+        logger.info("Playbook handler update_note called: note_name=%s", note_name)
+        if not note_name or not reason:
+            raise ValueError("update_note requires note_name and reason.")
+        result = _apply_doc_template(
+            template_key="update",
+            file_name=note_name,
+            reason=reason,
+            auto_create_history_if_missing=True,
+        )
+        return {
+            "status": result["status"],
+            "note_name": Path(result["file_name"]).stem,
+        }
+
+    def _action_create_learning(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler create_learning called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("create_learning requires note_name.")
+        normalized_doc = _normalize_md_filename(note_name)
+        if not normalized_doc:
+            raise ValueError("create_learning requires a valid note_name.")
+        _create_learning_for_doc(normalized_doc)
+        return {"status": "created"}
+
+    def _action_generate_ai_questions(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler generate_ai_questions called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("generate_ai_questions requires note_name.")
+        normalized_doc = _normalize_md_filename(note_name)
+        if not normalized_doc:
+            raise ValueError("generate_ai_questions requires a valid note_name.")
+        generated = _generate_learning_questions_for_doc(normalized_doc)
+        return {
+            "status": "generated",
+            "learning_name": str(generated.get("learning_row", {}).get("file_name", "")).strip(),
+            "questions_count": int(generated.get("questions_count", 0)),
+        }
+
+    def _action_generate_ai_feedback(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler generate_ai_feedback called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("generate_ai_feedback requires note_name.")
+        feedback_payload = _create_ai_feedback_for_document(note_name, include_images=False)
+        return {"status": "created", "ai_feedback_score": feedback_payload.get("score")}
+
+    def _action_create_todo(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        todo_type = str(action_input.get("type", "Update")).strip() or "Update"
+        progress = str(action_input.get("progress", "Not Started")).strip()
+        priority = _normalize_todo_priority(str(action_input.get("priority", "Medium")))
+        logger.info(
+            "Playbook handler create_todo called: note_name=%s type=%s progress=%s priority=%s",
+            note_name,
+            todo_type,
+            progress,
+            priority,
+        )
+        if progress not in SW_STATUS_OPTIONS:
+            progress = "Not Started"
+        if not note_name:
+            raise ValueError("create_todo requires note_name.")
+        _append_todo(note=note_name, todo_type=todo_type, progress=progress, priority=priority)
+        return {"status": "created"}
+
+    def _action_create_deadline(action_input: dict, _: dict) -> dict:
+        name = str(action_input.get("deadline_name", "")).strip()
+        days_in_advance_raw = str(action_input.get("days_in_advance", "0")).strip() or "0"
+        hours_in_advance_raw = str(action_input.get("hours_in_advance", "0")).strip() or "0"
+        status = str(action_input.get("status", "Not Started")).strip()
+        logger.info(
+            "Playbook handler create_deadline called: deadline_name=%s days_in_advance=%s hours_in_advance=%s status=%s",
+            name,
+            days_in_advance_raw,
+            hours_in_advance_raw,
+            status,
+        )
+        if not name:
+            raise ValueError("create_deadline requires deadline_name.")
+        try:
+            days_in_advance = int(days_in_advance_raw)
+            hours_in_advance = int(hours_in_advance_raw)
+        except ValueError as exc:
+            raise ValueError("create_deadline requires numeric days_in_advance and hours_in_advance.") from exc
+        if days_in_advance < 0 or hours_in_advance < 0:
+            raise ValueError("create_deadline requires non-negative days_in_advance and hours_in_advance.")
+        due_at = now_in_zurich() + timedelta(days=days_in_advance, hours=hours_in_advance)
+        date_label = due_at.strftime("%d.%m.%Y")
+        time_label = due_at.strftime("%H:%M")
+        _append_deadline(name=name, date_label=date_label, time_label=time_label, status=status)
+        return {"status": "created"}
+
+    def _action_inform_user(action_input: dict, _: dict) -> dict:
+        message = str(action_input.get("message", "")).strip()
+        logger.info("Playbook handler inform_user called: message_length=%s", len(message))
+        if not message:
+            raise ValueError("inform_user requires a message.")
+        return {"status": "shown", "prompt_message": message}
+
+    return {
+        "create_note": _action_create_note,
+        "update_note": _action_update_note,
+        "create_learning": _action_create_learning,
+        "generate_ai_questions": _action_generate_ai_questions,
+        "generate_ai_feedback": _action_generate_ai_feedback,
+        "create_todo": _action_create_todo,
+        "create_deadline": _action_create_deadline,
+        "inform_user": _action_inform_user,
+    }
+
+
+def _playbook_service() -> DocsPlaybook:
+    conf = _load_conf()
+    conf["playbooks"] = _load_playbooks_conf(conf)
+    return DocsPlaybook(conf=conf, action_handlers=_playbook_action_handlers())
+
+
 def _doc_addon_flag_enabled(value: object) -> bool:
     return str(value or "").strip().casefold() == "true"
 
@@ -1430,6 +1671,48 @@ def _create_learning_for_doc(normalized_doc: str) -> dict:
         raise RuntimeError("Learning file was created but could not be loaded from the database.")
 
     return learning_row
+
+
+def _generate_learning_questions_for_doc(normalized_doc: str) -> dict:
+    conf = _load_conf()
+    database = db()
+
+    learning_row = _find_learning_for_doc(database, normalized_doc)
+    if not learning_row:
+        learning_row = _create_learning_for_doc(normalized_doc)
+
+    learning_conf = _load_learning_conf(conf)
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    source_note_name = str(learning_row.get("source_note_name", "")).strip() or Path(normalized_doc).stem.strip()
+    source_doc_path = (docs_dir / _normalize_md_filename(source_note_name)).resolve()
+    if docs_dir not in source_doc_path.parents or not source_doc_path.exists():
+        raise FileNotFoundError(f"Source note not found: {source_note_name}")
+
+    prompt_path = Path(learning_conf.get("learning_ai_prompt_path", "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md")).resolve()
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    ai_service = DocsAIFeedback(conf)
+    generated = ai_service.generate_learning_questions(
+        note_name=source_note_name,
+        note_content=source_doc_path.read_text(encoding="utf-8"),
+        prompt_content=prompt_content,
+    )
+    questions = _sanitize_learning_questions(generated.get("questions", []))
+    if not questions:
+        raise ValueError(
+            "Question generation returned no valid questions. Please review the prompt/model output and try again."
+        )
+    answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
+    DocsWriter().update_learning_file_questions_answers(
+        learning_path=Path(learning_row["path_to_learning"]),
+        last_modified_date=_today_dd_mm_yyyy(),
+        questions_payload={"questions": questions},
+        answers_payload={"answers": answers},
+    )
+    _sync_openrouter_credits_only(database)
+    return {
+        "learning_row": learning_row,
+        "questions_count": len(questions),
+    }
 
 
 def _learning_status_icon(learning_row: dict) -> str:
@@ -1584,6 +1867,10 @@ def index():
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
         key=lambda value: value["title"].casefold(),
     )
+    try:
+        playbooks = _playbook_service().list_playbooks()
+    except Exception:
+        playbooks = []
 
     return render_template(
         "index.html",
@@ -1603,6 +1890,7 @@ def index():
         total_progress_color_class=index_progress["color_class"],
         total_progress_color=index_progress["color"],
         selectable_docs=selectable_docs,
+        playbooks=playbooks,
     )
 
 
@@ -1627,6 +1915,87 @@ def version_control_overview():
         synced_at_alert=_sync_banner_state(synced_at),
         status_error=error_message,
     )
+
+
+@app.route("/playbooks", methods=["GET"])
+def playbooks_page():
+    service = _playbook_service()
+    if not service.enabled:
+        flash("Playbooks are disabled in configuration.", "warning")
+    playbooks = service.list_playbooks() if service.enabled else []
+    return render_template("playbooks.html", playbooks=playbooks)
+
+
+@app.route("/api/playbooks", methods=["GET"])
+def api_list_playbooks():
+    service = _playbook_service()
+    return jsonify({"ok": True, "playbooks": service.list_playbooks()})
+
+
+@app.route("/api/playbooks/<name>", methods=["GET"])
+def api_get_playbook(name: str):
+    try:
+        item = _playbook_service().get_playbook(name)
+        return jsonify({"ok": True, "playbook": item})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "Playbook not found."}), 404
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks/validate", methods=["POST"])
+def api_validate_playbook():
+    payload = request.get_json(silent=True) or {}
+    try:
+        validated = _playbook_service().validate_schema(payload)
+        return jsonify({"ok": True, "validated": validated})
+    except PlaybookValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks", methods=["POST"])
+def api_save_playbook():
+    payload = request.get_json(silent=True) or {}
+    try:
+        saved = _playbook_service().save_playbook(payload)
+        return jsonify({"ok": True, "playbook": saved})
+    except PlaybookValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/playbooks/<name>", methods=["DELETE"])
+def api_delete_playbook(name: str):
+    try:
+        _playbook_service().delete_playbook(name)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks/<name>/execute", methods=["POST"])
+def api_execute_playbook(name: str):
+    payload = request.get_json(silent=True) or {}
+    context = payload.get("context", {}) if isinstance(payload.get("context", {}), dict) else {}
+    try:
+        result = _playbook_service().execute_playbook(name, context=context)
+        return jsonify({"ok": result.success, "result": {"name": result.name, "success": result.success, "logs": result.logs}})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "result": {"name": name, "success": False, "logs": []}}), 400
+
+
+@app.route("/playbooks/<name>/run", methods=["POST"])
+def playbook_run_from_index(name: str):
+    note_name = str(request.form.get("note_name", "")).strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "index")
+    try:
+        result = _playbook_service().execute_playbook(name, context={"note_name": note_name})
+        category = "success" if result.success else "warning"
+        flash(f"Playbook '{name}' executed. {len(result.logs)} step log(s) generated.", category)
+    except Exception as exc:
+        flash(f"Failed to execute playbook: {exc}", "danger")
+    return redirect(redirect_to)
 
 
 @app.route("/version_control/sync", methods=["POST"])
@@ -2294,109 +2663,77 @@ def create_doc_from_todo_template():
     if from_index and selected_doc:
         file_name = selected_doc
 
-    if template_key not in {"new", "update"}:
-        flash("Invalid template action request.", "warning")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    normalized_file_name = _normalize_md_filename(file_name)
-    if not normalized_file_name:
-        flash("Invalid file name. Please use a valid markdown file name.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    template_options = _load_template_options()
-    template_path = template_options.get(template_key)
-    if template_path is None or not template_path.exists():
-        flash("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    conf = _load_conf()
-    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
-    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-    target_path = docs_dir / normalized_file_name
+    redirect_target = url_for("index") if from_index else url_for("todo_overview")
 
     try:
-        template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
-    except OSError:
-        flash("Failed to read template file.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
+        result = _apply_doc_template(
+            template_key=template_key,
+            file_name=file_name,
+            reason=reason,
+            create_history=create_history,
+            auto_create_history_if_missing=from_index,
+        )
+    except ValueError as exc:
+        if template_key == "update" and str(exc) == "'#### Page History' not found in the target note.":
+            normalized_file_name = _normalize_md_filename(file_name)
+            flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
+            return redirect(
+                url_for(
+                    "todo_overview",
+                    missing_history="1",
+                    todo_id=todo_id,
+                    template_name=template_key,
+                    file_name=normalized_file_name,
+                    reason=reason,
+                )
+            )
+        flash(str(exc), "warning" if "Invalid template action request" in str(exc) or "Reason is required" in str(exc) else "danger")
+        return redirect(redirect_target)
+    except FileNotFoundError as exc:
+        flash(str(exc), "danger")
+        return redirect(redirect_target)
+    except RuntimeError as exc:
+        flash(str(exc), "danger")
+        return redirect(redirect_target)
+    except BaseException:
+        flash("Failed to create note from template." if template_key == "new" else "Failed to update note from template.", "danger")
+        return redirect(redirect_target)
+
+    normalized_file_name = result["file_name"]
+    target_path = result["path"]
 
     if template_key == "new":
-        if target_path.exists():
+        if result["status"] == "exists":
             flash("A note with this file name already exists. Please choose another file name.", "danger")
-            return redirect(url_for("index") if from_index else url_for("todo_overview"))
+            return redirect(redirect_target)
 
-        try:
-            writer.create_note_from_template(target_path, template_content)
-            _set_rw_permissions_for_all_users(target_path)
-            if from_index:
-                _append_todo(
-                    note=Path(normalized_file_name).stem,
-                    todo_type="New",
-                    progress="In Progress",
-                    priority=priority,
-                )
-                flash("New note created and todo added successfully.", "success")
-                return redirect(url_for("index"))
-
-            _set_todo_in_progress(todo_id, normalized_file_name)
-            flash("New note created from template successfully.", "success")
-        except BaseException:
-            flash("Failed to create note from template.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    if not reason:
-        flash("Reason is required for update template.", "warning")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    if not target_path.exists():
-        flash("Note file not found in 02_DOCS. Please provide an existing file name.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    success, missing_sections = writer.prepend_template_to_existing_note(
-        target_path=target_path,
-        template_content=template_content,
-        reason=reason,
-        create_history=create_history,
-    )
-    if not success and from_index and "#### Page History" in missing_sections:
-        success, missing_sections = writer.prepend_template_to_existing_note(
-            target_path=target_path,
-            template_content=template_content,
-            reason=reason,
-            create_history=True,
-        )
-
-    if not success and "#### Page History" in missing_sections:
-        flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
-        return redirect(
-            url_for(
-                "todo_overview",
-                missing_history="1",
-                todo_id=todo_id,
-                template_name=template_key,
-                file_name=normalized_file_name,
-                reason=reason,
-            )
-        )
-
-    try:
-        _set_rw_permissions_for_all_users(target_path)
         if from_index:
             _append_todo(
-                note=f"{Path(normalized_file_name).stem} ({reason})",
-                todo_type="Update",
+                note=Path(normalized_file_name).stem,
+                todo_type="New",
                 progress="In Progress",
                 priority=priority,
             )
-            flash("Update note request created and todo added.", "success")
+            flash("New note created and todo added successfully.", "success")
             return redirect(url_for("index"))
 
         _set_todo_in_progress(todo_id, normalized_file_name)
-        flash("Note updated from template successfully.", "success")
-    except BaseException:
-        flash("Failed to update note from template.", "danger")
+        flash("New note created from template successfully.", "success")
+        return redirect(redirect_target)
 
-    return redirect(url_for("index") if from_index else url_for("todo_overview"))
+    if from_index:
+        _append_todo(
+            note=f"{Path(normalized_file_name).stem} ({reason})",
+            todo_type="Update",
+            progress="In Progress",
+            priority=priority,
+        )
+        flash("Update note request created and todo added.", "success")
+        return redirect(url_for("index"))
+
+    _set_todo_in_progress(todo_id, normalized_file_name)
+    flash("Note updated from template successfully.", "success")
+    return redirect(redirect_target)
 
 
 
@@ -3106,34 +3443,8 @@ def learning_generate_questions(learning_id: int):
         flash("Learning entry not found.", "warning")
         return redirect(url_for("learning_overview"))
     try:
-        conf = _load_conf()
-        learning_conf = _load_learning_conf(conf)
-        docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
         source_note_name = str(learning_row.get("source_note_name", "")).strip()
-        source_doc_path = (docs_dir / _normalize_md_filename(source_note_name)).resolve()
-        if docs_dir not in source_doc_path.parents or not source_doc_path.exists():
-            raise FileNotFoundError(f"Source note not found: {source_note_name}")
-        prompt_path = Path(learning_conf.get("learning_ai_prompt_path", "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md")).resolve()
-        prompt_content = prompt_path.read_text(encoding="utf-8")
-        ai_service = DocsAIFeedback(conf)
-        generated = ai_service.generate_learning_questions(
-            note_name=source_note_name,
-            note_content=source_doc_path.read_text(encoding="utf-8"),
-            prompt_content=prompt_content,
-        )
-        questions = _sanitize_learning_questions(generated.get("questions", []))
-        if not questions:
-            raise ValueError(
-                "Question generation returned no valid questions. Please review the prompt/model output and try again."
-            )
-        answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
-        DocsWriter().update_learning_file_questions_answers(
-            learning_path=Path(learning_row["path_to_learning"]),
-            last_modified_date=_today_dd_mm_yyyy(),
-            questions_payload={"questions": questions},
-            answers_payload={"answers": answers},
-        )
-        _sync_openrouter_credits_only(database)
+        _generate_learning_questions_for_doc(_normalize_md_filename(source_note_name))
         flash("Learning questions generated successfully.", "success")
     except Exception as exc:
         logger.error("Learning question generation failed\n%s", traceback.format_exc())
