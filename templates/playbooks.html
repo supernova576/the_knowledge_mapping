@@ -12,13 +12,25 @@
 <div class="container py-4">
     {% set active_page = 'playbooks' %}
     {% include '_navbar.html' %}
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <h1 class="h3 mb-0">Playbooks</h1>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-light" id="newPlaybookBtn">New</button>
-            <button class="btn btn-outline-info" id="editPlaybookPropertiesBtn" disabled>Properties</button>
-            <button class="btn btn-outline-success" id="runPlaybookTopBtn">Run</button>
-            <button class="btn btn-primary" id="savePlaybookBtn">Save</button>
+        <div class="km-playbook-toolbar" role="toolbar" aria-label="Playbook actions">
+            <button class="btn km-playbook-toolbar-btn km-playbook-toolbar-btn-neutral" id="newPlaybookBtn">
+                <span class="km-playbook-toolbar-keyword">New</span>
+                <span class="km-playbook-toolbar-label">Create playbook</span>
+            </button>
+            <button class="btn km-playbook-toolbar-btn km-playbook-toolbar-btn-info" id="editPlaybookPropertiesBtn" disabled>
+                <span class="km-playbook-toolbar-keyword">Properties</span>
+                <span class="km-playbook-toolbar-label">Edit metadata</span>
+            </button>
+            <button class="btn km-playbook-toolbar-btn km-playbook-toolbar-btn-success" id="runPlaybookTopBtn">
+                <span class="km-playbook-toolbar-keyword">Run</span>
+                <span class="km-playbook-toolbar-label">Trigger now</span>
+            </button>
+            <button class="btn km-playbook-toolbar-btn km-playbook-toolbar-btn-primary" id="savePlaybookBtn">
+                <span class="km-playbook-toolbar-keyword">Save</span>
+                <span class="km-playbook-toolbar-label">Persist changes</span>
+            </button>
         </div>
     </div>
     <div id="runLog" class="alert alert-info d-none" role="status" aria-live="polite"></div>
@@ -66,10 +78,12 @@
                         <button class="btn btn-outline-primary active">Actions</button>
                         <button class="btn km-playbook-flow-tab active" type="button">Flow</button>
                     </div>
-                    <div id="emptyState" class="text-center text-muted py-5">
-                        No playbook was selected.
+                    <div class="km-playbook-editor-scroll">
+                        <div id="emptyState" class="text-center text-muted py-5">
+                            No playbook was selected.
+                        </div>
+                        <div id="canvas" class="km-playbook-canvas d-none" aria-label="Playbook Canvas"></div>
                     </div>
-                    <div id="canvas" class="km-playbook-canvas d-none" aria-label="Playbook Canvas"></div>
                     <div class="mt-3 d-flex gap-2">
                         <button class="btn btn-outline-success btn-sm" id="runPlaybookBtn">Run</button>
                         <button class="btn btn-outline-danger btn-sm" id="deletePlaybookBtn">Delete</button>
