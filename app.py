@@ -1873,6 +1873,76 @@ def _playbook_service() -> DocsPlaybook:
     return DocsPlaybook(conf=conf, action_handlers=_playbook_action_handlers())
 
 
+def _determine_playbook_run_status(*, success: bool, paused: bool, logs: list[dict]) -> str:
+    if paused:
+        return "paused"
+    if success:
+        return "successful"
+    has_abort_log = any("abort" in str(item.get("reason", "")).casefold() for item in logs if isinstance(item, dict))
+    return "aborted" if has_abort_log else "failed"
+
+
+def _summarize_playbook_logs(logs: list[dict]) -> dict:
+    safe_logs = [item for item in logs if isinstance(item, dict)]
+    success_count = sum(1 for item in safe_logs if bool(item.get("success", False)))
+    failed_count = sum(1 for item in safe_logs if not bool(item.get("success", False)))
+    action_count = sum(1 for item in safe_logs if str(item.get("step_type", "")).strip().casefold() == "action")
+    flow_count = sum(1 for item in safe_logs if str(item.get("step_type", "")).strip().casefold() == "flow")
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "action_count": action_count,
+        "flow_count": flow_count,
+        "total_steps": len(safe_logs),
+    }
+
+
+def _safe_json_dumps(value: object, fallback: str) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _safe_json_loads(value: str, fallback: object) -> object:
+    try:
+        loaded = json.loads(str(value or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+    return loaded
+
+
+def _store_playbook_run(
+    *,
+    playbook_name: str,
+    context: dict,
+    result_payload: dict,
+    execution_time_ms: int,
+    was_resumed: bool,
+) -> int | None:
+    logs = result_payload.get("logs", []) if isinstance(result_payload.get("logs", []), list) else []
+    success = bool(result_payload.get("success", False))
+    paused = bool(result_payload.get("paused", False))
+    if paused:
+        return None
+    prompt_message = str(result_payload.get("prompt_message", "")).strip()
+    metadata = _summarize_playbook_logs(logs)
+    status = _determine_playbook_run_status(success=success, paused=paused, logs=logs)
+    return db().create_playbook_run(
+        {
+            "playbook_name": str(playbook_name or "").strip(),
+            "run_started_at": now_in_zurich_str(),
+            "execution_time_ms": max(0, int(execution_time_ms)),
+            "result_status": status,
+            "was_resumed": bool(was_resumed),
+            "run_context_json": _safe_json_dumps(context, "{}"),
+            "run_logs_json": _safe_json_dumps(logs, "[]"),
+            "prompt_message": prompt_message,
+            "metadata_json": _safe_json_dumps(metadata, "{}"),
+        }
+    )
+
+
 def _doc_addon_flag_enabled(value: object) -> bool:
     return str(value or "").strip().casefold() == "true"
 
@@ -2262,28 +2332,105 @@ def api_execute_playbook(name: str):
     context = payload.get("context", {}) if isinstance(payload.get("context", {}), dict) else {}
     resume = payload.get("resume", {}) if isinstance(payload.get("resume", {}), dict) else {}
     user_choice = str(payload.get("user_choice", "")).strip()
+    started_at = datetime.now()
+    final_context = context
     try:
         if resume:
+            final_context = resume.get("context", {}) if isinstance(resume.get("context", {}), dict) else {}
             result = _playbook_service().resume_playbook(name, resume=resume, user_choice=user_choice)
         else:
             result = _playbook_service().execute_playbook(name, context=context)
+        execution_time_ms = int((datetime.now() - started_at).total_seconds() * 1000)
+        result_payload = {
+            "name": result.name,
+            "success": result.success,
+            "paused": result.paused,
+            "prompt_message": result.prompt_message,
+            "resume": result.resume,
+            "logs": result.logs,
+        }
+        run_id = _store_playbook_run(
+            playbook_name=name,
+            context=final_context,
+            result_payload=result_payload,
+            execution_time_ms=execution_time_ms,
+            was_resumed=bool(resume),
+        )
         return jsonify({
             "ok": True,
-            "result": {
-                "name": result.name,
-                "success": result.success,
-                "paused": result.paused,
-                "prompt_message": result.prompt_message,
-                "resume": result.resume,
-                "logs": result.logs,
-            }
+            "result": result_payload,
+            "run_id": run_id,
         })
     except Exception as exc:
+        execution_time_ms = int((datetime.now() - started_at).total_seconds() * 1000)
+        failed_payload = {
+            "name": name,
+            "success": False,
+            "paused": False,
+            "prompt_message": "",
+            "resume": None,
+            "logs": [{"success": False, "step_type": "action", "step_name": "Execution", "reason": str(exc)}],
+        }
+        _store_playbook_run(
+            playbook_name=name,
+            context=final_context,
+            result_payload=failed_payload,
+            execution_time_ms=execution_time_ms,
+            was_resumed=bool(resume),
+        )
         return jsonify({
             "ok": False,
             "error": str(exc),
-            "result": {"name": name, "success": False, "paused": False, "prompt_message": "", "resume": None, "logs": []}
+            "result": failed_payload,
         }), 400
+
+
+@app.route("/api/playbooks/<name>/runs", methods=["GET"])
+def api_playbook_runs(name: str):
+    rows = db().get_playbook_runs(name)
+    runs = []
+    for row in rows:
+        metadata = _safe_json_loads(row.get("metadata_json", "{}"), {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        runs.append(
+            {
+                "id": row.get("id"),
+                "playbook_name": row.get("playbook_name"),
+                "run_started_at": row.get("run_started_at"),
+                "execution_time_ms": row.get("execution_time_ms", 0),
+                "result_status": row.get("result_status"),
+                "was_resumed": bool(row.get("was_resumed", 0)),
+                "metadata": metadata,
+            }
+        )
+    return jsonify({"ok": True, "runs": runs})
+
+
+@app.route("/playbooks/runs/<int:run_id>", methods=["GET"])
+def playbook_run_history_detail(run_id: int):
+    row = db().get_playbook_run_by_id(run_id)
+    if not row or str(row.get("result_status", "")).strip().casefold() == "paused":
+        flash("Playbook run was not found.", "warning")
+        return redirect(url_for("playbooks_page"))
+
+    metadata = _safe_json_loads(row.get("metadata_json", "{}"), {})
+    context_data = _safe_json_loads(row.get("run_context_json", "{}"), {})
+    logs_data = _safe_json_loads(row.get("run_logs_json", "[]"), [])
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if not isinstance(context_data, dict):
+        context_data = {}
+    if not isinstance(logs_data, list):
+        logs_data = []
+
+    return render_template(
+        "playbook_run_history_detail.html",
+        run=row,
+        metadata=metadata,
+        context_data=context_data,
+        logs_data=logs_data,
+    )
 
 
 @app.route("/playbooks/<name>/run", methods=["POST"])

@@ -56,16 +56,6 @@ class db:
                 )
                 """
             )
-            self._ensure_column(
-                table_name="docs",
-                column_name="has_learning",
-                column_definition="TEXT NOT NULL DEFAULT 'false'",
-            )
-            self._ensure_column(
-                table_name="docs",
-                column_name="has_ai_feedback",
-                column_definition="TEXT NOT NULL DEFAULT 'false'",
-            )
 
             self.cursor.execute(
                 """
@@ -137,19 +127,33 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playbook_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    playbook_name TEXT NOT NULL,
+                    run_started_at TEXT NOT NULL,
+                    execution_time_ms INTEGER NOT NULL DEFAULT 0 CHECK (execution_time_ms >= 0),
+                    result_status TEXT NOT NULL CHECK (result_status IN ('successful', 'failed', 'paused', 'aborted')),
+                    was_resumed INTEGER NOT NULL DEFAULT 0 CHECK (was_resumed IN (0, 1)),
+                    run_context_json TEXT NOT NULL DEFAULT '{}',
+                    run_logs_json TEXT NOT NULL DEFAULT '[]',
+                    prompt_message TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            self._execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_playbook_runs_name_started
+                ON playbook_runs (playbook_name, run_started_at DESC, id DESC)
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
             adieu(1)
-
-    def _ensure_column(self, table_name: str, column_name: str, column_definition: str) -> None:
-        existing_columns = {
-            str(row["name"]).strip().casefold()
-            for row in self._execute(f"PRAGMA table_info({table_name})").fetchall()
-        }
-        if column_name.casefold() in existing_columns:
-            return
-        self._execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
     def _execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         self.cursor.execute(query, params)
@@ -741,6 +745,62 @@ class db:
             return self._fetch_one_dict("SELECT * FROM learning_exam_attempts WHERE id = ?", (attempt_id,))
         except Exception:
             logger.error("sqlite_handler/get_learning_exam_attempt_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def create_playbook_run(self, row: dict) -> int:
+        try:
+            cursor = self._execute(
+                """
+                INSERT INTO playbook_runs (
+                    playbook_name,
+                    run_started_at,
+                    execution_time_ms,
+                    result_status,
+                    was_resumed,
+                    run_context_json,
+                    run_logs_json,
+                    prompt_message,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row.get("playbook_name", "")).strip(),
+                    str(row.get("run_started_at", "N/A")).strip(),
+                    int(row.get("execution_time_ms", 0) or 0),
+                    str(row.get("result_status", "failed")).strip(),
+                    int(1 if bool(row.get("was_resumed", False)) else 0),
+                    str(row.get("run_context_json", "{}")).strip(),
+                    str(row.get("run_logs_json", "[]")).strip(),
+                    str(row.get("prompt_message", "")).strip(),
+                    str(row.get("metadata_json", "{}")).strip(),
+                ),
+            )
+            self._commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            logger.error("sqlite_handler/create_playbook_run failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_playbook_runs(self, playbook_name: str) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM playbook_runs
+                WHERE lower(playbook_name) = lower(?)
+                  AND lower(result_status) <> 'paused'
+                ORDER BY run_started_at DESC, id DESC
+                """,
+                (str(playbook_name or "").strip(),),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_playbook_runs failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_playbook_run_by_id(self, run_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM playbook_runs WHERE id = ?", (run_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_playbook_run_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:
