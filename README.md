@@ -73,13 +73,11 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
 
 ## Features to implement
-- Add PRIV Menu
-  - Schulungen
-    - create from Template
-    - Mapping of a newly created tag to selected files
-  - Projects
-    - create from Template
-    - Status and todos
-    - Möglichkeit "Canvas" zu erstellen (Mindmap)
-    - Mapping of project specific tag to docs
+- Playbooks
+  - Flow
+    - abort (input: Failed, Stopped | output: -)
+- Learning Module
+  - Redesign Layout
+- Advanced Nav dropdown
+  - Redesign Layout (so that it is more clear for user)
     

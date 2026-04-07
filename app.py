@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 
 
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+TODO_PROGRESS_OPTIONS = ["Not Started", "In Progress", "Done"]
 TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
 TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 DEADLINE_STATUS_OPTIONS = ["Not Started", "In Progress", "Done"]
@@ -65,6 +66,17 @@ def _normalize_todo_priority(value: str | None) -> str:
     if normalized not in {"low", "medium", "high"}:
         return "Medium"
     return normalized.capitalize()
+
+
+def _normalize_todo_progress(value: str | None, *, allow_empty: bool = False) -> str:
+    normalized = str(value or "").strip()
+    if allow_empty and not normalized:
+        return ""
+    if normalized not in TODO_PROGRESS_OPTIONS:
+        raise ValueError(
+            f"Todo progress must be one of: {', '.join(TODO_PROGRESS_OPTIONS)}."
+        )
+    return normalized
 
 
 def _parse_todo_last_update(value: str | None, reference_date: date | None = None) -> date | None:
@@ -872,6 +884,78 @@ def _append_todo(note: str, todo_type: str, progress: str, priority: str = "Medi
     writer.write_todos_table(todos)
 
 
+def _validate_note_name(note_name: str) -> str:
+    normalized = str(note_name or "").strip()
+    if not normalized:
+        raise ValueError("note_name is required.")
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError("note_name must not include path separators.")
+    return normalized
+
+
+def _find_todo_index_by_note_name(todos: list[dict], note_name: str) -> int:
+    target_key = Path(str(note_name).strip()).stem.strip().casefold()
+    if not target_key:
+        return -1
+    for index, todo in enumerate(todos):
+        todo_key = Path(str(todo.get("note", "")).strip()).stem.strip().casefold()
+        if todo_key == target_key:
+            return index
+    return -1
+
+
+def _find_todo_index_by_id(todos: list[dict], todo_id: str) -> int:
+    if not str(todo_id).strip().isdigit():
+        return -1
+    target_id = str(int(str(todo_id).strip()))
+    for index, _todo in enumerate(todos, start=1):
+        if str(index) == target_id:
+            return index - 1
+    return -1
+
+
+def _update_todo_entry(
+    *,
+    todo_id: str | None = None,
+    note_name: str | None = None,
+    progress: str | None = None,
+    priority: str | None = None,
+) -> bool:
+    parser = DocsParser()
+    current_todos = parser.parse_todos_from_markdown()
+
+    todo_index = -1
+    if todo_id is not None and str(todo_id).strip():
+        todo_index = _find_todo_index_by_id(current_todos, str(todo_id))
+    elif note_name is not None and str(note_name).strip():
+        todo_index = _find_todo_index_by_note_name(current_todos, str(note_name))
+
+    if todo_index == -1:
+        return False
+
+    todo = current_todos[todo_index]
+    changed = False
+
+    if priority is not None and str(priority).strip():
+        todo["priority"] = _normalize_todo_priority(priority)
+        changed = True
+
+    if progress is not None:
+        normalized_progress = _normalize_todo_progress(progress, allow_empty=True)
+        if normalized_progress:
+            todo["progress"] = normalized_progress
+            changed = True
+
+    if not changed:
+        return True
+
+    todo["last_update"] = _today_dd_mm()
+    conf = _load_conf()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    writer.write_todos_table(current_todos)
+    return True
+
+
 def _normalize_update_reason(raw_reason: str) -> str:
     cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", str(raw_reason or ""))
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -1465,6 +1549,44 @@ def _perform_full_scan() -> None:
 
 
 def _playbook_action_handlers() -> dict:
+    def _resolve_note_path_for_playbook(note_name: str) -> Path:
+        parser = DocsParser()
+        return parser.find_note_path(_validate_note_name(note_name))
+
+    def _upsert_todo(note_name: str, todo_type: str, progress: str, priority: str, create_if_missing: bool) -> str:
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        matched_index = _find_todo_index_by_note_name(todos, note_name)
+        progress = _normalize_todo_progress(progress)
+        normalized_priority = _normalize_todo_priority(priority)
+
+        if matched_index == -1:
+            if not create_if_missing:
+                raise ValueError("Todo not found for note_name.")
+            todos.append(
+                {
+                    "note": note_name,
+                    "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
+                    "progress": progress,
+                    "last_update": _today_dd_mm(),
+                    "priority": normalized_priority,
+                }
+            )
+            result_status = "created"
+        else:
+            current = todos[matched_index]
+            current["note"] = note_name
+            current["type"] = json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False)
+            current["progress"] = progress
+            current["priority"] = normalized_priority
+            current["last_update"] = _today_dd_mm()
+            result_status = "updated"
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(todos)
+        return result_status
+
     def _action_create_note(action_input: dict, _: dict) -> dict:
         note_name = str(action_input.get("note_name", "")).strip()
         logger.info("Playbook handler create_note called: note_name=%s", note_name)
@@ -1528,7 +1650,7 @@ def _playbook_action_handlers() -> dict:
         return {"status": "created", "ai_feedback_score": feedback_payload.get("score")}
 
     def _action_create_todo(action_input: dict, _: dict) -> dict:
-        note_name = str(action_input.get("note_name", "")).strip()
+        note_name = _validate_note_name(action_input.get("note_name", ""))
         todo_type = str(action_input.get("type", "Update")).strip() or "Update"
         progress = str(action_input.get("progress", "Not Started")).strip()
         priority = _normalize_todo_priority(str(action_input.get("priority", "Medium")))
@@ -1539,12 +1661,90 @@ def _playbook_action_handlers() -> dict:
             progress,
             priority,
         )
-        if progress not in SW_STATUS_OPTIONS:
-            progress = "Not Started"
-        if not note_name:
-            raise ValueError("create_todo requires note_name.")
-        _append_todo(note=note_name, todo_type=todo_type, progress=progress, priority=priority)
-        return {"status": "created"}
+        status = _upsert_todo(
+            note_name=note_name,
+            todo_type=todo_type,
+            progress=progress,
+            priority=priority,
+            create_if_missing=True,
+        )
+        return {"status": status}
+
+    def _action_update_todo(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        raw_priority = str(action_input.get("priority", "")).strip()
+        raw_progress = action_input.get("progress")
+        progress = str(raw_progress).strip() if raw_progress is not None else ""
+        logger.info(
+            "Playbook handler update_todo called: note_name=%s progress=%s priority=%s",
+            note_name,
+            progress,
+            raw_priority,
+        )
+
+        updated = _update_todo_entry(
+            note_name=note_name,
+            progress=progress if raw_progress is not None else None,
+            priority=raw_priority if raw_priority else None,
+        )
+        if not updated:
+            raise ValueError("Todo not found for note_name.")
+        return {"status": "updated"}
+
+    def _action_delete_todo(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler delete_todo called: note_name=%s", note_name)
+
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        todo_index = _find_todo_index_by_note_name(todos, note_name)
+        if todo_index == -1:
+            raise ValueError("Todo not found for note_name.")
+        del todos[todo_index]
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(todos)
+        return {"status": "deleted"}
+
+    def _action_add_note_tags(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        tag_list = action_input.get("tag_list", [])
+        if isinstance(tag_list, str):
+            raw_tag_list = tag_list.strip()
+            if raw_tag_list.startswith("[") and raw_tag_list.endswith("]"):
+                try:
+                    parsed_tag_list = json.loads(raw_tag_list)
+                    tag_list = parsed_tag_list if isinstance(parsed_tag_list, list) else []
+                except json.JSONDecodeError as exc:
+                    raise ValueError("add_note_tags tag_list must be valid JSON array.") from exc
+            elif raw_tag_list:
+                tag_list = [entry.strip() for entry in raw_tag_list.splitlines() if entry.strip()]
+            else:
+                tag_list = []
+        if not isinstance(tag_list, list):
+            raise ValueError("add_note_tags requires tag_list as array.")
+        normalized_tags: list[str] = []
+        for raw_tag in tag_list:
+            tag = str(raw_tag or "").strip()
+            if not tag:
+                continue
+            if not tag.startswith("#"):
+                raise ValueError("Each tag in tag_list must start with '#'.")
+            if not re.match(r"^#[-\w]+$", tag):
+                raise ValueError("Tags may only contain letters, numbers, underscores, and dashes.")
+            if tag not in normalized_tags:
+                normalized_tags.append(tag)
+        if not normalized_tags:
+            raise ValueError("add_note_tags requires at least one valid tag.")
+
+        logger.info("Playbook handler add_note_tags called: note_name=%s tags=%s", note_name, normalized_tags)
+        note_path = _resolve_note_path_for_playbook(note_name)
+        writer = DocsWriter()
+        success, missing_sections = writer.add_tags_to_note(doc_path=note_path, tags_to_add=normalized_tags)
+        if not success:
+            raise ValueError(f"Missing chapter(s): {', '.join(missing_sections)}")
+        return {"status": "updated", "tags_added": len(normalized_tags)}
 
     def _action_create_deadline(action_input: dict, _: dict) -> dict:
         name = str(action_input.get("deadline_name", "")).strip()
@@ -1575,10 +1775,19 @@ def _playbook_action_handlers() -> dict:
 
     def _action_inform_user(action_input: dict, _: dict) -> dict:
         message = str(action_input.get("message", "")).strip()
-        logger.info("Playbook handler inform_user called: message_length=%s", len(message))
+        user_choice = str(action_input.get("user_response", action_input.get("decision", ""))).strip().casefold()
+        logger.info("Playbook handler inform_user called: message_length=%s choice=%s", len(message), user_choice)
         if not message:
             raise ValueError("inform_user requires a message.")
-        return {"status": "shown", "prompt_message": message}
+        if user_choice in {"abort", "no", "cancel", "false", "0"}:
+            return {"status": "aborted", "prompt_message": message, "control": "abort"}
+        if user_choice in {"confirm", "yes", "continue", "ok", "true", "1"}:
+            return {"status": "confirmed", "prompt_message": message}
+        return {
+            "status": "awaiting_user_response",
+            "prompt_message": f"{message}\n\nChoose: ✅ Confirm or ❌ Abort.",
+            "control": "pause",
+        }
 
     def _action_perform_note_sync(_: dict, __: dict) -> dict:
         logger.info("Playbook handler perform_note_sync called")
@@ -1591,7 +1800,10 @@ def _playbook_action_handlers() -> dict:
         "create_learning": _action_create_learning,
         "generate_ai_questions": _action_generate_ai_questions,
         "generate_ai_feedback": _action_generate_ai_feedback,
+        "add_note_tags": _action_add_note_tags,
         "create_todo": _action_create_todo,
+        "update_todo": _action_update_todo,
+        "delete_todo": _action_delete_todo,
         "create_deadline": _action_create_deadline,
         "inform_user": _action_inform_user,
         "perform_note_sync": _action_perform_note_sync,
@@ -2612,17 +2824,8 @@ def update_todo_progress():
         return redirect(url_for("todo_overview"))
 
     try:
-        current_todos = DocsParser().parse_todos_from_markdown()
-
-        for index, todo in enumerate(current_todos, start=1):
-            if str(index) == todo_id:
-                todo["progress"] = progress
-                todo["last_update"] = _today_dd_mm()
-                break
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(current_todos)
+        if not _update_todo_entry(todo_id=todo_id, progress=progress):
+            raise ValueError("Todo not found.")
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
@@ -2640,17 +2843,8 @@ def update_todo_priority():
         return redirect(url_for("todo_overview"))
 
     try:
-        current_todos = DocsParser().parse_todos_from_markdown()
-
-        for index, todo in enumerate(current_todos, start=1):
-            if str(index) == todo_id:
-                todo["priority"] = priority
-                todo["last_update"] = _today_dd_mm()
-                break
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(current_todos)
+        if not _update_todo_entry(todo_id=todo_id, priority=priority):
+            raise ValueError("Todo not found.")
         flash("Todo priority updated.", "success")
     except BaseException:
         flash("Failed to update todo priority.", "danger")

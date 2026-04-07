@@ -27,12 +27,15 @@ class DocsPlaybook:
         "create_learning",
         "generate_ai_questions",
         "generate_ai_feedback",
+        "add_note_tags",
         "create_todo",
+        "update_todo",
+        "delete_todo",
         "create_deadline",
         "inform_user",
         "perform_note_sync",
     }
-    SUPPORTED_FLOW_OPS = {"if_else", "switch_case"}
+    SUPPORTED_FLOW_OPS = {"if_else", "switch_case", "abort"}
 
     def __init__(self, conf: dict, action_handlers: dict[str, Callable[[dict, dict], dict]] | None = None) -> None:
         self.logger = logging.getLogger(__name__)
@@ -171,6 +174,20 @@ class DocsPlaybook:
                 if len(next_edges) > 1:
                     raise PlaybookValidationError("Flow block may only have one next edge.")
                 next_steps = _walk(next_edges[0]["target"], depth + 1) if next_edges else []
+                if operator == "abort":
+                    non_next_edges = [edge for edge in outgoing if edge["branch"] != "next"]
+                    if non_next_edges:
+                        raise PlaybookValidationError("abort flow cannot define branch edges.")
+                    return [
+                        {
+                            "id": block_id,
+                            "type": "flow",
+                            "operator": "abort",
+                            "label": str(payload.get("label", "")).strip(),
+                            "input": {},
+                            "next_steps": next_steps,
+                        }
+                    ]
                 if operator == "if_else":
                     true_edges = [edge for edge in outgoing if edge["branch"] == "true"]
                     false_edges = [edge for edge in outgoing if edge["branch"] == "false"]
@@ -434,11 +451,13 @@ class DocsPlaybook:
                         result = handler(resolved_input, context) or {}
                         prompt_message = ""
                         action_status = ""
+                        action_control = ""
                         if isinstance(result, dict):
                             prompt_message = str(result.get("prompt_message", "")).strip()
                             action_status = str(result.get("status", "")).strip()
+                            action_control = str(result.get("control", "")).strip().lower()
                             for key, value in result.items():
-                                if key in {"status", "prompt_message"}:
+                                if key in {"status", "prompt_message", "control"}:
                                     continue
                                 context[key] = value
                         reason = "Action executed."
@@ -461,6 +480,22 @@ class DocsPlaybook:
                             "reason": reason,
                             "prompt_message": prompt_message,
                         })
+                        if action_control == "pause":
+                            self.logger.info(
+                                "Playbook execution paused by action: action=%s step=%s step_id=%s",
+                                action_name,
+                                step_name,
+                                step.get("id"),
+                            )
+                            return False
+                        if action_control == "abort":
+                            self.logger.info(
+                                "Playbook execution aborted by action: action=%s step=%s step_id=%s",
+                                action_name,
+                                step_name,
+                                step.get("id"),
+                            )
+                            return False
                     else:
                         self.logger.info(
                             "Playbook action skipped by dry run: action=%s step=%s step_id=%s",
@@ -494,6 +529,22 @@ class DocsPlaybook:
                     return False
             elif step_type == "flow":
                 operator = str(step.get("operator", "")).strip()
+                if operator == "abort":
+                    self.logger.info(
+                        "Playbook flow aborted run: flow=%s step=%s step_id=%s",
+                        operator,
+                        step_name,
+                        step.get("id"),
+                    )
+                    logs.append({
+                        "step_id": step.get("id"),
+                        "step_type": "flow",
+                        "step_name": step_name,
+                        "flow": operator,
+                        "success": False,
+                        "reason": "Abort flow stopped the workflow.",
+                    })
+                    return False
                 if operator == "if_else":
                     is_true = self._evaluate_if_else(step.get("input", {}), context)
                     branch_key = "true_branch" if is_true else "false_branch"

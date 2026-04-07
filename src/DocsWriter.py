@@ -378,6 +378,22 @@ class DocsWriter:
             logger.error("Failed to update markdown resource sections in %s\n%s", doc_path, traceback.format_exc())
             adieu(1)
 
+    def add_tags_to_note(self, doc_path: Path, tags_to_add: list[str]) -> tuple[bool, list[str]]:
+        normalized_tags: list[str] = []
+        for tag in tags_to_add or []:
+            raw = str(tag or "").strip()
+            if not raw:
+                continue
+            normalized_tags.append(raw if raw.startswith("#") else f"#{raw}")
+        return self.update_doc_resources(
+            doc_path=doc_path,
+            tags_to_add=normalized_tags,
+            tags_to_remove=[],
+            links_map={},
+            video_links_map={},
+            create_missing_sections=False,
+        )
+
     def _insert_history_entry(self, current_content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
         history_header = "#### Page History"
         tags_header = "#### Page Tags"

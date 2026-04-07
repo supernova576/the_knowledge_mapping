@@ -64,16 +64,20 @@
                             ('create_deadline', 'Deadline: Create'),
                             ('inform_user', 'General: Inform User'),
                             ('generate_ai_questions', 'Learning: AI Question Generation'),
+                            ('add_note_tags', 'Note: Add Tags'),
                             ('create_learning', 'Learning: Create'),
                             ('create_note', 'Note: Create'),
                             ('perform_note_sync', 'Note: Perform Sync'),
                             ('update_note', 'Note: Update'),
-                            ('create_todo', 'ToDo: Create')
+                            ('create_todo', 'ToDo: Create'),
+                            ('update_todo', 'ToDo: Update'),
+                            ('delete_todo', 'ToDo: Delete')
                         ] %}
                         <button type="button" class="btn text-start km-playbook-palette-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ label }}</button>
                         {% endfor %}
                     </div>
                     <div id="flowPalette" class="d-grid gap-2 d-none">
+                        <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="abort">ABORT</button>
                         <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="if_else">IF-ELSE</button>
                         <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="switch_case">SWITCH-CASE</button>
                     </div>
@@ -213,20 +217,24 @@
     let draggedPaletteItem = {kind:'', value:''};
     let pendingPaletteAction = '';
 
-    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user','perform_note_sync']);
-    const allowedFlows = new Set(['if_else', 'switch_case']);
+    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','add_note_tags','create_todo','update_todo','delete_todo','create_deadline','inform_user','perform_note_sync']);
+    const allowedFlows = new Set(['abort', 'if_else', 'switch_case']);
     const actionLabels = {
         create_note: 'Note: Create',
         update_note: 'Note: Update',
         create_learning: 'Learning: Create',
         generate_ai_questions: 'Learning: AI Question Generation',
         generate_ai_feedback: 'AI Feedback: Create',
+        add_note_tags: 'Note: Add Tags',
         create_todo: 'ToDo: Create',
+        update_todo: 'ToDo: Update',
+        delete_todo: 'ToDo: Delete',
         create_deadline: 'Deadline: Create',
         inform_user: 'General: Inform User',
         perform_note_sync: 'Note: Perform Sync',
     };
     const flowLabels = {
+        abort: 'ABORT',
         if_else: 'IF-ELSE',
         switch_case: 'SWITCH-CASE',
     };
@@ -247,11 +255,23 @@
         generate_ai_feedback: [
             {key:'note_name', label:'Note name', type:'text', placeholder:'Essay Draft', help:'Note that will be sent through the AI feedback workflow. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
         ],
+        add_note_tags: [
+            {key:'note_name', label:'Note name', type:'text', placeholder:'Project Kickoff', help:'Existing note that should receive additional tags. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
+            {key:'tag_list', label:'Tag list (JSON array)', type:'textarea', placeholder:'["#tag1", "#tag2"]', help:'Array of tags to append. Each tag must start with #. Runtime context key: tag_list.', required:true, context_key:'tag_list', data_type:'array'},
+        ],
         create_todo: [
             {key:'note_name', label:'Related note name', type:'text', placeholder:'Project Kickoff', help:'Related note for the todo. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
             {key:'priority', label:'Priority', type:'select', options:['Low', 'Medium', 'High'], help:'Allowed priority value for the todo. Runtime context key: priority.', required:true, context_key:'priority', data_type:'enum'},
             {key:'progress', label:'Progress', type:'select', options:['Not Started', 'In Progress', 'Done'], help:'Current completion state for the todo. Runtime context key: progress.', required:true, context_key:'progress', data_type:'enum'},
             {key:'type', label:'Todo type', type:'select', options:['New', 'Update', 'New/Update'], help:'Classifies the todo entry using the app’s supported type values. Runtime context key: type.', required:true, context_key:'type', data_type:'enum'},
+        ],
+        update_todo: [
+            {key:'note_name', label:'Related note name', type:'text', placeholder:'Project Kickoff', help:'Existing todo note name to update. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
+            {key:'priority', label:'Priority (optional)', type:'select', options:['', 'Low', 'Medium', 'High'], help:'Optional: update todo priority only when provided. Runtime context key: priority.', required:false, context_key:'priority', data_type:'enum'},
+            {key:'progress', label:'Progress (optional)', type:'select', options:['', 'Not Started', 'In Progress', 'Done'], help:'Optional: update todo progress only when provided. Runtime context key: progress.', required:false, context_key:'progress', data_type:'enum'},
+        ],
+        delete_todo: [
+            {key:'note_name', label:'Related note name', type:'text', placeholder:'Project Kickoff', help:'Existing todo note name to delete. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
         ],
         create_deadline: [
             {key:'deadline_name', label:'Deadline name', type:'text', placeholder:'Submit final report', help:'Human-readable title for the deadline entry. Runtime context key: deadline_name.', required:true, context_key:'deadline_name', data_type:'string'},
@@ -270,9 +290,13 @@
         create_learning: [{label:'Created learning name', context_key:'learning_name', data_type:'string'}],
         generate_ai_questions: [{label:'No output value', context_key:'-', data_type:'none'}],
         generate_ai_feedback: [{label:'AI feedback score', context_key:'ai_feedback_score', data_type:'number'}],
+        add_note_tags: [{label:'Tags added count', context_key:'tags_added', data_type:'number'}],
         create_todo: [{label:'No output value', context_key:'-', data_type:'none'}],
+        update_todo: [{label:'No output value', context_key:'-', data_type:'none'}],
+        delete_todo: [{label:'No output value', context_key:'-', data_type:'none'}],
         create_deadline: [{label:'No output value', context_key:'-', data_type:'none'}],
         inform_user: [{label:'No output value', context_key:'-', data_type:'none'}],
+        perform_note_sync: [{label:'No output value', context_key:'-', data_type:'none'}],
     };
 
     const uid = () => `b_${Date.now()}_${Math.random().toString(16).slice(2,8)}`;
@@ -485,6 +509,24 @@
                             ${inputField ? renderField({...inputField, width: 'col-md-6'}, config.getValue(inputField)) : ''}
                             ${outputField ? renderField({...outputField, width: 'col-md-6'}, config.getValue(outputField)) : ''}
                         </div>
+                    </div>
+                </div>
+            `;
+        }
+        if (config?.variant === 'flow' && config?.operator === 'abort') {
+            return `
+                <div class="col-12">
+                    <div class="km-playbook-editor-section">
+                        <h3 class="h6 mb-3">Naming</h3>
+                        <div class="row g-3">
+                            ${config.fields.filter((field) => field.section === 'naming').map((field) => renderField({...field, width:'col-12'}, config.getValue(field))).join('')}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="km-playbook-editor-section">
+                        <h3 class="h6 mb-3">Behavior</h3>
+                        <div class="text-muted small">This flow stops the workflow immediately when reached. It has no inputs and no outputs.</div>
                     </div>
                 </div>
             `;
@@ -953,6 +995,20 @@
             .forEach((flowBlock) => rebalanceFlowBranches(flowBlock));
     }
 
+    function rebalanceTopLevelChain() {
+        if (!current) return;
+        const chain = buildTopLevelNextChain();
+        if (!chain.length) return;
+        let nextY = (Number(chain[0].y) || 40) + 90;
+        chain.slice(1).forEach((block) => {
+            const deltaY = nextY - (Number(block.y) || 0);
+            if (deltaY !== 0) {
+                shiftSubtreeY(block.id, deltaY);
+            }
+            nextY = subtreeMaxY(block.id) + 90;
+        });
+    }
+
     function findBranchAppendTarget(startId) {
         if (!current || !startId) return null;
         let currentId = startId;
@@ -1058,7 +1114,9 @@
             : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || base.y || 40) + 90));
         const flowPayload = operator === 'switch_case'
             ? {operator, label:flowDisplayName('switch_case'), input:{value_to_compare:'', source:'context'}, cases:[{key:caseUid(), label:'Case 1', value:'value_1'}]}
-            : {operator, label:flowDisplayName(operator), input:{value_to_compare:'', equals:'true', source:'literal'}};
+            : operator === 'abort'
+                ? {operator, label:flowDisplayName('abort'), input:{}}
+                : {operator, label:flowDisplayName(operator), input:{value_to_compare:'', equals:'true', source:'literal'}};
         const newFlowBlock = {id:newId, type:'flow', x:flowX, y:flowY, payload:flowPayload};
         current.layout.blocks.push(newFlowBlock);
         insertBlockIntoLinearFlow(newFlowBlock, insertionY);
@@ -1070,7 +1128,7 @@
             current.layout.blocks.push({id:defaultId, type:'action', x:flowX + 120, y:branchStartY + 90, payload:{placeholder:true, label:'Default branch action', input:{}}});
             current.layout.edges.push({source:newId, target:caseBranchId, branch:flowPayload.cases[0].key});
             current.layout.edges.push({source:newId, target:defaultId, branch:'default'});
-        } else {
+        } else if (operator === 'if_else') {
             const trueId = uid();
             const falseId = uid();
             current.layout.blocks.push({id:trueId, type:'action', x:flowX + 120, y:branchStartY, payload:{placeholder:true, label:'True branch action', input:{}}});
@@ -1216,6 +1274,7 @@
             return;
         }
         rebalanceAllFlowBranches();
+        rebalanceTopLevelChain();
         emptyState.classList.add('d-none');
         canvas.classList.remove('d-none');
         canvas.innerHTML = '';
@@ -1384,6 +1443,26 @@
                 },
             });
         } else if (block.type === 'flow') {
+            if (block.payload.operator === 'abort') {
+                openEditor({
+                    title: `Edit Flow: ${flowDisplayName('abort')}`,
+                    submitLabel: 'Save Flow',
+                    help: 'Abort stops the workflow immediately when this block is reached.',
+                    variant: 'flow',
+                    operator: 'abort',
+                    fields: [
+                        {key:'label', label:'Flow name', type:'text', placeholder:'Abort workflow', help:'Friendly display name used on the canvas and in run logs.', section:'naming'},
+                    ],
+                    getValue: (field) => getNestedValue(block.payload, field.key),
+                    onDelete: () => deleteBlock(block.id),
+                    onSubmit: (formData) => {
+                        block.payload.label = (formData.get('label') || '').toString().trim() || flowDisplayName('abort');
+                        block.payload.input = {};
+                        renderCanvas();
+                    },
+                });
+                return;
+            }
             if (block.payload.operator === 'switch_case') {
                 openEditor({
                     title: `Edit Flow: ${flowDisplayName('switch_case')}`,

@@ -1028,6 +1028,29 @@ class DocsParser:
             logger.error("Failed to parse todos markdown\n%s", traceback.format_exc())
             adieu(1)
 
+    def find_note_path(self, note_name: str) -> Path:
+        try:
+            normalized = str(note_name or "").strip()
+            if not normalized:
+                raise ValueError("note_name is required.")
+            sanitized = re.sub(r"[^A-Za-z0-9._ -]+", "_", normalized).strip(" ._")
+            if not sanitized:
+                raise ValueError("note_name contains only invalid characters.")
+            if "/" in sanitized or "\\" in sanitized:
+                raise ValueError("note_name must not contain path separators.")
+
+            file_name = sanitized if sanitized.lower().endswith(".md") else f"{sanitized}.md"
+            docs_root = Path(self.docs_path).resolve()
+            target = (docs_root / file_name).resolve()
+            if docs_root not in target.parents:
+                raise ValueError("Invalid note_name path.")
+            if not target.exists() or not target.is_file():
+                raise FileNotFoundError(f"Note not found: {file_name}")
+            return target
+        except Exception:
+            logger.error("Failed to resolve note path for '%s'\n%s", note_name, traceback.format_exc())
+            raise
+
     def _parse_deadline_status(self, raw_progress: str) -> str:
         normalized = str(raw_progress or "").strip()
         return self.PROGRESS_ICON_TO_STATE.get(normalized, "Not Started")
