@@ -234,7 +234,9 @@
     let activeEditor = null;
     let draggedPaletteItem = {kind:'', value:''};
     let pendingPaletteAction = '';
+    let pendingPaletteFlow = '';
     let pendingRunResume = null;
+    let promptDecisionSubmitted = false;
 
     const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','add_note_tags','create_todo','update_todo','delete_todo','create_deadline','inform_user','perform_note_sync','check_note_exists','check_todo_exists','check_note_compliant','check_ai_feedback_min_score']);
     const allowedFlows = new Set(['abort', 'if_else', 'switch_case']);
@@ -429,6 +431,10 @@
     function setPendingPaletteAction(action='') {
         pendingPaletteAction = allowedActions.has(action) ? action : '';
         refreshPaletteSelection();
+    }
+
+    function setPendingPaletteFlow(flow='') {
+        pendingPaletteFlow = allowedFlows.has(flow) ? flow : '';
     }
 
     function clearFlowDropTargets() {
@@ -936,6 +942,7 @@
 
     function showPromptMessages(run={}) {
         pendingRunResume = run.resume || null;
+        promptDecisionSubmitted = false;
         const promptMessage = String(run.prompt_message || run.resume?.prompt_message || '').trim();
         if (!run.paused || !pendingRunResume || !promptMessage) {
             pendingRunResume = null;
@@ -1115,13 +1122,15 @@
         return current.layout.blocks.find((item) => item.id === startId) || null;
     }
 
-    function mapActionToFlowBranch(flowId, branchKey, action) {
+    function mapNodeToFlowBranch(flowId, branchKey, nodeKind, nodeValue) {
         if (!current) {
-            updateStatus('Create or select a playbook before mapping actions to a branch.');
+            updateStatus('Create or select a playbook before mapping items to a branch.');
             return;
         }
-        if (!allowedActions.has(action)) {
-            updateStatus('Choose a valid action first.');
+        const isAction = nodeKind === 'action' && allowedActions.has(nodeValue);
+        const isAbortFlow = nodeKind === 'flow' && nodeValue === 'abort';
+        if (!isAction && !isAbortFlow) {
+            updateStatus('Choose a valid branch item first.');
             return;
         }
         const flowBlock = current.layout.blocks.find((item) => item.id === flowId && item.type === 'flow');
@@ -1136,12 +1145,15 @@
             return;
         }
         const newId = uid();
+        const payload = isAbortFlow
+            ? {operator:'abort', label:flowDisplayName('abort'), input:{}}
+            : {action:nodeValue, label:actionDisplayName(nodeValue), input:{}};
         current.layout.blocks.push({
             id:newId,
-            type:'action',
+            type:isAbortFlow ? 'flow' : 'action',
             x:Number(appendAfterBlock.x) || ((Number(flowBlock.x) || 120) + 120),
             y:(Number(appendAfterBlock.y) || 40) + 90,
-            payload:{action, label:actionDisplayName(action), input:{}}
+            payload
         });
         const existingNextEdge = (current.layout.edges || []).find((edge) => edge.source === appendAfterBlock.id && edge.branch === 'next');
         if (existingNextEdge) {
@@ -1153,9 +1165,11 @@
         }
         rebalanceFlowBranches(flowBlock);
         renderCanvas();
-        updateStatus(`${actionDisplayName(action)} was mapped to ${edgeDisplayBranch(flowBlock, branchKey)}.`);
+        const mappedLabel = isAbortFlow ? flowDisplayName('abort') : actionDisplayName(nodeValue);
+        updateStatus(`${mappedLabel} was mapped to ${edgeDisplayBranch(flowBlock, branchKey)}.`);
         clearFlowDropTargets();
         setPendingPaletteAction('');
+        setPendingPaletteFlow('');
     }
 
     function addActionBlock(action, x=null, y=null) {
@@ -1404,7 +1418,10 @@
                 host.appendChild(picker);
                 canvas.appendChild(host);
                 host.addEventListener('dragover', (event) => {
-                    if ((event.dataTransfer?.getData('palette-kind') || draggedPaletteItem.kind) !== 'action') return;
+                    const kind = event.dataTransfer?.getData('palette-kind') || draggedPaletteItem.kind;
+                    const value = event.dataTransfer?.getData('palette-value') || draggedPaletteItem.value;
+                    const supportsBranchDrop = kind === 'action' || (kind === 'flow' && value === 'abort');
+                    if (!supportsBranchDrop) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'copy';
                     clearFlowDropTargets();
@@ -1417,7 +1434,10 @@
                 });
                 picker.querySelectorAll('.km-flow-branch-button').forEach((button) => {
                     button.addEventListener('dragover', (event) => {
-                        if ((event.dataTransfer?.getData('palette-kind') || draggedPaletteItem.kind) !== 'action') return;
+                        const kind = event.dataTransfer?.getData('palette-kind') || draggedPaletteItem.kind;
+                        const value = event.dataTransfer?.getData('palette-value') || draggedPaletteItem.value;
+                        const supportsBranchDrop = kind === 'action' || (kind === 'flow' && value === 'abort');
+                        if (!supportsBranchDrop) return;
                         event.preventDefault();
                         event.stopPropagation();
                         event.dataTransfer.dropEffect = 'copy';
@@ -1426,19 +1446,22 @@
                     button.addEventListener('drop', (event) => {
                         const kind = event.dataTransfer?.getData('palette-kind') || draggedPaletteItem.kind;
                         const value = event.dataTransfer?.getData('palette-value') || draggedPaletteItem.value;
-                        if (kind !== 'action' || !value) return;
+                        const supportsBranchDrop = (kind === 'action' && Boolean(value)) || (kind === 'flow' && value === 'abort');
+                        if (!supportsBranchDrop) return;
                         event.preventDefault();
                         event.stopPropagation();
-                        mapActionToFlowBranch(button.dataset.flowId || '', button.dataset.branch || '', value);
+                        mapNodeToFlowBranch(button.dataset.flowId || '', button.dataset.branch || '', kind, value);
                         draggedPaletteItem = {kind:'', value:''};
                     });
                     button.addEventListener('click', (event) => {
                         event.stopPropagation();
-                        if (!pendingPaletteAction) {
-                            updateStatus('Select an action from the palette, then choose the target branch.');
+                        const kind = pendingPaletteAction ? 'action' : (pendingPaletteFlow === 'abort' ? 'flow' : '');
+                        const value = pendingPaletteAction || pendingPaletteFlow;
+                        if (!kind || !value) {
+                            updateStatus('Select an action (or ABORT flow), then choose the target branch.');
                             return;
                         }
-                        mapActionToFlowBranch(button.dataset.flowId || '', button.dataset.branch || '', pendingPaletteAction);
+                        mapNodeToFlowBranch(button.dataset.flowId || '', button.dataset.branch || '', kind, value);
                     });
                 });
             } else {
@@ -1858,10 +1881,12 @@
             const action = item.dataset.action || '';
             if (pendingPaletteAction === action) {
                 setPendingPaletteAction('');
+                setPendingPaletteFlow('');
                 updateStatus('Action selection cleared.');
                 return;
             }
             setPendingPaletteAction(action);
+            setPendingPaletteFlow('');
             updateStatus(`Selected ${action}. Hover a flow to choose a branch, or click empty canvas space to append it.`);
         });
     });
@@ -1877,7 +1902,19 @@
             draggedPaletteItem = {kind:'', value:''};
         });
         item.addEventListener('click', () => {
-            addFlowBlock(item.dataset.flow || '');
+            const flow = item.dataset.flow || '';
+            if (flow !== 'abort') {
+                addFlowBlock(flow);
+                return;
+            }
+            if (pendingPaletteFlow === 'abort') {
+                setPendingPaletteFlow('');
+                updateStatus('ABORT flow selection cleared.');
+                return;
+            }
+            setPendingPaletteAction('');
+            setPendingPaletteFlow('abort');
+            updateStatus('Selected ABORT flow. Click a flow branch to insert it there, or click canvas to append it.');
         });
     });
 
@@ -1908,9 +1945,16 @@
     });
 
     canvas.addEventListener('click', (event) => {
-        if (event.target !== canvas || !pendingPaletteAction) return;
-        addActionBlock(pendingPaletteAction);
-        setPendingPaletteAction('');
+        if (event.target !== canvas) return;
+        if (pendingPaletteAction) {
+            addActionBlock(pendingPaletteAction);
+            setPendingPaletteAction('');
+            return;
+        }
+        if (pendingPaletteFlow === 'abort') {
+            addFlowBlock('abort');
+            setPendingPaletteFlow('');
+        }
     });
 
     runForm.addEventListener('submit', async (event) => {
@@ -1947,12 +1991,25 @@
 
     if (promptAbortButton) {
         promptAbortButton.addEventListener('click', () => {
+            promptDecisionSubmitted = true;
             resumePromptedRun('abort');
         });
     }
 
     if (promptConfirmButton) {
         promptConfirmButton.addEventListener('click', () => {
+            promptDecisionSubmitted = true;
+            resumePromptedRun('confirm');
+        });
+    }
+
+    if (promptModalElement) {
+        promptModalElement.addEventListener('hidden.bs.modal', () => {
+            if (!pendingRunResume || promptDecisionSubmitted) {
+                promptDecisionSubmitted = false;
+                return;
+            }
+            promptDecisionSubmitted = true;
             resumePromptedRun('confirm');
         });
     }

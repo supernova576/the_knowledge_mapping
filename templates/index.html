@@ -333,6 +333,7 @@
             const triggerPlaybookOutputEntries = document.getElementById("triggerPlaybookOutputEntries");
             const triggerPlaybookPromptModal = triggerPlaybookPromptModalElement ? new bootstrap.Modal(triggerPlaybookPromptModalElement) : null;
             let pendingTriggerPlaybookResume = null;
+            let triggerPromptDecisionSubmitted = false;
             const playbookActionSchemas = {
                 create_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}],
                 update_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"reason", label:"Reason", type:"textarea", placeholder:"Why should this note be updated?", help:"Runtime context key: reason.", required:true}],
@@ -443,6 +444,7 @@
                     return;
                 }
                 pendingTriggerPlaybookResume = run?.resume || null;
+                triggerPromptDecisionSubmitted = false;
                 const promptMessage = String(run?.prompt_message || run?.resume?.prompt_message || "").trim();
                 if (!run?.paused || !pendingTriggerPlaybookResume || !promptMessage) {
                     pendingTriggerPlaybookResume = null;
@@ -687,11 +689,23 @@
             }
             if (triggerPlaybookPromptAbort) {
                 triggerPlaybookPromptAbort.addEventListener("click", function () {
+                    triggerPromptDecisionSubmitted = true;
                     resumeTriggeredPlaybook("abort");
                 });
             }
             if (triggerPlaybookPromptConfirm) {
                 triggerPlaybookPromptConfirm.addEventListener("click", function () {
+                    triggerPromptDecisionSubmitted = true;
+                    resumeTriggeredPlaybook("confirm");
+                });
+            }
+            if (triggerPlaybookPromptModalElement) {
+                triggerPlaybookPromptModalElement.addEventListener("hidden.bs.modal", function () {
+                    if (!pendingTriggerPlaybookResume || triggerPromptDecisionSubmitted) {
+                        triggerPromptDecisionSubmitted = false;
+                        return;
+                    }
+                    triggerPromptDecisionSubmitted = true;
                     resumeTriggeredPlaybook("confirm");
                 });
             }

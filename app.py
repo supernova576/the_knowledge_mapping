@@ -1785,7 +1785,7 @@ def _playbook_action_handlers() -> dict:
             return {"status": "confirmed", "prompt_message": message}
         return {
             "status": "awaiting_user_response",
-            "prompt_message": f"{message}\n\nChoose: ✅ Confirm or ❌ Abort.",
+            "prompt_message": message,
             "control": "pause",
         }
 

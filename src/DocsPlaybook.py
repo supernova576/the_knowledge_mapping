@@ -385,9 +385,22 @@ class DocsPlaybook:
 
         return re.sub(r"\{([^{}]+)\}", _replace, value)
 
+    def _coerce_comparable_value(self, value: object) -> object:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        normalized = str(value or "").strip()
+        lowered = normalized.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        return normalized
+
     def _evaluate_if_else(self, flow_input: dict, context: dict) -> bool:
         candidate = self._resolve_flow_value(flow_input, context)
-        right = str(self._interpolate_context_string(flow_input.get("equals", "true"), context)).strip()
+        right = self._interpolate_context_string(flow_input.get("equals", "true"), context)
         comparison = str(flow_input.get("comparison", "equals")).strip().lower()
         if comparison == "greater_than":
             try:
@@ -399,14 +412,20 @@ class DocsPlaybook:
                 return float(candidate) < float(right)
             except (TypeError, ValueError):
                 return False
-        return candidate == right
+        return self._coerce_comparable_value(candidate) == self._coerce_comparable_value(right)
 
-    def _resolve_flow_value(self, flow_input: dict, context: dict) -> str:
-        left = str(self._interpolate_context_string(flow_input.get("value_to_compare", ""), context)).strip()
+    def _resolve_flow_value(self, flow_input: dict, context: dict) -> object:
+        raw_left = flow_input.get("value_to_compare", "")
         source = str(flow_input.get("source", "literal")).strip().lower()
         if source == "context":
-            return str(context.get(left, "")).strip()
-        return left
+            context_key = str(raw_left or "").strip()
+            placeholder_match = re.fullmatch(r"\{([^{}]+)\}", context_key)
+            if placeholder_match:
+                context_key = str(placeholder_match.group(1) or "").strip()
+            elif not context_key:
+                context_key = str(self._interpolate_context_string(raw_left, context)).strip()
+            return context.get(context_key, "")
+        return self._interpolate_context_string(raw_left, context)
 
     def _flow_output_base(self, step: dict) -> str:
         raw_name = str(step.get("label") or step.get("operator") or step.get("id") or "flow").strip().lower()
