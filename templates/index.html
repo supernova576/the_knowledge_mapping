@@ -283,7 +283,8 @@
                     <div id="trigger-playbook-prompt-body" class="km-playbook-prompt-body"></div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                    <button type="button" class="btn btn-outline-danger" id="trigger-playbook-prompt-abort">Abort</button>
+                    <button type="button" class="btn btn-success" id="trigger-playbook-prompt-confirm">Confirm</button>
                 </div>
             </div>
         </div>
@@ -325,9 +326,13 @@
             const triggerPlaybookRuntimeFields = document.getElementById("trigger-playbook-runtime-fields");
             const triggerPlaybookPromptModalElement = document.getElementById("triggerPlaybookPromptModal");
             const triggerPlaybookPromptBody = document.getElementById("trigger-playbook-prompt-body");
+            const triggerPlaybookPromptAbort = document.getElementById("trigger-playbook-prompt-abort");
+            const triggerPlaybookPromptConfirm = document.getElementById("trigger-playbook-prompt-confirm");
             const triggerPlaybookOutputPanel = document.getElementById("triggerPlaybookOutputPanel");
             const triggerPlaybookOutputBadge = document.getElementById("triggerPlaybookOutputBadge");
             const triggerPlaybookOutputEntries = document.getElementById("triggerPlaybookOutputEntries");
+            const triggerPlaybookPromptModal = triggerPlaybookPromptModalElement ? new bootstrap.Modal(triggerPlaybookPromptModalElement) : null;
+            let pendingTriggerPlaybookResume = null;
             const playbookActionSchemas = {
                 create_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}],
                 update_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"reason", label:"Reason", type:"textarea", placeholder:"Why should this note be updated?", help:"Runtime context key: reason.", required:true}],
@@ -423,20 +428,70 @@
                         + '</div>';
                 }).join("");
             }
-            function showTriggerPlaybookPrompts(logs) {
-                if (!triggerPlaybookPromptModalElement || !triggerPlaybookPromptBody) {
+            function setTriggerPlaybookPromptButtonsBusy(isBusy) {
+                if (triggerPlaybookPromptAbort) {
+                    triggerPlaybookPromptAbort.disabled = Boolean(isBusy);
+                    triggerPlaybookPromptAbort.textContent = isBusy ? "Waiting..." : "Abort";
+                }
+                if (triggerPlaybookPromptConfirm) {
+                    triggerPlaybookPromptConfirm.disabled = Boolean(isBusy);
+                    triggerPlaybookPromptConfirm.textContent = isBusy ? "Waiting..." : "Confirm";
+                }
+            }
+            function showTriggerPlaybookPrompts(run) {
+                if (!triggerPlaybookPromptModalElement || !triggerPlaybookPromptBody || !triggerPlaybookPromptModal) {
                     return;
                 }
-                const messages = (logs || []).map(function (entry) {
-                    return String(entry?.prompt_message || "").trim();
-                }).filter(Boolean);
-                if (!messages.length) {
+                pendingTriggerPlaybookResume = run?.resume || null;
+                const promptMessage = String(run?.prompt_message || run?.resume?.prompt_message || "").trim();
+                if (!run?.paused || !pendingTriggerPlaybookResume || !promptMessage) {
+                    pendingTriggerPlaybookResume = null;
                     return;
                 }
-                triggerPlaybookPromptBody.innerHTML = messages.map(function (message) {
-                    return "<p class=\"mb-3\">" + escapeHtml(message) + "</p>";
-                }).join("");
-                new bootstrap.Modal(triggerPlaybookPromptModalElement).show();
+                triggerPlaybookPromptBody.innerHTML = "<p class=\"mb-3\">" + escapeHtml(promptMessage) + "</p>";
+                setTriggerPlaybookPromptButtonsBusy(false);
+                triggerPlaybookPromptModal.show();
+            }
+            function resumeTriggeredPlaybook(userChoice) {
+                const selectedPlaybook = triggerPlaybookSelect?.value || "";
+                if (!selectedPlaybook || !pendingTriggerPlaybookResume) {
+                    return;
+                }
+                setTriggerPlaybookPromptButtonsBusy(true);
+                fetch("/api/playbooks/" + encodeURIComponent(selectedPlaybook) + "/execute", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({resume: pendingTriggerPlaybookResume, user_choice: userChoice})
+                })
+                    .then(function (response) { return response.json(); })
+                    .then(function (payload) {
+                        if (!payload.ok) {
+                            triggerPlaybookMessage.classList.add("text-danger");
+                            triggerPlaybookMessage.textContent = payload.error || "Unable to resume playbook.";
+                            return;
+                        }
+                        const run = payload.result || {};
+                        pendingTriggerPlaybookResume = run.resume || null;
+                        triggerPlaybookMessage.classList.remove("text-danger");
+                        triggerPlaybookMessage.textContent = run.paused
+                            ? "Playbook is waiting for another confirmation."
+                            : (run.success ? "Playbook finished successfully." : "Playbook was aborted.");
+                        renderTriggerPlaybookOutput(run.logs || [], Boolean(run.success), Boolean(run.paused));
+                        if (run.paused && pendingTriggerPlaybookResume) {
+                            triggerPlaybookPromptBody.innerHTML = "<p class=\"mb-3\">" + escapeHtml(run.prompt_message || pendingTriggerPlaybookResume.prompt_message || "") + "</p>";
+                            setTriggerPlaybookPromptButtonsBusy(false);
+                            triggerPlaybookPromptModal.show();
+                            return;
+                        }
+                        triggerPlaybookPromptModal.hide();
+                    })
+                    .catch(function () {
+                        triggerPlaybookMessage.classList.add("text-danger");
+                        triggerPlaybookMessage.textContent = "Unable to resume playbook.";
+                    })
+                    .finally(function () {
+                        setTriggerPlaybookPromptButtonsBusy(false);
+                    });
             }
             function clearTriggerPlaybookOutput() {
                 if (!triggerPlaybookOutputPanel || !triggerPlaybookOutputBadge || !triggerPlaybookOutputEntries) {
@@ -447,7 +502,7 @@
                 triggerPlaybookOutputBadge.className = "badge text-bg-secondary";
                 triggerPlaybookOutputEntries.innerHTML = "";
             }
-            function renderTriggerPlaybookOutput(logs, runSuccess) {
+            function renderTriggerPlaybookOutput(logs, runSuccess, runPaused) {
                 if (!triggerPlaybookOutputPanel || !triggerPlaybookOutputBadge || !triggerPlaybookOutputEntries) {
                     return;
                 }
@@ -456,8 +511,8 @@
                     return;
                 }
                 triggerPlaybookOutputPanel.classList.remove("d-none");
-                triggerPlaybookOutputBadge.textContent = runSuccess ? "Success" : "Failed";
-                triggerPlaybookOutputBadge.className = "badge " + (runSuccess ? "text-bg-success" : "text-bg-danger");
+                triggerPlaybookOutputBadge.textContent = runPaused ? "Waiting" : (runSuccess ? "Success" : "Failed");
+                triggerPlaybookOutputBadge.className = "badge " + (runPaused ? "text-bg-warning" : (runSuccess ? "text-bg-success" : "text-bg-danger"));
                 triggerPlaybookOutputEntries.innerHTML = logs.map(function (entry, index) {
                     const isSuccess = Boolean(entry?.success);
                     const stepType = String(entry?.step_type || "step").trim();
@@ -556,6 +611,7 @@
                         triggerPlaybookSelect.value = "";
                         renderTriggerPlaybookRuntimeFields([]);
                         clearTriggerPlaybookOutput();
+                        pendingTriggerPlaybookResume = null;
                         triggerPlaybookMessage.classList.remove("text-danger");
                         triggerPlaybookSubmit.disabled = false;
                         triggerPlaybookSubmit.textContent = "Trigger Playbook";
@@ -608,21 +664,35 @@
                             if (!payload.ok) {
                                 triggerPlaybookMessage.classList.add("text-danger");
                                 triggerPlaybookMessage.textContent = payload.error || "Unable to trigger playbook.";
-                                renderTriggerPlaybookOutput(payload.result?.logs || [], false);
+                                renderTriggerPlaybookOutput(payload.result?.logs || [], false, false);
                                 return;
                             }
+                            pendingTriggerPlaybookResume = payload.result?.resume || null;
                             triggerPlaybookMessage.classList.remove("text-danger");
-                            triggerPlaybookMessage.textContent = (payload.result?.success ? "Playbook finished successfully." : "Playbook finished with issues.");
-                            renderTriggerPlaybookOutput(payload.result?.logs || [], Boolean(payload.result?.success));
-                            showTriggerPlaybookPrompts(payload.result?.logs || []);
+                            triggerPlaybookMessage.textContent = payload.result?.paused
+                                ? "Playbook is waiting for your confirmation."
+                                : (payload.result?.success ? "Playbook finished successfully." : "Playbook finished with issues.");
+                            renderTriggerPlaybookOutput(payload.result?.logs || [], Boolean(payload.result?.success), Boolean(payload.result?.paused));
+                            showTriggerPlaybookPrompts(payload.result);
                         })
                         .catch(function () {
                             triggerPlaybookSubmit.disabled = false;
                             triggerPlaybookSubmit.textContent = "Trigger Playbook";
+                            pendingTriggerPlaybookResume = null;
                             triggerPlaybookMessage.classList.add("text-danger");
                             triggerPlaybookMessage.textContent = "Unable to trigger playbook.";
                             clearTriggerPlaybookOutput();
                         });
+                });
+            }
+            if (triggerPlaybookPromptAbort) {
+                triggerPlaybookPromptAbort.addEventListener("click", function () {
+                    resumeTriggeredPlaybook("abort");
+                });
+            }
+            if (triggerPlaybookPromptConfirm) {
+                triggerPlaybookPromptConfirm.addEventListener("click", function () {
+                    resumeTriggeredPlaybook("confirm");
                 });
             }
         })();

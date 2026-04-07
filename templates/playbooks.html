@@ -51,13 +51,15 @@
                 <div class="card-body">
                     <input id="playbookSearch" class="form-control mb-2" placeholder="Search..." />
                     <div id="playbookList" class="km-playbook-list small mb-3"></div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="km-playbook-palette-header mb-2">
                         <h2 class="h6 text-uppercase mb-0">Palette</h2>
                         <div class="btn-group btn-group-sm" role="group" aria-label="Palette Tabs">
                             <button type="button" class="btn btn-outline-primary active" id="paletteActionsTab">Actions</button>
+                            <button type="button" class="btn km-playbook-check-tab" id="paletteChecksTab">Checks</button>
                             <button type="button" class="btn km-playbook-flow-tab" id="paletteFlowsTab">Flows</button>
                         </div>
                     </div>
+                    <div class="km-playbook-palette-body">
                     <div id="actionPalette" class="d-grid gap-2">
                         {% for action, label in [
                             ('generate_ai_feedback', 'AI Feedback: Create'),
@@ -76,10 +78,21 @@
                         <button type="button" class="btn text-start km-playbook-palette-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ label }}</button>
                         {% endfor %}
                     </div>
+                    <div id="checkPalette" class="d-grid gap-2 d-none">
+                        {% for action, label in [
+                            ('check_note_exists', 'Note: Is present?'),
+                            ('check_todo_exists', 'ToDo: Is present for note?'),
+                            ('check_note_compliant', 'Note: Is compliant?'),
+                            ('check_ai_feedback_min_score', 'AI Feedback: Get minimal required score')
+                        ] %}
+                        <button type="button" class="btn text-start km-playbook-palette-item km-playbook-check-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ label }}</button>
+                        {% endfor %}
+                    </div>
                     <div id="flowPalette" class="d-grid gap-2 d-none">
                         <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="abort">ABORT</button>
                         <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="if_else">IF-ELSE</button>
                         <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="switch_case">SWITCH-CASE</button>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -130,7 +143,8 @@
                 <div id="playbookPromptModalBody" class="km-playbook-prompt-body"></div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                <button type="button" class="btn btn-outline-danger" id="playbookPromptAbortBtn">Abort</button>
+                <button type="button" class="btn btn-success" id="playbookPromptConfirmBtn">Confirm</button>
             </div>
         </div>
     </div>
@@ -191,7 +205,9 @@
     const editPropertiesButton = document.getElementById('editPlaybookPropertiesBtn');
     const actionPalette = document.getElementById('actionPalette');
     const flowPalette = document.getElementById('flowPalette');
+    const checkPalette = document.getElementById('checkPalette');
     const paletteActionsTab = document.getElementById('paletteActionsTab');
+    const paletteChecksTab = document.getElementById('paletteChecksTab');
     const paletteFlowsTab = document.getElementById('paletteFlowsTab');
     const editorModalElement = document.getElementById('playbookEditorModal');
     const editorForm = document.getElementById('playbookEditorForm');
@@ -202,6 +218,8 @@
     const editorSubmitButton = document.getElementById('playbookEditorSubmitBtn');
     const promptModalElement = document.getElementById('playbookPromptModal');
     const promptModalBody = document.getElementById('playbookPromptModalBody');
+    const promptAbortButton = document.getElementById('playbookPromptAbortBtn');
+    const promptConfirmButton = document.getElementById('playbookPromptConfirmBtn');
     const runModalElement = document.getElementById('playbookRunModal');
     const runForm = document.getElementById('playbookRunForm');
     const runSubmitButton = document.getElementById('playbookRunSubmitBtn');
@@ -216,8 +234,9 @@
     let activeEditor = null;
     let draggedPaletteItem = {kind:'', value:''};
     let pendingPaletteAction = '';
+    let pendingRunResume = null;
 
-    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','add_note_tags','create_todo','update_todo','delete_todo','create_deadline','inform_user','perform_note_sync']);
+    const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','add_note_tags','create_todo','update_todo','delete_todo','create_deadline','inform_user','perform_note_sync','check_note_exists','check_todo_exists','check_note_compliant','check_ai_feedback_min_score']);
     const allowedFlows = new Set(['abort', 'if_else', 'switch_case']);
     const actionLabels = {
         create_note: 'Note: Create',
@@ -232,6 +251,10 @@
         create_deadline: 'Deadline: Create',
         inform_user: 'General: Inform User',
         perform_note_sync: 'Note: Perform Sync',
+        check_note_exists: 'Note: Is present?',
+        check_todo_exists: 'ToDo: Is present for note?',
+        check_note_compliant: 'Note: Is compliant?',
+        check_ai_feedback_min_score: 'AI Feedback: Get minimal required score',
     };
     const flowLabels = {
         abort: 'ABORT',
@@ -283,6 +306,16 @@
             {key:'message', label:'Message text', type:'textarea', placeholder:'Your note was flagged for follow-up.', help:'Stored directly in the playbook. This message is shown to the user in an HTML prompt.', required:false, context_key:'-', data_type:'string', manual:true},
         ],
         perform_note_sync: [],
+        check_note_exists: [
+            {key:'note_name', label:'Note name', type:'text', placeholder:'3DES', help:'Note name to verify existence for. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
+        ],
+        check_todo_exists: [
+            {key:'note_name', label:'Note name', type:'text', placeholder:'3DES', help:'Note name whose todo should be checked. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
+        ],
+        check_note_compliant: [
+            {key:'note_name', label:'Note name', type:'text', placeholder:'3DES', help:'Note name whose compliance should be validated. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
+        ],
+        check_ai_feedback_min_score: [],
     };
     const actionOutputSchemas = {
         create_note: [{label:'Created note name', context_key:'note_name', data_type:'string'}],
@@ -297,6 +330,10 @@
         create_deadline: [{label:'No output value', context_key:'-', data_type:'none'}],
         inform_user: [{label:'No output value', context_key:'-', data_type:'none'}],
         perform_note_sync: [{label:'No output value', context_key:'-', data_type:'none'}],
+        check_note_exists: [{label:'Note exists', context_key:'check_note_exists', data_type:'boolean'}],
+        check_todo_exists: [{label:'Todo exists for note', context_key:'check_todo_exists', data_type:'boolean'}],
+        check_note_compliant: [{label:'Note compliant', context_key:'check_note_compliant', data_type:'boolean'}],
+        check_ai_feedback_min_score: [{label:'AI feedback minimum score', context_key:'check_ai_feedback_min_score', data_type:'number'}],
     };
 
     const uid = () => `b_${Date.now()}_${Math.random().toString(16).slice(2,8)}`;
@@ -405,14 +442,14 @@
         runOutputEntries.innerHTML = '';
     }
 
-    function renderRunOutput(logs=[], runSuccess=false) {
+    function renderRunOutput(logs=[], runSuccess=false, runPaused=false) {
         if (!Array.isArray(logs) || !logs.length) {
             clearRunOutput();
             return;
         }
         runOutputPanel.classList.remove('d-none');
-        runOutputBadge.textContent = runSuccess ? 'Success' : 'Failed';
-        runOutputBadge.className = `badge ${runSuccess ? 'text-bg-success' : 'text-bg-danger'}`;
+        runOutputBadge.textContent = runPaused ? 'Waiting' : (runSuccess ? 'Success' : 'Failed');
+        runOutputBadge.className = `badge ${runPaused ? 'text-bg-warning' : (runSuccess ? 'text-bg-success' : 'text-bg-danger')}`;
         runOutputEntries.innerHTML = logs.map((entry, index) => {
             const isSuccess = Boolean(entry?.success);
             const stepType = String(entry?.step_type || 'step').trim();
@@ -835,23 +872,77 @@
     }
 
     function setPaletteTab(tab) {
-        const showActions = tab !== 'flows';
+        const showActions = tab === 'actions';
+        const showChecks = tab === 'checks';
+        const showFlows = tab === 'flows';
         actionPalette.classList.toggle('d-none', !showActions);
-        flowPalette.classList.toggle('d-none', showActions);
+        checkPalette.classList.toggle('d-none', !showChecks);
+        flowPalette.classList.toggle('d-none', !showFlows);
+
         paletteActionsTab.classList.toggle('active', showActions);
-        paletteFlowsTab.classList.toggle('active', !showActions);
+        paletteChecksTab.classList.toggle('active', showChecks);
+        paletteFlowsTab.classList.toggle('active', showFlows);
+
         paletteActionsTab.classList.toggle('btn-outline-primary', showActions);
         paletteActionsTab.classList.toggle('btn-outline-secondary', !showActions);
+        paletteChecksTab.classList.toggle('btn-outline-danger', showChecks);
+        paletteChecksTab.classList.toggle('btn-outline-secondary', !showChecks);
     }
 
-    function showPromptMessages(logs) {
-        const messages = (logs || [])
-            .map((entry) => String(entry?.prompt_message || '').trim())
-            .filter(Boolean);
-        if (!messages.length) {
+    function setPromptButtonsBusy(isBusy=false) {
+        if (promptAbortButton) {
+            promptAbortButton.disabled = isBusy;
+            promptAbortButton.textContent = isBusy ? 'Waiting...' : 'Abort';
+        }
+        if (promptConfirmButton) {
+            promptConfirmButton.disabled = isBusy;
+            promptConfirmButton.textContent = isBusy ? 'Waiting...' : 'Confirm';
+        }
+    }
+
+    async function resumePromptedRun(userChoice) {
+        if (!current || !pendingRunResume) {
             return;
         }
-        promptModalBody.innerHTML = messages.map((message) => `<p class="mb-3">${escapeHtml(message)}</p>`).join('');
+        setPromptButtonsBusy(true);
+        try {
+            const response = await fetch(`/api/playbooks/${encodeURIComponent(current.name)}/execute`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({resume: pendingRunResume, user_choice: userChoice})
+            });
+            const payload = await response.json();
+            if (!payload.ok) {
+                updateStatus(payload.error || 'Unable to resume playbook.');
+                return;
+            }
+            const run = payload.result || {};
+            pendingRunResume = run.resume || null;
+            renderRunOutput(run.logs || [], Boolean(run.success), Boolean(run.paused));
+            if (run.paused && pendingRunResume) {
+                promptModalBody.innerHTML = `<p class="mb-3">${escapeHtml(run.prompt_message || pendingRunResume.prompt_message || '')}</p>`;
+                setPromptButtonsBusy(false);
+                promptModal.show();
+                return;
+            }
+            promptModal.hide();
+            updateStatus(run.success ? 'Run succeeded after confirmation.' : 'Run stopped after prompt.');
+        } catch (_) {
+            updateStatus('Unable to resume playbook.');
+        } finally {
+            setPromptButtonsBusy(false);
+        }
+    }
+
+    function showPromptMessages(run={}) {
+        pendingRunResume = run.resume || null;
+        const promptMessage = String(run.prompt_message || run.resume?.prompt_message || '').trim();
+        if (!run.paused || !pendingRunResume || !promptMessage) {
+            pendingRunResume = null;
+            return;
+        }
+        promptModalBody.innerHTML = `<p class="mb-3">${escapeHtml(promptMessage)}</p>`;
+        setPromptButtonsBusy(false);
         promptModal.show();
     }
 
@@ -1288,10 +1379,11 @@
             host.style.marginLeft = `${indent}px`;
             host.style.width = `calc(100% - ${indent}px)`;
             const el = document.createElement('div');
-            el.className = `km-playbook-block km-${block.type}${isBranchPlaceholderBlock(block) ? ' km-branch-placeholder' : ''}`;
+            const isCheckAction = block.type === 'action' && String(block.payload?.action || '').startsWith('check_');
+            el.className = `km-playbook-block km-${block.type}${isBranchPlaceholderBlock(block) ? ' km-branch-placeholder' : ''}${isCheckAction ? ' km-check-action' : ''}`;
             el.draggable = !isBranchPlaceholderBlock(block);
             el.dataset.blockId = block.id;
-            const blockTitle = isBranchPlaceholderBlock(block) ? 'PLACEHOLDER' : block.type.toUpperCase();
+            const blockTitle = isBranchPlaceholderBlock(block) ? 'PLACEHOLDER' : (isCheckAction ? 'CHECK' : block.type.toUpperCase());
             el.innerHTML = `<strong>${blockTitle}</strong><div class="small">${escapeHtml(blockDisplayName(block))}</div>`;
             if (!isBranchPlaceholderBlock(block)) {
                 el.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('block-id', block.id));
@@ -1790,6 +1882,7 @@
     });
 
     paletteActionsTab.addEventListener('click', () => setPaletteTab('actions'));
+    paletteChecksTab.addEventListener('click', () => setPaletteTab('checks'));
     paletteFlowsTab.addEventListener('click', () => setPaletteTab('flows'));
 
     canvas.addEventListener('dragover', (event) => {
@@ -1838,17 +1931,31 @@
         if (payload.ok) {
             const run = payload.result || {};
             const contextLabel = context.note_name ? ` for ${context.note_name}` : '';
-            updateStatus(`${run.success ? 'Run succeeded' : 'Run failed'}${contextLabel}${Array.isArray(run.logs) ? ` with ${run.logs.length} log entries.` : '.'}`);
-            renderRunOutput(run.logs || [], Boolean(run.success));
+            const stateLabel = run.paused ? 'Run is waiting for your confirmation' : (run.success ? 'Run succeeded' : 'Run failed');
+            updateStatus(`${stateLabel}${contextLabel}${Array.isArray(run.logs) ? ` with ${run.logs.length} log entries.` : '.'}`);
+            renderRunOutput(run.logs || [], Boolean(run.success), Boolean(run.paused));
             runModal.hide();
-            showPromptMessages(run.logs || []);
+            showPromptMessages(run);
         } else {
+            pendingRunResume = null;
             clearRunOutput();
             updateStatus(payload.error || 'Unable to execute playbook.');
         }
         runSubmitButton.disabled = false;
         runSubmitButton.textContent = 'Trigger Playbook';
     });
+
+    if (promptAbortButton) {
+        promptAbortButton.addEventListener('click', () => {
+            resumePromptedRun('abort');
+        });
+    }
+
+    if (promptConfirmButton) {
+        promptConfirmButton.addEventListener('click', () => {
+            resumePromptedRun('confirm');
+        });
+    }
 
     searchEl.addEventListener('input', fetchPlaybooks);
     setPaletteTab('actions');

@@ -1794,6 +1794,59 @@ def _playbook_action_handlers() -> dict:
         _perform_full_scan()
         return {"status": "synced"}
 
+    def _action_check_note_exists(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_note_exists called: note_name=%s", note_name)
+        parser = DocsParser()
+        exists = False
+        try:
+            parser.find_note_path(note_name)
+            exists = True
+        except FileNotFoundError:
+            exists = False
+        return {"status": "checked", "check_note_exists": exists}
+
+    def _action_check_todo_exists(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_todo_exists called: note_name=%s", note_name)
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        todo_exists = _find_todo_index_by_note_name(todos, note_name) != -1
+        return {"status": "checked", "check_todo_exists": todo_exists}
+
+    def _action_check_note_compliant(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_note_compliant called: note_name=%s", note_name)
+        note_key = Path(note_name).stem.strip().casefold()
+        note_doc = next(
+            (
+                item
+                for item in db().get_all_docs().values()
+                if Path(str(item.get("title", "")).strip()).stem.strip().casefold() == note_key
+            ),
+            None,
+        )
+        is_compliant = False
+        if note_doc:
+            is_flagged_under_construction = str(note_doc.get("is_under_construction", "false")).strip().casefold() == "true"
+            is_flagged_compliant = str(note_doc.get("is_compliant", "false")).strip().casefold() == "true"
+            is_compliant = is_flagged_compliant and not is_flagged_under_construction
+        return {"status": "checked", "check_note_compliant": is_compliant}
+
+    def _action_check_ai_feedback_min_score(_: dict, __: dict) -> dict:
+        logger.info("Playbook handler check_ai_feedback_min_score called")
+        conf = _load_conf()
+        compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
+        if not compliance_conf:
+            compliance_conf = conf.get("conpliance_check", {}) if isinstance(conf.get("conpliance_check", {}), dict) else {}
+        ai_feedback_conf = compliance_conf.get("ai_feedback", {}) if isinstance(compliance_conf.get("ai_feedback", {}), dict) else {}
+        minimum_score = ai_feedback_conf.get("min", DocsParser.DEFAULT_COMPLIANCE_CHECK["ai_feedback"]["min"])
+        try:
+            minimum_score = int(minimum_score)
+        except (TypeError, ValueError):
+            minimum_score = int(DocsParser.DEFAULT_COMPLIANCE_CHECK["ai_feedback"]["min"])
+        return {"status": "checked", "check_ai_feedback_min_score": minimum_score}
+
     return {
         "create_note": _action_create_note,
         "update_note": _action_update_note,
@@ -1807,6 +1860,10 @@ def _playbook_action_handlers() -> dict:
         "create_deadline": _action_create_deadline,
         "inform_user": _action_inform_user,
         "perform_note_sync": _action_perform_note_sync,
+        "check_note_exists": _action_check_note_exists,
+        "check_todo_exists": _action_check_todo_exists,
+        "check_note_compliant": _action_check_note_compliant,
+        "check_ai_feedback_min_score": _action_check_ai_feedback_min_score,
     }
 
 
@@ -2203,11 +2260,30 @@ def api_delete_playbook(name: str):
 def api_execute_playbook(name: str):
     payload = request.get_json(silent=True) or {}
     context = payload.get("context", {}) if isinstance(payload.get("context", {}), dict) else {}
+    resume = payload.get("resume", {}) if isinstance(payload.get("resume", {}), dict) else {}
+    user_choice = str(payload.get("user_choice", "")).strip()
     try:
-        result = _playbook_service().execute_playbook(name, context=context)
-        return jsonify({"ok": result.success, "result": {"name": result.name, "success": result.success, "logs": result.logs}})
+        if resume:
+            result = _playbook_service().resume_playbook(name, resume=resume, user_choice=user_choice)
+        else:
+            result = _playbook_service().execute_playbook(name, context=context)
+        return jsonify({
+            "ok": True,
+            "result": {
+                "name": result.name,
+                "success": result.success,
+                "paused": result.paused,
+                "prompt_message": result.prompt_message,
+                "resume": result.resume,
+                "logs": result.logs,
+            }
+        })
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc), "result": {"name": name, "success": False, "logs": []}}), 400
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "result": {"name": name, "success": False, "paused": False, "prompt_message": "", "resume": None, "logs": []}
+        }), 400
 
 
 @app.route("/playbooks/<name>/run", methods=["POST"])

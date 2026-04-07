@@ -476,6 +476,64 @@ body {
   box-shadow: 0 0 0 0.2rem rgba(139, 94, 60, 0.16);
 }
 
+
+.km-playbook-palette-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.km-playbook-palette-body {
+  max-height: min(52vh, 32rem);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  border: 1px solid rgba(127, 127, 127, 0.2);
+  border-radius: 0.7rem;
+  padding: 0.55rem;
+  background: linear-gradient(180deg, rgba(var(--bs-secondary-rgb), 0.08), rgba(var(--bs-secondary-rgb), 0.02));
+}
+
+.km-playbook-check-tab {
+  color: #b02a37;
+  border-color: rgba(220, 53, 69, 0.55);
+  background-color: transparent;
+}
+
+.km-playbook-check-tab:hover,
+.km-playbook-check-tab:focus,
+.km-playbook-check-tab.active {
+  color: #ffb3ba;
+  border-color: rgba(220, 53, 69, 0.75);
+  background-color: rgba(220, 53, 69, 0.15);
+}
+
+.km-playbook-check-item,
+.km-playbook-palette-item[data-action^="check_"] {
+  border-color: rgba(220, 53, 69, 0.72);
+  color: #ff99a3;
+}
+
+.km-playbook-check-item:hover,
+.km-playbook-check-item:focus,
+.km-playbook-check-item:active,
+.km-playbook-palette-item[data-action^="check_"]:hover,
+.km-playbook-palette-item[data-action^="check_"]:focus,
+.km-playbook-palette-item[data-action^="check_"]:active {
+  border-color: rgba(220, 53, 69, 0.9);
+  color: #ffe1e5;
+  background-color: rgba(220, 53, 69, 0.2);
+}
+
+.km-playbook-palette-item.is-selected.km-playbook-check-item,
+.km-playbook-palette-item.is-selected[data-action^="check_"] {
+  border-color: rgba(220, 53, 69, 0.95);
+  background-color: rgba(220, 53, 69, 0.3);
+}
+
+.km-check-action {
+  background-color: rgba(220, 53, 69, 0.2);
+}
 .km-playbook-flow-tab {
   color: #8b5e3c;
   border-color: rgba(139, 94, 60, 0.5);

@@ -16,6 +16,18 @@ class PlaybookRunResult:
     name: str
     success: bool
     logs: list[dict]
+    paused: bool = False
+    prompt_message: str = ""
+    resume: dict | None = None
+
+
+@dataclass
+class PlaybookExecutionOutcome:
+    status: str
+    remaining_steps: list[dict]
+    prompt_message: str = ""
+    paused_step_id: str = ""
+    paused_step_name: str = ""
 
 
 class DocsPlaybook:
@@ -34,6 +46,10 @@ class DocsPlaybook:
         "create_deadline",
         "inform_user",
         "perform_note_sync",
+        "check_note_exists",
+        "check_todo_exists",
+        "check_note_compliant",
+        "check_ai_feedback_min_score",
     }
     SUPPORTED_FLOW_OPS = {"if_else", "switch_case", "abort"}
 
@@ -414,9 +430,10 @@ class DocsPlaybook:
                         resolved[key] = interpolated_value
         return resolved
 
-    def _execute_steps(self, steps: list[dict], context: dict, logs: list[dict]) -> bool:
+    def _execute_steps(self, steps: list[dict], context: dict, logs: list[dict]) -> PlaybookExecutionOutcome:
         success = True
-        for step in steps:
+        for index, step in enumerate(steps):
+            remaining_after_current = steps[index + 1:]
             step_type = step.get("type")
             step_name = str(step.get("label") or step.get("action") or step.get("operator") or step.get("id") or step_type or "step").strip()
             if step_type == "action":
@@ -445,7 +462,7 @@ class DocsPlaybook:
                         "success": False,
                         "reason": f"No handler for action {action_name}",
                     })
-                    return False
+                    return PlaybookExecutionOutcome(status="failed", remaining_steps=[])
                 try:
                     if not self.dry_run:
                         result = handler(resolved_input, context) or {}
@@ -487,7 +504,13 @@ class DocsPlaybook:
                                 step_name,
                                 step.get("id"),
                             )
-                            return False
+                            return PlaybookExecutionOutcome(
+                                status="paused",
+                                remaining_steps=remaining_after_current,
+                                prompt_message=prompt_message,
+                                paused_step_id=str(step.get("id") or "").strip(),
+                                paused_step_name=step_name,
+                            )
                         if action_control == "abort":
                             self.logger.info(
                                 "Playbook execution aborted by action: action=%s step=%s step_id=%s",
@@ -495,7 +518,7 @@ class DocsPlaybook:
                                 step_name,
                                 step.get("id"),
                             )
-                            return False
+                            return PlaybookExecutionOutcome(status="aborted", remaining_steps=[])
                     else:
                         self.logger.info(
                             "Playbook action skipped by dry run: action=%s step=%s step_id=%s",
@@ -526,7 +549,7 @@ class DocsPlaybook:
                         "success": False,
                         "reason": str(exc),
                     })
-                    return False
+                    return PlaybookExecutionOutcome(status="failed", remaining_steps=[])
             elif step_type == "flow":
                 operator = str(step.get("operator", "")).strip()
                 if operator == "abort":
@@ -544,7 +567,7 @@ class DocsPlaybook:
                         "success": False,
                         "reason": "Abort flow stopped the workflow.",
                     })
-                    return False
+                    return PlaybookExecutionOutcome(status="aborted", remaining_steps=[])
                 if operator == "if_else":
                     is_true = self._evaluate_if_else(step.get("input", {}), context)
                     branch_key = "true_branch" if is_true else "false_branch"
@@ -569,7 +592,7 @@ class DocsPlaybook:
                         "success": True,
                         "reason": f"if_else routed to {branch_key}.",
                     })
-                    branch_ok = self._execute_steps(step.get(branch_key, []), context, logs)
+                    branch_outcome = self._execute_steps(step.get(branch_key, []), context, logs)
                 elif operator == "switch_case":
                     candidate = self._resolve_flow_value(step.get("input", {}), context)
                     cases = step.get("cases", []) if isinstance(step.get("cases", []), list) else []
@@ -609,7 +632,7 @@ class DocsPlaybook:
                         "success": True,
                         "reason": branch_reason,
                     })
-                    branch_ok = self._execute_steps(branch_steps, context, logs)
+                    branch_outcome = self._execute_steps(branch_steps, context, logs)
                 else:
                     self.logger.error(
                         "Playbook flow unsupported: flow=%s step=%s step_id=%s",
@@ -627,8 +650,32 @@ class DocsPlaybook:
                     })
                     success = False
                     continue
-                continuation_ok = self._execute_steps(step.get("next_steps", []), context, logs)
-                success = success and branch_ok and continuation_ok
+                if branch_outcome.status == "paused":
+                    return PlaybookExecutionOutcome(
+                        status="paused",
+                        remaining_steps=branch_outcome.remaining_steps + step.get("next_steps", []) + remaining_after_current,
+                        prompt_message=branch_outcome.prompt_message,
+                        paused_step_id=branch_outcome.paused_step_id,
+                        paused_step_name=branch_outcome.paused_step_name,
+                    )
+                if branch_outcome.status == "aborted":
+                    return PlaybookExecutionOutcome(status="aborted", remaining_steps=[])
+                if branch_outcome.status == "failed":
+                    return PlaybookExecutionOutcome(status="failed", remaining_steps=[])
+
+                continuation_outcome = self._execute_steps(step.get("next_steps", []), context, logs)
+                if continuation_outcome.status == "paused":
+                    return PlaybookExecutionOutcome(
+                        status="paused",
+                        remaining_steps=continuation_outcome.remaining_steps + remaining_after_current,
+                        prompt_message=continuation_outcome.prompt_message,
+                        paused_step_id=continuation_outcome.paused_step_id,
+                        paused_step_name=continuation_outcome.paused_step_name,
+                    )
+                if continuation_outcome.status == "aborted":
+                    return PlaybookExecutionOutcome(status="aborted", remaining_steps=[])
+                if continuation_outcome.status == "failed":
+                    return PlaybookExecutionOutcome(status="failed", remaining_steps=[])
             else:
                 logs.append({
                     "step_id": step.get("id"),
@@ -638,12 +685,12 @@ class DocsPlaybook:
                     "reason": "Unknown step type.",
                 })
                 success = False
-        return success
+        return PlaybookExecutionOutcome(status="success" if success else "failed", remaining_steps=[])
 
     def execute_playbook(self, name: str, context: dict | None = None) -> PlaybookRunResult:
         details = self.get_playbook(name)
         config = details.get("config", {})
-        run_context = context or {}
+        run_context = dict(context or {})
         self.logger.info(
             "Playbook execution started: playbook=%s context_keys=%s",
             name,
@@ -655,11 +702,88 @@ class DocsPlaybook:
             return PlaybookRunResult(name=name, success=False, logs=[{"success": False, "reason": "Trigger conditions not met."}])
 
         logs: list[dict] = []
-        success = self._execute_steps(config.get("definition", {}).get("steps", []), run_context, logs)
+        outcome = self._execute_steps(config.get("definition", {}).get("steps", []), run_context, logs)
+        success = outcome.status == "success"
         self.logger.info(
-            "Playbook execution finished: playbook=%s success=%s log_entries=%s",
+            "Playbook execution finished: playbook=%s success=%s paused=%s log_entries=%s",
             name,
             success,
+            outcome.status == "paused",
             len(logs),
         )
-        return PlaybookRunResult(name=name, success=success, logs=logs)
+        resume_payload = None
+        if outcome.status == "paused":
+            resume_payload = {
+                "context": run_context,
+                "remaining_steps": outcome.remaining_steps,
+                "logs": logs,
+                "prompt_message": outcome.prompt_message,
+                "paused_step_id": outcome.paused_step_id,
+                "paused_step_name": outcome.paused_step_name,
+            }
+        return PlaybookRunResult(
+            name=name,
+            success=success,
+            logs=logs,
+            paused=outcome.status == "paused",
+            prompt_message=outcome.prompt_message,
+            resume=resume_payload,
+        )
+
+    def resume_playbook(self, name: str, resume: dict, user_choice: str) -> PlaybookRunResult:
+        self.get_playbook(name)
+        run_context = dict(resume.get("context", {})) if isinstance(resume.get("context", {}), dict) else {}
+        remaining_steps = resume.get("remaining_steps", []) if isinstance(resume.get("remaining_steps", []), list) else []
+        logs = list(resume.get("logs", [])) if isinstance(resume.get("logs", []), list) else []
+        prompt_message = str(resume.get("prompt_message", "")).strip()
+        paused_step_id = str(resume.get("paused_step_id", "")).strip()
+        paused_step_name = str(resume.get("paused_step_name", "")).strip() or "User prompt"
+        normalized_choice = str(user_choice or "").strip().casefold()
+
+        run_context["user_response"] = normalized_choice
+        run_context["decision"] = normalized_choice
+
+        if normalized_choice in {"abort", "no", "cancel", "false", "0"}:
+            logs.append({
+                "step_id": paused_step_id,
+                "step_type": "action",
+                "step_name": paused_step_name,
+                "action": "inform_user",
+                "success": False,
+                "reason": "User aborted the playbook at the prompt.",
+                "prompt_message": prompt_message,
+            })
+            return PlaybookRunResult(name=name, success=False, logs=logs)
+
+        if normalized_choice not in {"confirm", "yes", "continue", "ok", "true", "1"}:
+            raise PlaybookValidationError("inform_user resume requires a confirm or abort choice.")
+
+        logs.append({
+            "step_id": paused_step_id,
+            "step_type": "action",
+            "step_name": paused_step_name,
+            "action": "inform_user",
+            "success": True,
+            "reason": "User confirmed the playbook prompt.",
+            "prompt_message": prompt_message,
+        })
+        outcome = self._execute_steps(remaining_steps, run_context, logs)
+        success = outcome.status == "success"
+        resume_payload = None
+        if outcome.status == "paused":
+            resume_payload = {
+                "context": run_context,
+                "remaining_steps": outcome.remaining_steps,
+                "logs": logs,
+                "prompt_message": outcome.prompt_message,
+                "paused_step_id": outcome.paused_step_id,
+                "paused_step_name": outcome.paused_step_name,
+            }
+        return PlaybookRunResult(
+            name=name,
+            success=success,
+            logs=logs,
+            paused=outcome.status == "paused",
+            prompt_message=outcome.prompt_message,
+            resume=resume_payload,
+        )
