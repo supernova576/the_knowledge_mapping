@@ -352,6 +352,8 @@ class DocsWriter:
         links_map: dict[str, str],
         video_links_map: dict[str, str],
         create_missing_sections: bool,
+        update_links_section: bool = True,
+        update_video_links_section: bool = True,
     ) -> tuple[bool, list[str]]:
         try:
             lines = doc_path.read_text(encoding="utf-8").splitlines()
@@ -368,8 +370,10 @@ class DocsWriter:
             if missing_sections:
                 lines = self._create_missing_sections(lines, missing_sections)
 
-            lines = self._update_link_section(lines, "#### Erklärvideo", video_links_map)
-            lines = self._update_link_section(lines, "#### Externe Referenzen", links_map)
+            if update_video_links_section:
+                lines = self._update_link_section(lines, "#### Erklärvideo", video_links_map)
+            if update_links_section:
+                lines = self._update_link_section(lines, "#### Externe Referenzen", links_map)
             lines = self._update_tags_section(lines, tags_to_add, tags_to_remove)
 
             doc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -392,6 +396,8 @@ class DocsWriter:
             links_map={},
             video_links_map={},
             create_missing_sections=False,
+            update_links_section=False,
+            update_video_links_section=False,
         )
 
     def _insert_history_entry(self, current_content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
