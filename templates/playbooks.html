@@ -59,13 +59,23 @@
                         </div>
                     </div>
                     <div id="actionPalette" class="d-grid gap-2">
-                        {% for action in ['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user','perform_note_sync'] %}
-                        <button type="button" class="btn text-start km-playbook-palette-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ action }}</button>
+                        {% for action, label in [
+                            ('generate_ai_feedback', 'AI Feedback: Create'),
+                            ('create_deadline', 'Deadline: Create'),
+                            ('inform_user', 'General: Inform User'),
+                            ('generate_ai_questions', 'Learning: AI Question Generation'),
+                            ('create_learning', 'Learning: Create'),
+                            ('create_note', 'Note: Create'),
+                            ('perform_note_sync', 'Note: Perform Sync'),
+                            ('update_note', 'Note: Update'),
+                            ('create_todo', 'ToDo: Create')
+                        ] %}
+                        <button type="button" class="btn text-start km-playbook-palette-item" draggable="true" data-kind="action" data-action="{{ action }}">{{ label }}</button>
                         {% endfor %}
                     </div>
                     <div id="flowPalette" class="d-grid gap-2 d-none">
-                        <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="if_else">if_else</button>
-                        <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="switch_case">switch_case</button>
+                        <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="if_else">IF-ELSE</button>
+                        <button type="button" class="btn text-start km-playbook-flow-item" draggable="true" data-kind="flow" data-flow="switch_case">SWITCH-CASE</button>
                     </div>
                 </div>
             </div>
@@ -205,6 +215,21 @@
 
     const allowedActions = new Set(['create_note','update_note','create_learning','generate_ai_questions','generate_ai_feedback','create_todo','create_deadline','inform_user','perform_note_sync']);
     const allowedFlows = new Set(['if_else', 'switch_case']);
+    const actionLabels = {
+        create_note: 'Note: Create',
+        update_note: 'Note: Update',
+        create_learning: 'Learning: Create',
+        generate_ai_questions: 'Learning: AI Question Generation',
+        generate_ai_feedback: 'AI Feedback: Create',
+        create_todo: 'ToDo: Create',
+        create_deadline: 'Deadline: Create',
+        inform_user: 'General: Inform User',
+        perform_note_sync: 'Note: Perform Sync',
+    };
+    const flowLabels = {
+        if_else: 'IF-ELSE',
+        switch_case: 'SWITCH-CASE',
+    };
     const actionInputSchemas = {
         create_note: [
             {key:'note_name', label:'Note name', type:'text', placeholder:'Project Kickoff', help:'Name of the note to create. Runtime context key: note_name.', required:true, context_key:'note_name', data_type:'string'},
@@ -289,9 +314,17 @@
         if (!block) return '';
         const payload = block.payload || {};
         if (block.type === 'trigger') return payload.label || payload.trigger_type || 'Trigger';
-        if (block.type === 'action') return payload.label || payload.action || 'Action';
-        if (block.type === 'flow') return payload.label || payload.operator || 'Flow';
+        if (block.type === 'action') return payload.label || actionLabels[payload.action] || payload.action || 'Action';
+        if (block.type === 'flow') return payload.label || flowLabels[payload.operator] || payload.operator || 'Flow';
         return block.id || '';
+    }
+
+    function actionDisplayName(action) {
+        return actionLabels[action] || action || 'Action';
+    }
+
+    function flowDisplayName(operator) {
+        return flowLabels[operator] || operator || 'Flow';
     }
 
     function isBranchPlaceholderBlock(block) {
@@ -961,7 +994,7 @@
             type:'action',
             x:Number(appendAfterBlock.x) || ((Number(flowBlock.x) || 120) + 120),
             y:(Number(appendAfterBlock.y) || 40) + 90,
-            payload:{action, label:action, input:{}}
+            payload:{action, label:actionDisplayName(action), input:{}}
         });
         const existingNextEdge = (current.layout.edges || []).find((edge) => edge.source === appendAfterBlock.id && edge.branch === 'next');
         if (existingNextEdge) {
@@ -973,7 +1006,7 @@
         }
         rebalanceFlowBranches(flowBlock);
         renderCanvas();
-        updateStatus(`${action} was mapped to ${edgeDisplayBranch(flowBlock, branchKey)}.`);
+        updateStatus(`${actionDisplayName(action)} was mapped to ${edgeDisplayBranch(flowBlock, branchKey)}.`);
         clearFlowDropTargets();
         setPendingPaletteAction('');
     }
@@ -997,11 +1030,11 @@
         const nextY = typeof y === 'number'
             ? Math.round(y)
             : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || 40) + 90));
-        const newBlock = {id, type:'action', x:nextX, y:nextY, payload:{action, label:action, input:{}}};
+        const newBlock = {id, type:'action', x:nextX, y:nextY, payload:{action, label:actionDisplayName(action), input:{}}};
         current.layout.blocks.push(newBlock);
         insertBlockIntoLinearFlow(newBlock, insertionY);
         renderCanvas();
-        updateStatus(`${action} added to the playbook.`);
+        updateStatus(`${actionDisplayName(action)} added to the playbook.`);
     }
 
     function addFlowBlock(operator, x=null, y=null) {
@@ -1024,8 +1057,8 @@
             ? Math.round(y)
             : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || base.y || 40) + 90));
         const flowPayload = operator === 'switch_case'
-            ? {operator, label:'switch_case', input:{value_to_compare:'', source:'context'}, cases:[{key:caseUid(), label:'Case 1', value:'value_1'}]}
-            : {operator, label:operator, input:{value_to_compare:'', equals:'true', source:'literal'}};
+            ? {operator, label:flowDisplayName('switch_case'), input:{value_to_compare:'', source:'context'}, cases:[{key:caseUid(), label:'Case 1', value:'value_1'}]}
+            : {operator, label:flowDisplayName(operator), input:{value_to_compare:'', equals:'true', source:'literal'}};
         const newFlowBlock = {id:newId, type:'flow', x:flowX, y:flowY, payload:flowPayload};
         current.layout.blocks.push(newFlowBlock);
         insertBlockIntoLinearFlow(newFlowBlock, insertionY);
@@ -1046,7 +1079,7 @@
             current.layout.edges.push({source:newId, target:falseId, branch:'false'});
         }
         renderCanvas();
-        updateStatus(`${operator} flow added to the playbook.`);
+        updateStatus(`${flowDisplayName(operator)} flow added to the playbook.`);
     }
 
     function syncSwitchCaseBranches(block) {
@@ -1312,7 +1345,7 @@
                     help:`When enabled, the saved ${field.label.toLowerCase()} value replaces the incoming runtime context for this parameter.`,
                 }));
             openEditor({
-                title: `Edit Action: ${block.payload.action}`,
+                title: `Edit Action: ${actionDisplayName(block.payload.action)}`,
                 submitLabel: 'Save Action',
                 help: 'Action parameters can be hard-coded here. Per-parameter override switches decide whether saved values replace incoming runtime context or only act as fallbacks.',
                 variant: 'action',
@@ -1334,7 +1367,7 @@
                     deleteBlock(block.id);
                 },
                 onSubmit: (formData) => {
-                    block.payload.label = (formData.get('label') || '').toString().trim() || block.payload.action;
+                    block.payload.label = (formData.get('label') || '').toString().trim() || actionDisplayName(block.payload.action);
                     block.payload.input = {};
                     configurableFields.forEach((field) => {
                         const value = (formData.get(field.key) || '').toString().trim();
@@ -1353,7 +1386,7 @@
         } else if (block.type === 'flow') {
             if (block.payload.operator === 'switch_case') {
                 openEditor({
-                    title: 'Edit Flow: switch_case',
+                    title: `Edit Flow: ${flowDisplayName('switch_case')}`,
                     submitLabel: 'Save Flow',
                     help: 'Configure the switch input and define one or more named cases. If no case matches, the default branch is used.',
                     variant: 'flow',
@@ -1386,7 +1419,7 @@
                     onSubmit: () => {
                         const source = (editorForm.querySelector('[name="source"]')?.value || 'context').toString();
                         const valueToCompare = (editorForm.querySelector('[name="value_to_compare"]')?.value || '').toString().trim();
-                        const label = (editorForm.querySelector('[name="label"]')?.value || '').toString().trim() || 'switch_case';
+                        const label = (editorForm.querySelector('[name="label"]')?.value || '').toString().trim() || flowDisplayName('switch_case');
                         const rows = [...editorFields.querySelectorAll('#switchCaseRows .km-switch-case-row')];
                         const cases = rows.map((row, index) => {
                             const key = (row.querySelector(`input[name="case_key_${index}"]`)?.value || caseUid()).toString().trim();
@@ -1418,7 +1451,7 @@
                 return;
             }
             openEditor({
-                title: 'Edit Flow: if_else',
+                title: `Edit Flow: ${flowDisplayName('if_else')}`,
                 submitLabel: 'Save Flow',
                 help: 'Configure the branch comparison. The engine compares the selected value against the expected value and routes execution to the true or false branch.',
                 variant: 'flow',
@@ -1446,7 +1479,7 @@
                 },
                 onSubmit: (formData) => {
                     block.payload.input = block.payload.input || {};
-                    block.payload.label = (formData.get('label') || '').toString().trim() || block.payload.operator;
+                    block.payload.label = (formData.get('label') || '').toString().trim() || flowDisplayName(block.payload.operator);
                     block.payload.input.source = (formData.get('source') || 'literal').toString();
                     block.payload.input.from_action_output = formData.get('from_action_output') ? 'true' : '';
                     block.payload.input.comparison = (formData.get('comparison') || 'equals').toString();
