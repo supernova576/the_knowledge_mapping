@@ -26,35 +26,45 @@
                         href="#" role="button" data-bs-toggle="dropdown">
                         Advanced
                     </a>
-                    <ul class="dropdown-menu dropdown-menu-end">
+                    <ul class="dropdown-menu dropdown-menu-end km-advanced-menu">
+                        <li><h6 class="dropdown-header">Learning &amp; AI</h6></li>
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'learning' %}active{% endif %}"
+                                href="{{ url_for('learning_overview') }}">
+                                Learning
+                                <span class="text-body-secondary small d-block">Practice and fused exams</span>
+                            </a>
+                        </li>
                         <li>
                             <a class="dropdown-item {% if active_page == 'ai_feedback' %}active{% endif %}"
                                 href="{{ url_for('ai_feedback_overview') }}">
                                 AI Feedback
+                                <span class="text-body-secondary small d-block">Analyze docs with AI</span>
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><h6 class="dropdown-header">Automation &amp; Tools</h6></li>
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'playbooks' %}active{% endif %}"
+                                href="{{ url_for('playbooks_page') }}">
+                                Playbooks
+                                <span class="text-body-secondary small d-block">Reusable workflow actions</span>
                             </a>
                         </li>
                         <li>
                             <a class="dropdown-item {% if active_page == 'export' %}active{% endif %}"
                                 href="{{ url_for('export_page') }}">
                                 Export
+                                <span class="text-body-secondary small d-block">PDF and output formats</span>
                             </a>
                         </li>
-                        <li>
-                            <a class="dropdown-item {% if active_page == 'learning' %}active{% endif %}"
-                                href="{{ url_for('learning_overview') }}">
-                                Learning
-                            </a>
-                        </li>
-                        <li>
-                            <a class="dropdown-item {% if active_page == 'playbooks' %}active{% endif %}"
-                                href="{{ url_for('playbooks_page') }}">
-                                Playbooks
-                            </a>
-                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><h6 class="dropdown-header">Repository</h6></li>
                         <li>
                             <a class="dropdown-item {% if active_page == 'version_control' %}active{% endif %}"
                                 href="{{ url_for('version_control_overview') }}">
                                 Version Control
+                                <span class="text-body-secondary small d-block">Track and review changes</span>
                             </a>
                         </li>
                     </ul>
@@ -65,17 +75,20 @@
                         href="#" role="button" data-bs-toggle="dropdown">
                         HSLU
                     </a>
-                    <ul class="dropdown-menu dropdown-menu-end">
+                    <ul class="dropdown-menu dropdown-menu-end km-advanced-menu">
+                        <li><h6 class="dropdown-header">Semester Planning</h6></li>
                         <li>
                             <a class="dropdown-item {% if active_page == 'hslu_semester_overview' %}active{% endif %}"
                                 href="{{ url_for('hslu_semester_overview') }}">
                                 Semester Overview
+                                <span class="text-body-secondary small d-block">Track weekly progress across modules</span>
                             </a>
                         </li>
                         <li>
                             <a class="dropdown-item {% if active_page == 'hslu_semester_checklist' %}active{% endif %}"
                                 href="{{ url_for('hslu_semester_checklist') }}">
                                 Semester Checklist
+                                <span class="text-body-secondary small d-block">Manage tasks and completion checkpoints</span>
                             </a>
                         </li>
                     </ul>

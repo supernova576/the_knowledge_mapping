@@ -13,7 +13,15 @@
 <div class="container py-4">
     {% set active_page = 'learning' %}
     {% include '_navbar.html' %}
-    <h1 class="h3 mb-4">Learning</h1>
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-2 mb-4">
+        <div>
+            <h1 class="h3 mb-1">Learning</h1>
+            <p class="text-body-secondary mb-0">Manage learnings, launch exams, and keep source mappings up to date.</p>
+        </div>
+        <form method="post" action="{{ url_for('learning_sync') }}">
+            <button class="btn btn-primary">Sync Learnings</button>
+        </form>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -26,77 +34,122 @@
     {% endwith %}
 
     <div class="row g-3 mb-4">
-        <div class="col-lg-4 col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Total Learnings</h2><p class="display-6 mb-0">{{ total_learnings }}</p></div></div></div>
-        <div class="col-lg-4 col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">OpenRouter Credits Left</h2><p class="display-6 mb-0">{{ openrouter_credits_left }} $</p></div></div></div>
-        <div class="col-lg-4 col-md-6"><div class="card shadow-sm border-primary-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Manual Sync</h2><form method="post" action="{{ url_for('learning_sync') }}"><button class="btn btn-primary w-100">Sync Learnings</button></form></div></div></div>
+        <div class="col-lg-6 col-xl-4">
+            <div class="card shadow-sm h-100 km-learning-stat-card">
+                <div class="card-body">
+                    <h2 class="h6 text-body-secondary">Total Learnings</h2>
+                    <p class="display-6 mb-0">{{ total_learnings }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 col-xl-4">
+            <div class="card shadow-sm border-info-subtle h-100 km-learning-stat-card">
+                <div class="card-body">
+                    <h2 class="h6 text-body-secondary">OpenRouter Credits Left</h2>
+                    <p class="display-6 mb-0">{{ openrouter_credits_left }} $</p>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="card shadow-sm mb-4"><div class="card-body">
-        <h2 class="h5">Search &amp; filter</h2>
-        <form method="get" action="{{ url_for('learning_overview') }}" class="row g-2 align-items-end">
-            <div class="col-md-10"><label class="form-label">Name</label><input name="name" value="{{ selected_name }}" class="form-control" placeholder="Filter by learning name" /></div>
-            <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
-        </form>
-    </div></div>
-
-    <div class="card shadow-sm mb-4"><div class="card-body">
-        <h2 class="h5">Create Learning</h2>
-        <form method="post" action="{{ url_for('learning_create') }}" class="row g-2 align-items-end">
-            <div class="col-md-10">
-                <label class="form-label">Document</label>
-                <select class="form-select" name="selected_doc" required>
-                    <option value="" selected disabled>Select a markdown note</option>
-                    {% for doc in available_docs %}
-                    <option value="{{ doc }}">{{ doc }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-2 d-grid"><button class="btn btn-outline-success">Create</button></div>
-        </form>
-    </div></div>
-
-    <div class="card shadow-sm"><div class="card-body">
-        <h2 class="h5 mb-3">Learning Overview</h2>
-        <form method="post" action="{{ url_for('learning_mode_fused') }}" class="mb-4">
-            <input type="hidden" name="exam_source" value="learnings" />
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h3 class="h6 mb-0">Fused Exam from Learnings</h3>
-                <button class="btn btn-primary btn-sm">Start Fused Exam</button>
-            </div>
-            <p class="text-muted small mb-2">Select one or more learning entries and create one combined exam.</p>
-            <div class="border rounded p-2" style="max-height: 180px; overflow:auto;">
-                {% for row in learning_rows %}
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="selected_learning_ids" id="fused-learning-{{ row.id }}" value="{{ row.id }}">
-                    <label class="form-check-label" for="fused-learning-{{ row.id }}">{{ row.status_icon }} {{ row.file_name }}</label>
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h2 class="h5 mb-3">Search &amp; Filter</h2>
+                    <form method="get" action="{{ url_for('learning_overview') }}" class="row g-2 align-items-end">
+                        <div class="col-sm-8">
+                            <label class="form-label">Learning Name</label>
+                            <input name="name" value="{{ selected_name }}" class="form-control" placeholder="Filter by learning name" />
+                        </div>
+                        <div class="col-sm-4 d-grid">
+                            <button class="btn btn-outline-primary">Apply Filter</button>
+                        </div>
+                    </form>
                 </div>
-                {% else %}
-                <div class="text-muted small">No learning files available.</div>
-                {% endfor %}
             </div>
-        </form>
-
-        <form method="post" action="{{ url_for('learning_mode_fused') }}" class="mb-3">
-            <input type="hidden" name="exam_source" value="tags" />
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h3 class="h6 mb-0">Fused Exam from Tags</h3>
-                <button class="btn btn-outline-primary btn-sm">Start Tag Exam</button>
+        </div>
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h2 class="h5 mb-3">Create Learning</h2>
+                    <form method="post" action="{{ url_for('learning_create') }}" class="row g-2 align-items-end">
+                        <div class="col-sm-8">
+                            <label class="form-label">Document</label>
+                            <select class="form-select" name="selected_doc" required>
+                                <option value="" selected disabled>Select a markdown note</option>
+                                {% for doc in available_docs %}
+                                <option value="{{ doc }}">{{ doc }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-sm-4 d-grid">
+                            <button class="btn btn-outline-success">Create Learning</button>
+                        </div>
+                    </form>
+                </div>
             </div>
-            <p class="text-muted small mb-2">Choose one or more tags. The app maps docs to learnings in the background.</p>
-            <select class="form-select" name="selected_tags" multiple size="5">
-                {% for tag in all_tags %}
-                <option value="{{ tag }}">{{ tag }}</option>
-                {% endfor %}
-            </select>
-        </form>
+        </div>
+    </div>
 
-        <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Title</th><th>Created</th><th>Last Modified</th><th>Actions</th></tr></thead><tbody>
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h2 class="h5 mb-3">Exam Builder</h2>
+            <div class="row g-4">
+                <div class="col-lg-6">
+                    <form method="post" action="{{ url_for('learning_mode_fused') }}" class="h-100 km-learning-panel p-3">
+                        <input type="hidden" name="exam_source" value="learnings" />
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h3 class="h6 mb-0">Fused Exam from Learnings</h3>
+                            <button class="btn btn-primary btn-sm">Start Fused Exam</button>
+                        </div>
+                        <p class="text-body-secondary small mb-2">Select one or more learning entries and create one combined exam.</p>
+                        <div class="border rounded p-2 km-learning-scroll-box">
+                            {% for row in learning_rows %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="selected_learning_ids" id="fused-learning-{{ row.id }}" value="{{ row.id }}">
+                                <label class="form-check-label" for="fused-learning-{{ row.id }}">{{ row.status_icon }} {{ row.file_name }}</label>
+                            </div>
+                            {% else %}
+                            <div class="text-body-secondary small">No learning files available.</div>
+                            {% endfor %}
+                        </div>
+                    </form>
+                </div>
+                <div class="col-lg-6">
+                    <form method="post" action="{{ url_for('learning_mode_fused') }}" class="h-100 km-learning-panel p-3">
+                        <input type="hidden" name="exam_source" value="tags" />
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h3 class="h6 mb-0">Fused Exam from Tags</h3>
+                            <button class="btn btn-outline-primary btn-sm">Start Tag Exam</button>
+                        </div>
+                        <p class="text-body-secondary small mb-2">Choose one or more tags. The app maps docs to learnings in the background.</p>
+                        <select class="form-select km-learning-scroll-box" name="selected_tags" multiple size="7">
+                            {% for tag in all_tags %}
+                            <option value="{{ tag }}">{{ tag }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <h2 class="h5 mb-0">Learning Overview</h2>
+            <span class="badge rounded-pill text-bg-secondary">{{ learning_rows | length }} entries</span>
+        </div>
+        <div class="table-responsive">
+        <table class="table table-hover align-middle km-learning-table">
+        <thead><tr><th>Title</th><th>Created</th><th>Last Modified</th><th class="text-end">Actions</th></tr></thead><tbody>
         {% for row in learning_rows %}
         <tr>
             <td>{{ row.status_icon }} {{ row.file_name }}</td>
             <td>{{ row.creation_date }}</td>
             <td>{{ row.last_modified_date }}</td>
-            <td>
+            <td class="text-end">
                 <div class="dropdown">
                     <button class="btn btn-secondary btn-sm dropdown-toggle km-actions-dropdown-toggle" type="button" id="dropdownMenuButton-{{ row.id }}" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                         Actions
@@ -127,7 +180,8 @@
         <tr><td colspan="4" class="text-center text-muted py-4">No learning files found for this filter.</td></tr>
         {% endfor %}
         </tbody></table></div>
-    </div></div>
+        </div>
+    </div>
 
     {% include '_footer.html' %}
 </div>

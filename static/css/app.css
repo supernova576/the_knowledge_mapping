@@ -318,6 +318,35 @@ body {
   margin-bottom: 0.35rem;
 }
 
+.km-advanced-menu {
+  min-width: 19rem;
+}
+
+.km-advanced-menu .dropdown-item {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.km-learning-stat-card {
+  border-radius: 0.8rem;
+}
+
+.km-learning-panel {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.8rem;
+  background: linear-gradient(180deg, rgba(var(--bs-secondary-rgb), 0.06), rgba(var(--bs-secondary-rgb), 0.02));
+}
+
+.km-learning-scroll-box {
+  max-height: 15rem;
+  overflow: auto;
+}
+
+.km-learning-table td,
+.km-learning-table th {
+  white-space: nowrap;
+}
+
 .km-playbook-list-name {
   font-weight: 600;
   line-height: 1.2;

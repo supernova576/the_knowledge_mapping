@@ -73,11 +73,3 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
 
 ## Features to implement
-- Playbooks
-  - Flow
-    - abort (input: Failed, Stopped | output: -)
-- Learning Module
-  - Redesign Layout
-- Advanced Nav dropdown
-  - Redesign Layout (so that it is more clear for user)
-    
