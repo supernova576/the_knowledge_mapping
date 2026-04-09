@@ -73,3 +73,16 @@ Timestamps for syncs/logging are generated in the `Europe/Zurich` timezone.
 - The UI and parser behavior depend on the structure/content of your Markdown docs and configured paths.
 
 ## Features to implement
+- Project module
+  - create project (übersicht wie https://startbootstrap.com/template/heeroic-features gestalten)
+  - rename 01_PRIV => 01_PROJ
+  - ordnerstruktur eines projekts
+    - PROJECT NAME (folder)
+    |
+    |_ Ressourcen (md-file) => Beschreibung, Link (https OR link to Note), NOTES (Tabelle) / proj settings (project tag => in note hinzufügen: format #PROJECT_"project_name", description => freetext)
+    |
+    |_ "projectname".canvas (canvas file) => Anzeigen und korrekt rendern
+    |
+    |_ Kanban (md-file) => Deliverables, open, in progress, on-hold, done (in tabelle speichern)(mit deadlines modul syncen)
+  - conf.json => path to project folder
+  - templates => 3 - xxx

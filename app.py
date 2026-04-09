@@ -642,6 +642,166 @@ def _docs_root_path_from_conf(conf: dict | None = None) -> Path:
     loaded_conf = conf if isinstance(conf, dict) else _load_conf()
     return Path(loaded_conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
 
+def _projects_root_path_from_conf(conf: dict | None = None) -> Path:
+    loaded_conf = conf if isinstance(conf, dict) else _load_conf()
+    return Path(loaded_conf.get("projects", {}).get("root_path", "/the-knowledge/01_PROJ")).resolve()
+
+
+def _sanitize_project_name(raw_project_name: str) -> str:
+    project_name = str(raw_project_name or "").strip()
+    if not project_name:
+        raise ValueError("Project name is required.")
+    if len(project_name) > 120:
+        raise ValueError("Project name is too long.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]+", project_name):
+        raise ValueError("Project name contains invalid characters.")
+    if project_name in {".", ".."}:
+        raise ValueError("Project name is invalid.")
+    return project_name
+
+
+def _resolve_project_path(project_name: str, conf: dict | None = None) -> Path:
+    normalized_name = _sanitize_project_name(project_name)
+    projects_root = _projects_root_path_from_conf(conf)
+    target_path = (projects_root / normalized_name).resolve()
+    if projects_root != target_path and projects_root not in target_path.parents:
+        raise ValueError("Invalid project path.")
+    return target_path
+
+
+def _load_project_template(template_name: str, fallback_content: str) -> str:
+    template_path = Path("/the-knowledge/03_TEMPLATES") / f"{template_name}.md"
+    if template_path.exists() and template_path.is_file():
+        return template_path.read_text(encoding="utf-8")
+    return fallback_content
+
+
+def _is_external_link(href: str) -> bool:
+    return bool(re.match(r"^(?:https?://|mailto:)", str(href or "").strip(), flags=re.IGNORECASE))
+
+
+def _build_deadline_mapping_for_kanban(project_name: str, kanban_items: list[dict], parser: DocsParser) -> dict[str, dict]:
+    deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    by_name = {str(item.get("name", "")).strip(): item for item in deadlines}
+
+    mapping: dict[str, dict] = {}
+    for item in kanban_items:
+        deliverable = str(item.get("deliverable", "")).strip()
+        expected_name = f"{project_name} - {deliverable}" if deliverable else f"{project_name} - "
+        mapped = by_name.get(expected_name, {})
+        mapping[deliverable] = {
+            "name": expected_name,
+            "description": str(mapped.get("description", "")).strip(),
+            "time": str(mapped.get("time", "")).strip(),
+            "date": str(mapped.get("date", "")).strip(),
+            "status": str(mapped.get("status", "Not Started")).strip() or "Not Started",
+        }
+    return mapping
+
+
+def _normalize_project_text(value: str, *, field_name: str, max_length: int = 500) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if "|" in normalized:
+        raise ValueError(f"{field_name} must not contain '|'.")
+    return normalized
+
+
+def _normalize_project_multiline_text(value: str, *, field_name: str, max_length: int = 2000) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if "|" in normalized:
+        raise ValueError(f"{field_name} must not contain '|'.")
+    return normalized
+
+
+def _normalize_project_link(value: str) -> str:
+    normalized = _normalize_project_text(value, field_name="Resource link", max_length=1000)
+    if normalized and ("\n" in normalized or "\r" in normalized):
+        raise ValueError("Resource link must stay on a single line.")
+    return normalized
+
+
+def _normalize_kanban_status(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in DEADLINE_STATUS_OPTIONS:
+        raise ValueError("Invalid kanban status.")
+    return normalized
+
+
+def _normalize_kanban_due(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if _parse_deadline_date(normalized) is None:
+        raise ValueError("Due date must match DD.MM.YYYY.")
+    return normalized
+
+
+def _project_resources_file(project_path: Path) -> Path:
+    resources_path = (project_path / "Ressourcen.md").resolve()
+    if project_path != resources_path.parent:
+        raise ValueError("Invalid resources path.")
+    return resources_path
+
+
+def _project_kanban_file(project_path: Path) -> Path:
+    kanban_path = (project_path / "Kanban.md").resolve()
+    if project_path != kanban_path.parent:
+        raise ValueError("Invalid kanban path.")
+    return kanban_path
+
+
+def _sync_project_kanban_deadlines(project_name: str, previous_items: list[dict], current_items: list[dict], conf: dict) -> None:
+    parser = DocsParser()
+    current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+
+    previous_names = {
+        f"{project_name} - {str(item.get('deliverable', '')).strip()}"
+        for item in previous_items
+        if str(item.get("deliverable", "")).strip()
+    }
+    current_names = {
+        f"{project_name} - {str(item.get('deliverable', '')).strip()}"
+        for item in current_items
+        if str(item.get("deliverable", "")).strip()
+    }
+
+    kept_deadlines = [
+        deadline for deadline in current_deadlines if str(deadline.get("name", "")).strip() not in (previous_names - current_names)
+    ]
+    by_name = {str(deadline.get("name", "")).strip(): deadline for deadline in kept_deadlines}
+
+    for item in current_items:
+        deliverable = str(item.get("deliverable", "")).strip()
+        if not deliverable:
+            continue
+
+        deadline_name = f"{project_name} - {deliverable}"
+        existing = by_name.get(deadline_name, {})
+        deadline_entry = {
+            "name": deadline_name,
+            "description": str(existing.get("description", "")).strip(),
+            "date": str(item.get("due", "")).strip() or "-",
+            "time": str(existing.get("time", "")).strip() or "-",
+            "status": _normalize_kanban_status(item.get("status", "Not Started")),
+        }
+
+        if deadline_name in by_name:
+            for index, deadline in enumerate(kept_deadlines):
+                if str(deadline.get("name", "")).strip() == deadline_name:
+                    kept_deadlines[index] = deadline_entry
+                    break
+        else:
+            kept_deadlines.append(deadline_entry)
+        by_name[deadline_name] = deadline_entry
+
+    writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+    writer.write_deadlines_table(kept_deadlines)
+
 
 def _docs_note_exists(note_name: str, conf: dict | None = None) -> bool:
     normalized_doc = _normalize_md_filename(note_name)
@@ -2855,9 +3015,406 @@ def scan_docs():
     return redirect(url_for("index"))
 
 
+@app.route("/projects", methods=["GET"])
+def projects_overview():
+    parser = DocsParser()
+    viewer = DocsViewer()
+    conf = _load_conf()
+    projects_root = _projects_root_path_from_conf(conf)
+    project_cards: list[dict] = []
+
+    if projects_root.exists() and projects_root.is_dir():
+        for project_dir in sorted([entry for entry in projects_root.iterdir() if entry.is_dir()], key=lambda item: item.name.casefold()):
+            try:
+                resources = parser.parse_resources(project_dir)
+                description_markdown = str(resources.get("description", "")).strip()
+                description_html = viewer.render_markdown_text(description_markdown) if description_markdown else ""
+                project_cards.append(
+                    {
+                        "name": project_dir.name,
+                        "description": description_markdown,
+                        "description_html": Markup(description_html),
+                    }
+                )
+            except Exception:
+                logger.warning("Failed to parse project resources for %s", project_dir)
+                project_cards.append({"name": project_dir.name, "description": "", "description_html": Markup("")})
+
+    return render_template("projects_overview.html", projects=project_cards, projects_root=str(projects_root))
+
+
+@app.route("/projects/create", methods=["POST"])
+def create_project():
+    conf = _load_conf()
+    parser = DocsParser()
+    try:
+        project_name = _sanitize_project_name(request.form.get("project_name", ""))
+        projects_root = _projects_root_path_from_conf(conf)
+        projects_root.mkdir(parents=True, exist_ok=True)
+        project_dir = (projects_root / project_name).resolve()
+        if projects_root != project_dir and projects_root not in project_dir.parents:
+            raise ValueError("Invalid project path.")
+        if project_dir.exists():
+            raise ValueError("A project with this name already exists.")
+
+        project_dir.mkdir(parents=True, exist_ok=False)
+        resources_template = _load_project_template(
+            "3 - Ressourcen",
+            "# Ressourcen\n\n| Beschreibung | Link |\n| ------------ | ---- |\n|              |      |\n\n# Settings\n\n| Key | Value |\n| --- | ----- |\n| Tag |       |\n| Description|     |\n",
+        )
+        kanban_template = _load_project_template(
+            "3 - Kanban",
+            "# Kanban\n\n| Deliverable | Status | Due |\n| ----------- | ------ | --- |\n|             |        |     |\n",
+        )
+
+        resources_content = resources_template.replace("| Tag |       |", f"| Tag | #PROJECT_{project_name} |")
+        (project_dir / "Ressourcen.md").write_text(resources_content, encoding="utf-8")
+        (project_dir / "Kanban.md").write_text(kanban_template, encoding="utf-8")
+        (project_dir / f"{project_name}.canvas").write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+
+        parser.parse_resources(project_dir)
+        parser.parse_kanban(project_dir)
+        flash(f"Project '{project_name}' created.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("projects_overview"))
+
+
+@app.route("/projects/<project_name>", methods=["GET"])
+def project_detail(project_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        kanban = parser.parse_kanban(project_path)
+    except Exception:
+        return render_template("404.html"), 404
+
+    description_html = viewer.render_markdown_text(resources.get("description", ""))
+    return render_template(
+        "project_detail.html",
+        project_name=project_path.name,
+        resources=resources,
+        kanban=kanban,
+        description_html=Markup(description_html),
+    )
+
+
+@app.route("/projects/<project_name>/resources", methods=["GET"])
+def project_resources(project_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+    except Exception:
+        return render_template("404.html"), 404
+
+    enriched_links = []
+    for link_item in resources.get("resources", []):
+        href = str(link_item.get("link", "")).strip()
+        label = str(link_item.get("description", "")).strip() or href
+        is_external = _is_external_link(href)
+        internal_url = ""
+        if not is_external:
+            target_value = href.strip("./")
+            if target_value:
+                internal_url = url_for("view_doc_by_relative_path", relative_path=target_value)
+        enriched_links.append({**link_item, "label": label, "is_external": is_external, "internal_url": internal_url})
+
+    return render_template(
+        "project_resources.html",
+        project_name=project_path.name,
+        resources=resources,
+        description_html=Markup(viewer.render_markdown_text(resources.get("description", ""))),
+        links=enriched_links,
+    )
+
+
+@app.route("/projects/<project_name>/resources/settings", methods=["POST"])
+def update_project_resources_settings(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        updated_description = _normalize_project_multiline_text(request.form.get("description", ""), field_name="Project description")
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            resources.get("resources", []),
+            f"#PROJECT_{project_path.name}",
+            updated_description,
+        )
+        flash("Project description updated.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/add", methods=["POST"])
+def add_project_resource(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        link = _normalize_project_link(request.form.get("link", ""))
+        if not description and not link:
+            raise ValueError("Resource description or link is required.")
+
+        updated_resources = [*resources.get("resources", []), {"description": description, "link": link}]
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        flash("Resource added.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/<int:resource_id>/edit", methods=["POST"])
+def edit_project_resource(project_name: str, resource_id: int):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        link = _normalize_project_link(request.form.get("link", ""))
+        if not description and not link:
+            raise ValueError("Resource description or link is required.")
+
+        updated_resources: list[dict] = []
+        matched = False
+        for item in resources.get("resources", []):
+            if int(item.get("id", 0)) == resource_id:
+                updated_resources.append({"description": description, "link": link})
+                matched = True
+            else:
+                updated_resources.append({"description": item.get("description", ""), "link": item.get("link", "")})
+        if not matched:
+            raise ValueError("Resource entry not found.")
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        flash("Resource updated.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/<int:resource_id>/delete", methods=["POST"])
+def delete_project_resource(project_name: str, resource_id: int):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        updated_resources = [
+            {"description": item.get("description", ""), "link": item.get("link", "")}
+            for item in resources.get("resources", [])
+            if int(item.get("id", 0)) != resource_id
+        ]
+        if len(updated_resources) == len(resources.get("resources", [])):
+            raise ValueError("Resource entry not found.")
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        flash("Resource removed.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/kanban", methods=["GET"])
+def project_kanban(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template(
+        "project_kanban.html",
+        project_name=project_path.name,
+        kanban=kanban,
+        deadline_mapping=deadline_mapping,
+        deadline_status_options=DEADLINE_STATUS_OPTIONS,
+    )
+
+
+@app.route("/api/projects/<project_name>/kanban", methods=["GET"])
+def api_project_kanban(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({**kanban, "deadline_mapping": deadline_mapping})
+
+
+@app.route("/api/projects/<project_name>/kanban", methods=["POST"])
+def api_add_project_kanban_item(project_name: str):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deliverable = _normalize_project_text(payload.get("deliverable", ""), field_name="Deliverable", max_length=200)
+        status = _normalize_kanban_status(payload.get("status", "Not Started"))
+        due = _normalize_kanban_due(payload.get("due", ""))
+        if not deliverable:
+            raise ValueError("Deliverable is required.")
+        if any(str(item.get("deliverable", "")).strip().casefold() == deliverable.casefold() for item in kanban.get("items", [])):
+            raise ValueError("A kanban item with this deliverable already exists.")
+
+        current_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        previous_items = list(current_items)
+        current_items.append({"deliverable": deliverable, "status": status, "due": due})
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban), 201
+
+
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>", methods=["POST"])
+def api_update_project_kanban_item(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deliverable = _normalize_project_text(payload.get("deliverable", ""), field_name="Deliverable", max_length=200)
+        status = _normalize_kanban_status(payload.get("status", "Not Started"))
+        due = _normalize_kanban_due(payload.get("due", ""))
+        if not deliverable:
+            raise ValueError("Deliverable is required.")
+
+        current_items = []
+        previous_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        matched = False
+        for item in kanban.get("items", []):
+            existing_deliverable = str(item.get("deliverable", "")).strip()
+            if int(item.get("id", 0)) != item_id and existing_deliverable.casefold() == deliverable.casefold():
+                raise ValueError("A kanban item with this deliverable already exists.")
+
+            if int(item.get("id", 0)) == item_id:
+                current_items.append({"deliverable": deliverable, "status": status, "due": due})
+                matched = True
+            else:
+                current_items.append(
+                    {
+                        "deliverable": item.get("deliverable", ""),
+                        "status": item.get("status", "Not Started"),
+                        "due": item.get("due", ""),
+                    }
+                )
+        if not matched:
+            raise ValueError("Kanban item not found.")
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>/delete", methods=["POST"])
+def api_delete_project_kanban_item(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        previous_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        current_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+            if int(item.get("id", 0)) != item_id
+        ]
+        if len(current_items) == len(previous_items):
+            raise ValueError("Kanban item not found.")
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
+@app.route("/projects/<project_name>/canvas", methods=["GET"])
+def project_canvas(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template("project_canvas.html", project_name=project_path.name)
+
+
+@app.route("/api/projects/<project_name>/canvas", methods=["GET"])
+def api_project_canvas(project_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_data = parser.load_canvas(project_path)
+        rendered_nodes = []
+        for node in canvas_data.get("nodes", []):
+            node_text = str(node.get("text", "")).strip()
+            rendered_nodes.append({**node, "html": viewer.render_markdown_text(node_text) if node_text else ""})
+
+        return jsonify(
+            {
+                "project_name": project_path.name,
+                "nodes": rendered_nodes,
+                "edges": canvas_data.get("edges", []),
+                "bounds": canvas_data.get("bounds", {}),
+                "warnings": canvas_data.get("warnings", []),
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 404
 
 
 @app.route("/todo", methods=["GET"])
+
 def todo_overview():
     query = request.args.get("q", "").strip()
     parser = DocsParser()

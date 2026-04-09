@@ -181,14 +181,18 @@ class DocsViewer:
             strip=True,
         )
 
+    def render_markdown_text(self, markdown_text: str, current_doc_path: Path | None = None) -> str:
+        preprocessed = self._replace_wiki_images(str(markdown_text or ""))
+        if current_doc_path is not None:
+            preprocessed = self._replace_wikilinks(preprocessed, current_doc_path)
+        rendered_html = self._markdown(preprocessed)
+        return self._sanitize_html(rendered_html)
+
     def render_doc_to_html(self, file_name: str) -> tuple[str, str]:
         try:
             path = self._resolve_doc_path(file_name)
             markdown_text = path.read_text(encoding="utf-8")
-            preprocessed = self._replace_wiki_images(markdown_text)
-            preprocessed = self._replace_wikilinks(preprocessed, path)
-            rendered_html = self._markdown(preprocessed)
-            sanitized_html = self._sanitize_html(rendered_html)
+            sanitized_html = self.render_markdown_text(markdown_text, current_doc_path=path)
             return path.stem, sanitized_html
         except Exception:
             logger.error("Failed to render markdown preview for %s\n%s", file_name, traceback.format_exc())
@@ -214,10 +218,7 @@ class DocsViewer:
         try:
             path = self._resolve_doc_relative_path(relative_path)
             markdown_text = path.read_text(encoding="utf-8")
-            preprocessed = self._replace_wiki_images(markdown_text)
-            preprocessed = self._replace_wikilinks(preprocessed, path)
-            rendered_html = self._markdown(preprocessed)
-            sanitized_html = self._sanitize_html(rendered_html)
+            sanitized_html = self.render_markdown_text(markdown_text, current_doc_path=path)
             return path.stem, sanitized_html
         except Exception:
             logger.error(

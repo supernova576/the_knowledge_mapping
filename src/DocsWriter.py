@@ -112,6 +112,42 @@ class DocsWriter:
         if not self.deadlines_path.exists():
             raise FileNotFoundError(f"Deadlines file not found: {self.deadlines_path}")
 
+    def _ensure_path_exists(self, target_path: Path | None, label: str) -> None:
+        if target_path is None:
+            raise FileNotFoundError(f"{label} path not configured.")
+        if not target_path.exists():
+            raise FileNotFoundError(f"{label} file not found: {target_path}")
+
+    def _escape_markdown_table_cell(self, value: str) -> str:
+        normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        normalized = normalized.replace("\n", "<br>")
+        normalized = normalized.replace("|", "\\|")
+        return normalized.strip()
+
+    def _extract_h1_section_bounds(self, lines: list[str], section_header: str) -> tuple[int, int]:
+        header_line = f"# {section_header}"
+        start = -1
+        for index, line in enumerate(lines):
+            if line.strip() == header_line:
+                start = index
+                break
+
+        if start == -1:
+            raise ValueError(f"Could not find markdown section: {header_line}")
+
+        end = start + 1
+        while end < len(lines):
+            stripped = lines[end].strip()
+            if stripped.startswith("# ") and stripped != header_line:
+                break
+            end += 1
+
+        return start, end
+
+    def _replace_h1_section(self, lines: list[str], section_header: str, replacement_lines: list[str]) -> list[str]:
+        start, end = self._extract_h1_section_bounds(lines, section_header)
+        return lines[:start] + replacement_lines + lines[end:]
+
     def _extract_deadlines_table_bounds(self, lines: list[str]) -> tuple[int, int]:
         start = -1
         end = -1
@@ -169,6 +205,76 @@ class DocsWriter:
         except Exception:
             logger.error("Failed to write deadline markdown file\n%s", traceback.format_exc())
             adieu(1)
+
+    def write_project_resources_file(
+        self,
+        resources_path: Path,
+        resources: list[dict],
+        project_tag: str,
+        project_description: str,
+    ) -> None:
+        try:
+            self._ensure_path_exists(resources_path, "Resources")
+            lines = resources_path.read_text(encoding="utf-8").splitlines()
+
+            resource_lines = [
+                "# Ressourcen",
+                "",
+                "| Beschreibung | Link |",
+                "| ------------ | ---- |",
+            ]
+            if resources:
+                for resource in resources:
+                    description = self._escape_markdown_table_cell(resource.get("description", ""))
+                    link = self._escape_markdown_table_cell(resource.get("link", ""))
+                    resource_lines.append(f"| {description} | {link} |")
+            else:
+                resource_lines.append("|  |  |")
+            resource_lines.append("")
+
+            settings_lines = [
+                "# Settings",
+                "",
+                "| Key | Value |",
+                "| --- | ----- |",
+                f"| Tag | {self._escape_markdown_table_cell(project_tag)} |",
+                f"| Description | {self._escape_markdown_table_cell(project_description)} |",
+                "",
+            ]
+
+            lines = self._replace_h1_section(lines, "Ressourcen", resource_lines)
+            lines = self._replace_h1_section(lines, "Settings", settings_lines)
+            resources_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        except Exception:
+            logger.error("Failed to write project resources markdown file %s\n%s", resources_path, traceback.format_exc())
+            raise
+
+    def write_project_kanban_file(self, kanban_path: Path, items: list[dict]) -> None:
+        try:
+            self._ensure_path_exists(kanban_path, "Kanban")
+            lines = kanban_path.read_text(encoding="utf-8").splitlines()
+
+            kanban_lines = [
+                "# Kanban",
+                "",
+                "| Deliverable | Status | Due |",
+                "| ----------- | ------ | --- |",
+            ]
+            if items:
+                for item in items:
+                    deliverable = self._escape_markdown_table_cell(item.get("deliverable", ""))
+                    status = self._escape_markdown_table_cell(item.get("status", "Not Started"))
+                    due = self._escape_markdown_table_cell(item.get("due", ""))
+                    kanban_lines.append(f"| {deliverable} | {status} | {due} |")
+            else:
+                kanban_lines.append("|  |  |  |")
+            kanban_lines.append("")
+
+            lines = self._replace_h1_section(lines, "Kanban", kanban_lines)
+            kanban_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        except Exception:
+            logger.error("Failed to write project kanban markdown file %s\n%s", kanban_path, traceback.format_exc())
+            raise
 
     def create_note_from_template(self, target_path: Path, template_content: str) -> None:
         try:

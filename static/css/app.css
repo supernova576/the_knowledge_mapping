@@ -689,3 +689,41 @@ body {
     width: 100%;
   }
 }
+
+.km-canvas-host {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 13rem);
+  min-height: 32rem;
+  overflow: hidden;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background-color: rgba(var(--bs-secondary-rgb), 0.08);
+}
+
+.km-canvas-host svg,
+.km-canvas-host #canvas-node-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.km-canvas-node {
+  position: absolute;
+  overflow: auto;
+}
+
+.km-canvas-edge {
+  fill: none;
+  stroke: var(--bs-body-color);
+  stroke-width: 2;
+  opacity: 0.75;
+}
+
+.km-kanban-item-form .form-label {
+  font-weight: 600;
+}
+
+#km-arrowhead path {
+  fill: var(--bs-body-color);
+}

@@ -47,6 +47,9 @@
     "deadlines": {
         "full_path_to_deadlines_file": "/the-knowledge/Deadlines.md"
     },
+    "projects": {
+        "root_path": "/the-knowledge/01_PROJ"
+    },
     "git": {
         "full_path_to_git_dir": "/the-knowledge/.git",
         "executable": "git"

@@ -60,6 +60,7 @@ class DocsParser:
         "": "",
     }
     TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
+    KANBAN_STATUS_VALUES = {"not started": "Not Started", "in progress": "In Progress", "done": "Done"}
     def __init__(self) -> None:
         try:
             path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -71,6 +72,7 @@ class DocsParser:
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
                 self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
                 self.learning_path: str = j.get("learning", {}).get("learning_path", "/the-knowledge/07_LEARNINGS")
+                self.projects_root_path: str = j.get("projects", {}).get("root_path", "/the-knowledge/01_PROJ")
                 self.compliance_check: dict = self.__load_compliance_check_config(j.get("compliance_check", {}))
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
@@ -1054,6 +1056,240 @@ class DocsParser:
     def _parse_deadline_status(self, raw_progress: str) -> str:
         normalized = str(raw_progress or "").strip()
         return self.PROGRESS_ICON_TO_STATE.get(normalized, "Not Started")
+
+    def _resolve_projects_root(self) -> Path:
+        projects_root = Path(self.projects_root_path or "/the-knowledge/01_PROJ").resolve()
+        if not projects_root.exists() or not projects_root.is_dir():
+            raise FileNotFoundError(f"Projects root not found: {projects_root}")
+        return projects_root
+
+    def normalize_project_name(self, raw_value: str) -> str:
+        cleaned = str(raw_value or "").strip()
+        if not cleaned:
+            raise ValueError("Project name is required.")
+        if len(cleaned) > 120:
+            raise ValueError("Project name is too long.")
+        if not re.fullmatch(r"[A-Za-z0-9 _.-]+", cleaned):
+            raise ValueError("Project name contains invalid characters.")
+        if cleaned in {".", ".."}:
+            raise ValueError("Project name is invalid.")
+        return cleaned
+
+    def resolve_project_path(self, project_name: str) -> Path:
+        normalized_name = self.normalize_project_name(project_name)
+        projects_root = self._resolve_projects_root()
+        project_path = (projects_root / normalized_name).resolve()
+        if projects_root != project_path and projects_root not in project_path.parents:
+            raise ValueError("Project path traversal detected.")
+        if not project_path.exists() or not project_path.is_dir():
+            raise FileNotFoundError(f"Project not found: {normalized_name}")
+        return project_path
+
+    def _extract_markdown_table(self, markdown_content: str, title: str) -> list[dict[str, str]]:
+        section_pattern = re.compile(rf"(?ims)^#\s+{re.escape(title)}\s*$\n(.*?)(?=^#\s+|\Z)")
+        section_match = section_pattern.search(str(markdown_content or ""))
+        if not section_match:
+            return []
+
+        lines = [line.strip() for line in section_match.group(1).splitlines() if line.strip().startswith("|")]
+        if len(lines) < 2:
+            return []
+
+        headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        rows: list[dict[str, str]] = []
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            rows.append({headers[index]: cells[index] for index in range(len(headers))})
+        return rows
+
+    def _normalize_markdown_table_cell(self, value: str) -> str:
+        return str(value or "").replace("<br>", "\n").replace("\\|", "|").strip()
+
+    def parse_resources(self, project_path: str | Path) -> dict:
+        project_dir = Path(project_path).resolve()
+        resources_file = (project_dir / "Ressourcen.md").resolve()
+        if project_dir != resources_file.parent:
+            raise ValueError("Invalid resources file path.")
+        if not resources_file.exists() or not resources_file.is_file():
+            return {
+                "project_name": project_dir.name,
+                "description": "",
+                "resources": [],
+                "links": [],
+                "tag": f"#PROJECT_{project_dir.name}",
+                "settings_description": "",
+                "warnings": ["Ressourcen.md not found."],
+            }
+
+        content = resources_file.read_text(encoding="utf-8")
+        resource_rows = self._extract_markdown_table(content, "Ressourcen")
+        settings_rows = self._extract_markdown_table(content, "Settings")
+
+        links: list[dict[str, str]] = []
+        for index, row in enumerate(resource_rows, start=1):
+            description = self._normalize_markdown_table_cell(row.get("Beschreibung", ""))
+            link = self._normalize_markdown_table_cell(row.get("Link", ""))
+            if description or link:
+                links.append({"id": index, "description": description, "link": link})
+
+        settings_map: dict[str, str] = {}
+        for row in settings_rows:
+            key = str(row.get("Key", "")).strip()
+            value = self._normalize_markdown_table_cell(row.get("Value", ""))
+            if key:
+                settings_map[key.casefold()] = value
+
+        project_description = settings_map.get("description", "")
+        project_tag = settings_map.get("tag", f"#PROJECT_{project_dir.name}") or f"#PROJECT_{project_dir.name}"
+
+        return {
+            "project_name": project_dir.name,
+            "description": project_description,
+            "resources": links,
+            "links": [item for item in links if str(item.get("link", "")).strip()],
+            "tag": project_tag,
+            "settings_description": project_description,
+            "warnings": [],
+        }
+
+    def parse_kanban(self, project_path: str | Path) -> dict:
+        project_dir = Path(project_path).resolve()
+        kanban_file = (project_dir / "Kanban.md").resolve()
+        if project_dir != kanban_file.parent:
+            raise ValueError("Invalid Kanban file path.")
+        if not kanban_file.exists() or not kanban_file.is_file():
+            return {"project_name": project_dir.name, "items": [], "columns": {"Not Started": [], "In Progress": [], "Done": []}, "warnings": ["Kanban.md not found."]}
+
+        content = kanban_file.read_text(encoding="utf-8")
+        rows = self._extract_markdown_table(content, "Kanban")
+        parsed_items: list[dict] = []
+        for index, row in enumerate(rows, start=1):
+            deliverable = self._normalize_markdown_table_cell(row.get("Deliverable", ""))
+            raw_status = self._normalize_markdown_table_cell(row.get("Status", ""))
+            due = self._normalize_markdown_table_cell(row.get("Due", ""))
+            normalized_status = self.KANBAN_STATUS_VALUES.get(raw_status.casefold(), "Not Started")
+            if not deliverable and not raw_status and not due:
+                continue
+            parsed_items.append(
+                {
+                    "id": index,
+                    "deliverable": deliverable,
+                    "status": raw_status if raw_status in self.KANBAN_STATUS_VALUES.values() else normalized_status,
+                    "status_normalized": normalized_status,
+                    "due": due,
+                }
+            )
+
+        columns = {"Not Started": [], "In Progress": [], "Done": []}
+        for item in parsed_items:
+            columns[item["status_normalized"]].append(item)
+
+        return {"project_name": project_dir.name, "items": parsed_items, "columns": columns, "warnings": []}
+
+    def validate_canvas(self, data: dict) -> dict:
+        warnings: list[str] = []
+        if not isinstance(data, dict):
+            raise ValueError("Canvas payload must be an object.")
+
+        nodes = data.get("nodes")
+        edges = data.get("edges")
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            raise ValueError("Canvas must include nodes and edges arrays.")
+
+        valid_nodes: list[dict] = []
+        valid_node_ids: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                warnings.append("Skipped non-object node.")
+                continue
+            required = ("id", "x", "y", "width", "height")
+            if any(key not in node for key in required):
+                warnings.append(f"Skipped node missing required keys: {node}.")
+                continue
+            try:
+                normalized_node = {
+                    "id": str(node.get("id")),
+                    "x": float(node.get("x", 0)),
+                    "y": float(node.get("y", 0)),
+                    "width": float(node.get("width", 0)),
+                    "height": float(node.get("height", 0)),
+                    "text": str(node.get("text", "")),
+                    "type": str(node.get("type", "")).strip(),
+                    "raw": node,
+                }
+            except (TypeError, ValueError):
+                warnings.append(f"Skipped malformed node: {node}.")
+                continue
+            valid_nodes.append(normalized_node)
+            valid_node_ids.add(normalized_node["id"])
+
+        valid_sides = {"top", "right", "bottom", "left"}
+        valid_edges: list[dict] = []
+        for edge in edges:
+            if not isinstance(edge, dict):
+                warnings.append("Skipped non-object edge.")
+                continue
+            from_node = str(edge.get("fromNode", "")).strip()
+            to_node = str(edge.get("toNode", "")).strip()
+            if not from_node or not to_node:
+                warnings.append(f"Skipped edge without fromNode/toNode: {edge}.")
+                continue
+            if from_node not in valid_node_ids or to_node not in valid_node_ids:
+                warnings.append(f"Skipped edge with unknown node references: {edge}.")
+                continue
+            from_side = str(edge.get("fromSide", "right")).strip().lower() or "right"
+            to_side = str(edge.get("toSide", "left")).strip().lower() or "left"
+            if from_side not in valid_sides or to_side not in valid_sides:
+                warnings.append(f"Skipped edge with invalid side value: {edge}.")
+                continue
+            valid_edges.append(
+                {
+                    "fromNode": from_node,
+                    "toNode": to_node,
+                    "fromSide": from_side,
+                    "toSide": to_side,
+                    "label": str(edge.get("label", "")),
+                    "raw": edge,
+                }
+            )
+        return {"nodes": valid_nodes, "edges": valid_edges, "warnings": warnings}
+
+    def compute_canvas_bounds(self, nodes: list[dict]) -> dict:
+        if not nodes:
+            return {"min_x": 0, "min_y": 0, "max_x": 1000, "max_y": 800, "width": 1000, "height": 800}
+        min_x = min(node["x"] for node in nodes)
+        min_y = min(node["y"] for node in nodes)
+        max_x = max(node["x"] + node["width"] for node in nodes)
+        max_y = max(node["y"] + node["height"] for node in nodes)
+        return {
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_x": max_x,
+            "max_y": max_y,
+            "width": max(1, max_x - min_x),
+            "height": max(1, max_y - min_y),
+        }
+
+    def load_canvas(self, project_path: str | Path) -> dict:
+        project_dir = Path(project_path).resolve()
+        canvas_path = (project_dir / f"{project_dir.name}.canvas").resolve()
+        if project_dir != canvas_path.parent:
+            raise ValueError("Invalid canvas file path.")
+        if not canvas_path.exists() or not canvas_path.is_file():
+            return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": [f"{canvas_path.name} not found."]}
+        try:
+            data = json.loads(canvas_path.read_text(encoding="utf-8") or "{}")
+        except json.JSONDecodeError:
+            return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": ["Canvas JSON is malformed."]}
+        validated = self.validate_canvas(data)
+        return {
+            "nodes": validated["nodes"],
+            "edges": validated["edges"],
+            "bounds": self.compute_canvas_bounds(validated["nodes"]),
+            "warnings": validated["warnings"],
+        }
 
     def parse_deadlines_from_markdown(self, include_description: bool = False) -> list[dict]:
         try:

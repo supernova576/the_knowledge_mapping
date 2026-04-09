@@ -22,7 +22,7 @@
             <!-- RIGHT SIDE -->
             <ul class="navbar-nav mb-2 mb-lg-0">
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle {% if active_page in ['export', 'version_control', 'learning', 'playbooks'] %}active{% endif %}"
+                    <a class="nav-link dropdown-toggle {% if active_page in ['export', 'version_control', 'learning', 'playbooks', 'projects'] %}active{% endif %}"
                         href="#" role="button" data-bs-toggle="dropdown">
                         Advanced
                     </a>
@@ -49,6 +49,13 @@
                                 href="{{ url_for('playbooks_page') }}">
                                 Playbooks
                                 <span class="text-body-secondary small d-block">Reusable workflow actions</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if active_page == 'projects' %}active{% endif %}"
+                                href="{{ url_for('projects_overview') }}">
+                                Projects
+                                <span class="text-body-secondary small d-block">Manage project boards and canvas</span>
                             </a>
                         </li>
                         <li>
