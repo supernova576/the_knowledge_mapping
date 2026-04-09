@@ -394,6 +394,25 @@ body {
   transition: margin-left 0.15s ease, width 0.15s ease;
 }
 
+.km-block-insert-controls {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.km-block-insert-controls .btn {
+  padding: 0.08rem 0.45rem;
+  font-size: 0.7rem;
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.km-block-insert-controls .btn:hover,
+.km-block-insert-controls .btn:focus {
+  border-color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
 .km-block-host,
 .km-flow-host {
   margin-bottom: 0.5rem;

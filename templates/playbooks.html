@@ -1240,7 +1240,43 @@
         setPendingPaletteFlow('');
     }
 
-    function addActionBlock(action, x=null, y=null) {
+    function findIncomingNextEdge(blockId) {
+        return (current?.layout?.edges || []).find((edge) => edge.target === blockId && edge.branch === 'next') || null;
+    }
+
+    function insertBlockRelative(newBlock, anchorId, mode='after') {
+        if (!current || !newBlock || !anchorId) return false;
+        const anchor = (current.layout.blocks || []).find((item) => item.id === anchorId);
+        if (!anchor) return false;
+
+        if (mode === 'before') {
+            const incomingNext = findIncomingNextEdge(anchorId);
+            if (incomingNext) {
+                incomingNext.target = newBlock.id;
+                current.layout.edges.push({source:newBlock.id, target:anchorId, branch:'next'});
+                return true;
+            }
+            const incomingBranchEdge = (current.layout.edges || []).find((edge) => edge.target === anchorId && edge.branch !== 'next');
+            if (incomingBranchEdge) {
+                incomingBranchEdge.target = newBlock.id;
+                current.layout.edges.push({source:newBlock.id, target:anchorId, branch:'next'});
+                return true;
+            }
+            return false;
+        }
+
+        const existingNext = nextEdgeForBlock(anchorId);
+        if (existingNext) {
+            const previousTarget = existingNext.target;
+            existingNext.target = newBlock.id;
+            current.layout.edges.push({source:newBlock.id, target:previousTarget, branch:'next'});
+            return true;
+        }
+        current.layout.edges.push({source:anchorId, target:newBlock.id, branch:'next'});
+        return true;
+    }
+
+    function addActionBlock(action, x=null, y=null, insertionHint=null) {
         if (!current) {
             updateStatus('Create or select a playbook before adding actions.');
             return;
@@ -1251,6 +1287,8 @@
         }
 
         const id = uid();
+        const hasRelativeInsertion = insertionHint && insertionHint.anchorId;
+        const anchor = hasRelativeInsertion ? current.layout.blocks.find((item) => item.id === insertionHint.anchorId) : null;
         const insertionY = typeof y === 'number' ? Math.round(y) : null;
         const insertion = resolveLinearInsertionPoint(insertionY);
         const previous = insertion.previous;
@@ -1258,15 +1296,30 @@
         const nextX = typeof x === 'number' ? Math.round(x) : 120;
         const nextY = typeof y === 'number'
             ? Math.round(y)
-            : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || 40) + 90));
+            : anchor
+                ? ((Number(anchor.y) || 40) + (insertionHint.mode === 'before' ? -45 : 45))
+                : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || 40) + 90));
         const newBlock = {id, type:'action', x:nextX, y:nextY, payload:{action, label:actionDisplayName(action), input:{}}};
         current.layout.blocks.push(newBlock);
-        insertBlockIntoLinearFlow(newBlock, insertionY);
+        if (anchor) {
+            if (!insertBlockRelative(newBlock, anchor.id, insertionHint.mode || 'after')) {
+                current.layout.blocks = current.layout.blocks.filter((item) => item.id !== id);
+                updateStatus('Unable to insert action at selected position.');
+                return;
+            }
+        } else {
+            insertBlockIntoLinearFlow(newBlock, insertionY);
+        }
         renderCanvas();
+        if (anchor) {
+            const relation = insertionHint.mode === 'before' ? 'before' : 'after';
+            updateStatus(`${actionDisplayName(action)} inserted ${relation} ${blockDisplayName(anchor)}.`);
+            return;
+        }
         updateStatus(`${actionDisplayName(action)} added to the playbook.`);
     }
 
-    function addFlowBlock(operator, x=null, y=null) {
+    function addFlowBlock(operator, x=null, y=null, insertionHint=null) {
         if (!current) {
             updateStatus('Create or select a playbook before adding flows.');
             return;
@@ -1275,6 +1328,8 @@
             updateStatus('Invalid flow dropped.');
             return;
         }
+        const hasRelativeInsertion = insertionHint && insertionHint.anchorId;
+        const anchor = hasRelativeInsertion ? current.layout.blocks.find((item) => item.id === insertionHint.anchorId) : null;
         const insertionY = typeof y === 'number' ? Math.round(y) : null;
         const insertion = resolveLinearInsertionPoint(insertionY);
         const previous = insertion.previous;
@@ -1284,7 +1339,9 @@
         const flowX = (typeof x === 'number' ? Math.round(x) : 120);
         const flowY = typeof y === 'number'
             ? Math.round(y)
-            : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || base.y || 40) + 90));
+            : anchor
+                ? ((Number(anchor.y) || 40) + (insertionHint.mode === 'before' ? -45 : 45))
+                : (next ? Math.max(40, (Number(next.y) || 40) - 45) : ((Number(previous?.y) || base.y || 40) + 90));
         const flowPayload = operator === 'switch_case'
             ? {operator, label:flowDisplayName('switch_case'), input:{value_to_compare:'', source:'context'}, cases:[{key:caseUid(), label:'Case 1', value:'value_1'}]}
             : operator === 'abort'
@@ -1292,7 +1349,15 @@
                 : {operator, label:flowDisplayName(operator), input:{value_to_compare:'', equals:'true', source:'literal'}};
         const newFlowBlock = {id:newId, type:'flow', x:flowX, y:flowY, payload:flowPayload};
         current.layout.blocks.push(newFlowBlock);
-        insertBlockIntoLinearFlow(newFlowBlock, insertionY);
+        if (anchor) {
+            if (!insertBlockRelative(newFlowBlock, anchor.id, insertionHint.mode || 'after')) {
+                current.layout.blocks = current.layout.blocks.filter((item) => item.id !== newId);
+                updateStatus('Unable to insert flow at selected position.');
+                return;
+            }
+        } else {
+            insertBlockIntoLinearFlow(newFlowBlock, insertionY);
+        }
         const branchStartY = (typeof y === 'number' ? Math.round(y) : base.y + 90);
         if (operator === 'switch_case') {
             const caseBranchId = uid();
@@ -1310,6 +1375,11 @@
             current.layout.edges.push({source:newId, target:falseId, branch:'false'});
         }
         renderCanvas();
+        if (anchor) {
+            const relation = insertionHint.mode === 'before' ? 'before' : 'after';
+            updateStatus(`${flowDisplayName(operator)} inserted ${relation} ${blockDisplayName(anchor)}.`);
+            return;
+        }
         updateStatus(`${flowDisplayName(operator)} flow added to the playbook.`);
     }
 
@@ -1467,6 +1537,34 @@
             el.dataset.blockId = block.id;
             const blockTitle = isBranchPlaceholderBlock(block) ? 'PLACEHOLDER' : (isCheckAction ? 'CHECK' : block.type.toUpperCase());
             el.innerHTML = `<strong>${blockTitle}</strong><div class="small">${escapeHtml(blockDisplayName(block))}</div>`;
+            if (block.type !== 'trigger') {
+                const insertControls = document.createElement('div');
+                insertControls.className = 'km-block-insert-controls';
+                insertControls.innerHTML = `
+                    <button type="button" class="btn btn-sm btn-outline-light km-insert-before" data-insert-anchor="${block.id}" data-insert-mode="before">+ Before</button>
+                    <button type="button" class="btn btn-sm btn-outline-light km-insert-after" data-insert-anchor="${block.id}" data-insert-mode="after">+ After</button>
+                `;
+                el.appendChild(insertControls);
+                insertControls.querySelectorAll('button[data-insert-anchor]').forEach((button) => {
+                    button.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        const anchorId = button.dataset.insertAnchor || '';
+                        const insertMode = button.dataset.insertMode || 'after';
+                        if (!anchorId) return;
+                        if (pendingPaletteAction) {
+                            addActionBlock(pendingPaletteAction, null, null, {anchorId, mode:insertMode});
+                            setPendingPaletteAction('');
+                            return;
+                        }
+                        if (pendingPaletteFlow === 'abort') {
+                            addFlowBlock('abort', null, null, {anchorId, mode:insertMode});
+                            setPendingPaletteFlow('');
+                            return;
+                        }
+                        updateStatus('Select an action (or ABORT flow), then use + Before or + After.');
+                    });
+                });
+            }
             if (!isBranchPlaceholderBlock(block)) {
                 el.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('block-id', block.id));
                 el.addEventListener('click', () => editBlock(block.id));
@@ -2004,10 +2102,12 @@
         if (event.target.closest('.km-flow-branch-button')) {
             return;
         }
+        const targetBlock = event.target.closest('.km-playbook-block');
+        const insertionHint = targetBlock?.dataset?.blockId ? {anchorId:targetBlock.dataset.blockId, mode:'after'} : null;
         if (kind === 'flow') {
-            addFlowBlock(value, event.clientX - rect.left, event.clientY - rect.top);
+            addFlowBlock(value, event.clientX - rect.left, event.clientY - rect.top, insertionHint);
         } else {
-            addActionBlock(value, event.clientX - rect.left, event.clientY - rect.top);
+            addActionBlock(value, event.clientX - rect.left, event.clientY - rect.top, insertionHint);
         }
         clearFlowDropTargets();
         draggedPaletteItem = {kind:'', value:''};
