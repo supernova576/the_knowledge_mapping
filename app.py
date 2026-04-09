@@ -2150,6 +2150,88 @@ def _sanitize_learning_answers(raw_answers: list[dict], question_ids: set[str]) 
     return sanitized
 
 
+def _split_multiline_form_values(value: str) -> list[str]:
+    return [line.strip() for line in str(value).replace("\r\n", "\n").split("\n") if line.strip()]
+
+
+def _normalize_learning_question_id(raw_value: str, fallback_index: int, used_ids: set[str]) -> str:
+    base_value = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw_value).strip()).strip("_-")
+    if not base_value:
+        base_value = f"Q{fallback_index:03d}"
+
+    candidate = base_value
+    suffix = 2
+    while candidate in used_ids:
+        candidate = f"{base_value}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _build_learning_payload_from_form(form_data) -> tuple[list[dict], list[dict]]:
+    ids = form_data.getlist("question_id[]")
+    texts = form_data.getlist("question_text[]")
+    types = form_data.getlist("question_type[]")
+    options_raw = form_data.getlist("question_options[]")
+    correct_answers_raw = form_data.getlist("question_correct_answers[]")
+
+    max_rows = max(len(ids), len(texts), len(types), len(options_raw), len(correct_answers_raw), 0)
+
+    def _safe_get(values: list[str], index: int) -> str:
+        return values[index] if index < len(values) else ""
+
+    used_ids: set[str] = set()
+    generated_index = 1
+    raw_questions: list[dict] = []
+    raw_answers: list[dict] = []
+
+    for index in range(max_rows):
+        question_text = re.sub(r"\s+", " ", str(_safe_get(texts, index)).strip())
+        if not question_text:
+            continue
+
+        question_id = _normalize_learning_question_id(_safe_get(ids, index), generated_index, used_ids)
+        while f"Q{generated_index:03d}" in used_ids:
+            generated_index += 1
+        used_ids.add(question_id)
+        generated_index += 1
+
+        question_type = str(_safe_get(types, index)).strip().upper() or "FREETEXT"
+        options = _split_multiline_form_values(_safe_get(options_raw, index))
+        correct_answers = _split_multiline_form_values(_safe_get(correct_answers_raw, index))
+        options = list(dict.fromkeys([re.sub(r"\s+", " ", item) for item in options]))
+        correct_answers = list(dict.fromkeys([re.sub(r"\s+", " ", item) for item in correct_answers]))
+        if question_type == "SINGLE_CHOICE" and correct_answers:
+            correct_answers = [correct_answers[0]]
+
+        raw_questions.append(
+            {"id": question_id, "type": question_type, "text": question_text, "options": options}
+        )
+        raw_answers.append({"question_id": question_id, "correct_answers": correct_answers})
+
+    questions = _sanitize_learning_questions(raw_questions)
+    answers = _sanitize_learning_answers(raw_answers, {item["id"] for item in questions})
+
+    question_type_map = {item["id"]: item["type"] for item in questions}
+    question_options_map = {
+        item["id"]: {str(option).strip() for option in item.get("options", [])}
+        for item in questions
+    }
+    normalized_answers: list[dict] = []
+    for answer in answers:
+        question_id = answer["question_id"]
+        question_type = question_type_map.get(question_id, "FREETEXT")
+        if question_type in {"SINGLE_CHOICE", "MULTIPLE_CHOICE"}:
+            options = question_options_map.get(question_id, set())
+            filtered = [item for item in answer["correct_answers"] if item in options]
+            if question_type == "SINGLE_CHOICE" and filtered:
+                filtered = [filtered[0]]
+            normalized_answers.append({"question_id": question_id, "correct_answers": filtered})
+            continue
+        normalized_answers.append(answer)
+
+    return questions, normalized_answers
+
+
 def _sync_openrouter_credits_only(database: db) -> str | None:
     try:
         credits_left = DocsAIFeedback(_load_conf()).fetch_openrouter_credits_left()
@@ -3765,14 +3847,33 @@ def learning_detail(learning_id: int):
     parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
     attempts = database.get_learning_exam_attempts(learning_id)
     grouped_questions = {"FREETEXT": [], "MULTIPLE_CHOICE": [], "SINGLE_CHOICE": []}
+    answers_by_question_id = {
+        str(item.get("question_id", "")).strip(): [str(value).strip() for value in item.get("correct_answers", []) if str(value).strip()]
+        for item in parsed_learning.get("answers", [])
+        if isinstance(item, dict)
+    }
+    editor_rows: list[dict] = []
     for question in parsed_learning.get("questions", []):
-        grouped_questions.setdefault(str(question.get("type", "FREETEXT")).upper(), []).append(question)
+        question_type = str(question.get("type", "FREETEXT")).upper()
+        grouped_questions.setdefault(question_type, []).append(question)
+        editor_rows.append(
+            {
+                "id": str(question.get("id", "")).strip(),
+                "type": question_type,
+                "text": str(question.get("text", "")).strip(),
+                "options_text": "\n".join(
+                    [str(item).strip() for item in question.get("options", []) if str(item).strip()]
+                ),
+                "correct_answers_text": "\n".join(answers_by_question_id.get(str(question.get("id", "")).strip(), [])),
+            }
+        )
     return render_template(
         "learning_detail.html",
         learning=learning_row,
         doc_preview_url=_learning_doc_preview_url(learning_row),
         parsed_learning=parsed_learning,
         grouped_questions=grouped_questions,
+        editor_rows=editor_rows,
         attempts=attempts,
     )
 
@@ -3838,18 +3939,12 @@ def learning_save(learning_id: int):
         flash("Learning entry not found.", "warning")
         return redirect(url_for("learning_overview"))
 
-    parsed_existing = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
-    questions_raw = request.form.get("questions_payload", "").strip()
-    answers_raw = request.form.get("answers_payload", "").strip()
-    try:
-        questions_json = json.loads(questions_raw) if questions_raw else {"questions": parsed_existing.get("questions", [])}
-        answers_json = json.loads(answers_raw) if answers_raw else {"answers": parsed_existing.get("answers", [])}
-    except json.JSONDecodeError:
-        flash("Questions/answers JSON is invalid.", "warning")
+    questions, answers = _build_learning_payload_from_form(request.form)
+
+    if not questions:
+        flash("Please add at least one question with text before saving.", "warning")
         return redirect(url_for("learning_detail", learning_id=learning_id))
 
-    questions = _sanitize_learning_questions(questions_json.get("questions", []))
-    answers = _sanitize_learning_answers(answers_json.get("answers", []), {item["id"] for item in questions})
     writer = DocsWriter()
     learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
     writer.update_learning_file_questions_answers(
