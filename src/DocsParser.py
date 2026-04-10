@@ -1131,8 +1131,9 @@ class DocsParser:
         for index, row in enumerate(resource_rows, start=1):
             description = self._normalize_markdown_table_cell(row.get("Beschreibung", ""))
             link = self._normalize_markdown_table_cell(row.get("Link", ""))
-            if description or link:
-                links.append({"id": index, "description": description, "link": link})
+            note = self._normalize_markdown_table_cell(row.get("Note", ""))
+            if description or link or note:
+                links.append({"id": index, "description": description, "link": link, "note": note})
 
         settings_map: dict[str, str] = {}
         for row in settings_rows:
@@ -1149,6 +1150,7 @@ class DocsParser:
             "description": project_description,
             "resources": links,
             "links": [item for item in links if str(item.get("link", "")).strip()],
+            "notes": [item for item in links if str(item.get("note", "")).strip() and not str(item.get("link", "")).strip()],
             "tag": project_tag,
             "settings_description": project_description,
             "warnings": [],

@@ -2,9 +2,10 @@
   const host = document.getElementById('canvas-host');
   const nodeLayer = document.getElementById('canvas-node-layer');
   const edgeLayer = document.getElementById('canvas-edge-layer');
+  const edgeSvg = edgeLayer?.parentElement;
   const warningEl = document.getElementById('canvas-warning');
   const resetBtn = document.getElementById('canvas-reset-view');
-  if (!host || !nodeLayer || !edgeLayer) return;
+  if (!host || !nodeLayer || !edgeLayer || !edgeSvg) return;
 
   const projectName = host.dataset.projectName;
   let scale = 1;
@@ -12,6 +13,21 @@
   let offsetY = 0;
   let isDragging = false;
   let dragStart = { x: 0, y: 0 };
+  const sideVectors = {
+    top: { x: 0, y: -1 },
+    right: { x: 1, y: 0 },
+    bottom: { x: 0, y: 1 },
+    left: { x: -1, y: 0 }
+  };
+
+  const colorPalette = {
+    '1': { border: '#ff6b6b', background: 'rgba(255, 107, 107, 0.12)' },
+    '2': { border: '#f4a261', background: 'rgba(244, 162, 97, 0.12)' },
+    '3': { border: '#ffd166', background: 'rgba(255, 209, 102, 0.12)' },
+    '4': { border: '#7bd389', background: 'rgba(123, 211, 137, 0.12)' },
+    '5': { border: '#47c6d6', background: 'rgba(71, 198, 214, 0.14)' },
+    '6': { border: '#6ea8fe', background: 'rgba(110, 168, 254, 0.14)' }
+  };
 
   const applyTransform = () => {
     const transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
@@ -28,6 +44,20 @@
     if (side === 'bottom') return { x: x + w / 2, y: y + h };
     if (side === 'left') return { x, y: y + h / 2 };
     return { x: x + w, y: y + h / 2 };
+  };
+
+  const buildEdgePath = (fromPoint, toPoint, fromSide, toSide) => {
+    const fromVector = sideVectors[fromSide] || sideVectors.right;
+    const toVector = sideVectors[toSide] || sideVectors.left;
+    const dx = toPoint.x - fromPoint.x;
+    const dy = toPoint.y - fromPoint.y;
+    const distance = Math.hypot(dx, dy);
+    const handle = Math.max(42, Math.min(140, distance * 0.45));
+    const c1x = fromPoint.x + fromVector.x * handle;
+    const c1y = fromPoint.y + fromVector.y * handle;
+    const c2x = toPoint.x + toVector.x * handle;
+    const c2y = toPoint.y + toVector.y * handle;
+    return `M ${fromPoint.x} ${fromPoint.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${toPoint.x} ${toPoint.y}`;
   };
 
   const fitToScreen = (bounds) => {
@@ -60,18 +90,26 @@
 
     nodeLayer.style.width = `${bounds.width}px`;
     nodeLayer.style.height = `${bounds.height}px`;
-    edgeLayer.parentElement.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
+    edgeSvg.style.width = `${bounds.width}px`;
+    edgeSvg.style.height = `${bounds.height}px`;
+    edgeSvg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
 
     const byId = {};
     nodes.forEach((node) => {
       byId[node.id] = node;
       const el = document.createElement('div');
-      el.className = 'km-canvas-node card shadow-sm';
+      const palette = colorPalette[String(node.raw?.color || '').trim()] || null;
+      el.className = 'km-canvas-node';
       el.style.left = `${node.x - bounds.min_x}px`;
       el.style.top = `${node.y - bounds.min_y}px`;
       el.style.width = `${node.width}px`;
       el.style.height = `${node.height}px`;
-      el.innerHTML = `<div class="card-body p-2 km-markdown-preview">${node.html || ''}</div>`;
+      if (palette) {
+        el.style.borderColor = palette.border;
+        el.style.backgroundColor = palette.background;
+        el.style.boxShadow = `0 0 0 1px ${palette.border} inset`;
+      }
+      el.innerHTML = `<div class="km-canvas-node-content km-markdown-preview">${node.html || ''}</div>`;
       nodeLayer.appendChild(el);
     });
 
@@ -81,8 +119,7 @@
       if (!from || !to) return;
       const p1 = anchor({ ...from, x: from.x - bounds.min_x, y: from.y - bounds.min_y }, edge.fromSide || 'right');
       const p2 = anchor({ ...to, x: to.x - bounds.min_x, y: to.y - bounds.min_y }, edge.toSide || 'left');
-      const dx = Math.max(40, Math.abs(p2.x - p1.x) / 2);
-      const d = `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`;
+      const d = buildEdgePath(p1, p2, edge.fromSide || 'right', edge.toSide || 'left');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('class', 'km-canvas-edge');

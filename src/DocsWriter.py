@@ -220,16 +220,17 @@ class DocsWriter:
             resource_lines = [
                 "# Ressourcen",
                 "",
-                "| Beschreibung | Link |",
-                "| ------------ | ---- |",
+                "| Beschreibung | Link | Note |",
+                "| ------------ | ---- | ---- |",
             ]
             if resources:
                 for resource in resources:
                     description = self._escape_markdown_table_cell(resource.get("description", ""))
                     link = self._escape_markdown_table_cell(resource.get("link", ""))
-                    resource_lines.append(f"| {description} | {link} |")
+                    note = self._escape_markdown_table_cell(resource.get("note", ""))
+                    resource_lines.append(f"| {description} | {link} | {note} |")
             else:
-                resource_lines.append("|  |  |")
+                resource_lines.append("|  |  |  |")
             resource_lines.append("")
 
             settings_lines = [

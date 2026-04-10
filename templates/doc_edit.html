@@ -47,6 +47,16 @@
                         </div>
                     </div>
                     <div class="col-lg-4">
+                        <h2 class="h6">Current project tags</h2>
+                        <div class="border rounded p-2 bg-body-tertiary">
+                            {% for tag in edit_state.selected_project_tags %}
+                            <span class="badge text-bg-info me-1 mb-1">{{ tag }}</span>
+                            {% else %}
+                            <span class="text-muted small">No project tags assigned.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
                         <h2 class="h6">Current links</h2>
                         <div class="border rounded p-2 bg-body-tertiary">
                             {% for item in current_resources.links %}
@@ -69,6 +79,23 @@
                 </div>
                 <form method="post" action="{{ url_for('save_doc_resources', doc_id=doc.id) }}" id="editResourcesForm" class="row g-3">
                     <input type="hidden" name="create_missing_sections" id="createMissingSections" value="false" />
+
+                    <div class="col-12">
+                        <label class="form-label">Project tag assignment</label>
+                        <div class="border rounded p-3 bg-body-tertiary">
+                            {% if project_tags %}
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for tag in project_tags %}
+                                <input class="btn-check" type="checkbox" name="selected_project_tags" value="{{ tag }}" id="projectTag{{ loop.index }}" {% if tag in edit_state.selected_project_tags %}checked{% endif %}>
+                                <label class="btn btn-outline-info btn-sm" for="projectTag{{ loop.index }}">{{ tag }}</label>
+                                {% endfor %}
+                            </div>
+                            <div class="form-text">Assign or remove project tags from this note. Saving uses the existing note tag writer flow.</div>
+                            {% else %}
+                            <span class="text-muted small">No projects available.</span>
+                            {% endif %}
+                        </div>
+                    </div>
 
                     <div class="col-lg-6">
                         <label class="form-label">Add tags (one per line)</label>

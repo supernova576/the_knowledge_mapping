@@ -698,26 +698,77 @@ body {
   overflow: hidden;
   border: 1px solid var(--bs-border-color);
   border-radius: 0.5rem;
-  background-color: rgba(var(--bs-secondary-rgb), 0.08);
+  background-color: #1e1f22;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
 .km-canvas-host svg,
 .km-canvas-host #canvas-node-layer {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   transform-origin: 0 0;
 }
 
 .km-canvas-node {
   position: absolute;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 0.9rem;
+  background: rgba(32, 34, 37, 0.96);
+  color: #f3f4f6;
+}
+
+.km-canvas-node-content {
+  width: 100%;
+  height: 100%;
+  padding: 1rem 1.25rem;
+  overflow: hidden;
+}
+
+.km-canvas-node .km-markdown-preview,
+.km-canvas-node .km-markdown-preview > * {
+  color: inherit;
+}
+
+.km-canvas-node .km-markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.km-canvas-node .km-markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.km-canvas-node .km-markdown-preview h1,
+.km-canvas-node .km-markdown-preview h2,
+.km-canvas-node .km-markdown-preview h3,
+.km-canvas-node .km-markdown-preview h4,
+.km-canvas-node .km-markdown-preview h5,
+.km-canvas-node .km-markdown-preview h6,
+.km-canvas-node .km-markdown-preview p {
+  margin-bottom: 0;
+  line-height: 1.15;
+}
+
+.km-canvas-node .km-markdown-preview h1 { font-size: 2rem; }
+.km-canvas-node .km-markdown-preview h2 { font-size: 1.8rem; }
+.km-canvas-node .km-markdown-preview h3 { font-size: 1.55rem; }
+.km-canvas-node .km-markdown-preview h4 { font-size: 1.3rem; }
+.km-canvas-node .km-markdown-preview h5,
+.km-canvas-node .km-markdown-preview h6,
+.km-canvas-node .km-markdown-preview p,
+.km-canvas-node .km-markdown-preview li {
+  font-size: 1rem;
 }
 
 .km-canvas-edge {
   fill: none;
-  stroke: var(--bs-body-color);
-  stroke-width: 2;
-  opacity: 0.75;
+  stroke: rgba(255, 255, 255, 0.65);
+  stroke-width: 3;
+  opacity: 0.9;
 }
 
 .km-kanban-item-form .form-label {
@@ -725,5 +776,5 @@ body {
 }
 
 #km-arrowhead path {
-  fill: var(--bs-body-color);
+  fill: rgba(255, 255, 255, 0.65);
 }

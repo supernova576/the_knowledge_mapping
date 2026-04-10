@@ -3,6 +3,7 @@ import json
 import os
 import errno
 import re
+import shutil
 import stat
 import traceback
 from urllib.parse import urlencode, urlparse
@@ -725,6 +726,13 @@ def _normalize_project_link(value: str) -> str:
     return normalized
 
 
+def _normalize_project_doc_title(value: str) -> str:
+    normalized = _normalize_project_text(value, field_name="Document selection", max_length=255)
+    if not normalized:
+        return ""
+    return Path(normalized).stem.strip()
+
+
 def _normalize_kanban_status(value: str) -> str:
     normalized = str(value or "").strip()
     if normalized not in DEADLINE_STATUS_OPTIONS:
@@ -851,6 +859,17 @@ def _parse_multiline_tags(value: str) -> list[str]:
         if normalized:
             parsed.append(normalized)
     return parsed
+
+
+def _project_tags_from_projects_root(conf: dict) -> list[str]:
+    projects_root = _projects_root_path_from_conf(conf)
+    if not projects_root.exists() or not projects_root.is_dir():
+        return []
+
+    return [
+        f"#PROJECT_{project_dir.name}"
+        for project_dir in sorted((entry for entry in projects_root.iterdir() if entry.is_dir()), key=lambda item: item.name.casefold())
+    ]
 
 
 def _parse_json_array(value):
@@ -3060,7 +3079,7 @@ def create_project():
         project_dir.mkdir(parents=True, exist_ok=False)
         resources_template = _load_project_template(
             "3 - Ressourcen",
-            "# Ressourcen\n\n| Beschreibung | Link |\n| ------------ | ---- |\n|              |      |\n\n# Settings\n\n| Key | Value |\n| --- | ----- |\n| Tag |       |\n| Description|     |\n",
+            "# Ressourcen\n\n| Beschreibung | Link | Note |\n| ------------ | ---- | ---- |\n|              |      |      |\n\n# Settings\n\n| Key | Value |\n| --- | ----- |\n| Tag |       |\n| Description|     |\n",
         )
         kanban_template = _load_project_template(
             "3 - Kanban",
@@ -3068,9 +3087,15 @@ def create_project():
         )
 
         resources_content = resources_template.replace("| Tag |       |", f"| Tag | #PROJECT_{project_name} |")
-        (project_dir / "Ressourcen.md").write_text(resources_content, encoding="utf-8")
-        (project_dir / "Kanban.md").write_text(kanban_template, encoding="utf-8")
-        (project_dir / f"{project_name}.canvas").write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        resources_path = project_dir / "Ressourcen.md"
+        kanban_path = project_dir / "Kanban.md"
+        canvas_path = project_dir / f"{project_name}.canvas"
+        resources_path.write_text(resources_content, encoding="utf-8")
+        kanban_path.write_text(kanban_template, encoding="utf-8")
+        canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        _set_rw_permissions_for_all_users(resources_path)
+        _set_rw_permissions_for_all_users(kanban_path)
+        _set_rw_permissions_for_all_users(canvas_path)
 
         parser.parse_resources(project_dir)
         parser.parse_kanban(project_dir)
@@ -3080,10 +3105,42 @@ def create_project():
     return redirect(url_for("projects_overview"))
 
 
+@app.route("/projects/<project_name>/delete", methods=["POST"])
+def delete_project(project_name: str):
+    parser = DocsParser()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        project_tag = f"#PROJECT_{project_path.name}"
+        tagged_docs = sorted(
+            [
+                str(doc.get("title", "")).strip()
+                for doc in database.get_docs_by_tag(project_tag).values()
+                if str(doc.get("title", "")).strip()
+            ],
+            key=str.casefold,
+        )
+        force_delete = request.form.get("force_delete", "false").strip().lower() == "true"
+        if tagged_docs and not force_delete:
+            flash(
+                f"Project '{project_path.name}' is still assigned to {len(tagged_docs)} note(s). Please confirm deletion after reviewing them.",
+                "warning",
+            )
+            return redirect(url_for("project_detail", project_name=project_path.name))
+        shutil.rmtree(project_path)
+        flash(f"Project '{project_path.name}' deleted.", "success")
+    except FileNotFoundError:
+        flash("Project not found.", "danger")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("projects_overview"))
+
+
 @app.route("/projects/<project_name>", methods=["GET"])
 def project_detail(project_name: str):
     parser = DocsParser()
     viewer = DocsViewer()
+    database = db()
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
@@ -3092,12 +3149,21 @@ def project_detail(project_name: str):
         return render_template("404.html"), 404
 
     description_html = viewer.render_markdown_text(resources.get("description", ""))
+    tagged_docs = sorted(
+        [
+            str(doc.get("title", "")).strip()
+            for doc in database.get_docs_by_tag(str(resources.get("tag", f"#PROJECT_{project_path.name}")).strip()).values()
+            if str(doc.get("title", "")).strip()
+        ],
+        key=str.casefold,
+    )
     return render_template(
         "project_detail.html",
         project_name=project_path.name,
         resources=resources,
         kanban=kanban,
         description_html=Markup(description_html),
+        tagged_docs=tagged_docs,
     )
 
 
@@ -3105,30 +3171,52 @@ def project_detail(project_name: str):
 def project_resources(project_name: str):
     parser = DocsParser()
     viewer = DocsViewer()
+    database = db()
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
     except Exception:
         return render_template("404.html"), 404
 
-    enriched_links = []
+    categorized_resources = {"internal": [], "external": [], "freetext": []}
     for link_item in resources.get("resources", []):
         href = str(link_item.get("link", "")).strip()
         label = str(link_item.get("description", "")).strip() or href
+        note = str(link_item.get("note", "")).strip()
         is_external = _is_external_link(href)
         internal_url = ""
-        if not is_external:
+        if href and not is_external:
             target_value = href.strip("./")
             if target_value:
-                internal_url = url_for("view_doc_by_relative_path", relative_path=target_value)
-        enriched_links.append({**link_item, "label": label, "is_external": is_external, "internal_url": internal_url})
+                internal_url = url_for("view_doc_by_path", relative_path=target_value)
+        enriched_item = {
+            **link_item,
+            "label": label,
+            "note": note,
+            "is_external": bool(href) and is_external,
+            "internal_url": internal_url,
+            "type_label": "Free Text Note" if not href else ("External Link" if is_external else "Internal Doc"),
+        }
+        if not href:
+            categorized_resources["freetext"].append(enriched_item)
+        elif is_external:
+            categorized_resources["external"].append(enriched_item)
+        else:
+            categorized_resources["internal"].append(enriched_item)
+
+    selectable_docs = sorted(
+        [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
+        key=str.casefold,
+    )
 
     return render_template(
         "project_resources.html",
         project_name=project_path.name,
         resources=resources,
         description_html=Markup(viewer.render_markdown_text(resources.get("description", ""))),
-        links=enriched_links,
+        resource_groups=categorized_resources,
+        resource_count=len(resources.get("resources", [])),
+        selectable_docs=selectable_docs,
     )
 
 
@@ -3147,6 +3235,7 @@ def update_project_resources_settings(project_name: str):
             f"#PROJECT_{project_path.name}",
             updated_description,
         )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
         flash("Project description updated.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3156,15 +3245,23 @@ def update_project_resources_settings(project_name: str):
 @app.route("/projects/<project_name>/resources/add", methods=["POST"])
 def add_project_resource(project_name: str):
     parser = DocsParser()
+    database = db()
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
         description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
+        selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
         link = _normalize_project_link(request.form.get("link", ""))
-        if not description and not link:
-            raise ValueError("Resource description or link is required.")
+        if selected_doc:
+            allowed_titles = {str(item.get("title", "")).strip() for item in database.get_all_docs().values()}
+            if selected_doc not in allowed_titles:
+                raise ValueError("Selected internal document is invalid.")
+            link = f"{selected_doc}.md"
+        if not description and not link and not note:
+            raise ValueError("Resource description, link, or note is required.")
 
-        updated_resources = [*resources.get("resources", []), {"description": description, "link": link}]
+        updated_resources = [*resources.get("resources", []), {"description": description, "link": link, "note": note}]
         writer = DocsWriter()
         writer.write_project_resources_file(
             _project_resources_file(project_path),
@@ -3172,6 +3269,7 @@ def add_project_resource(project_name: str):
             f"#PROJECT_{project_path.name}",
             resources.get("description", ""),
         )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
         flash("Resource added.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3181,22 +3279,32 @@ def add_project_resource(project_name: str):
 @app.route("/projects/<project_name>/resources/<int:resource_id>/edit", methods=["POST"])
 def edit_project_resource(project_name: str, resource_id: int):
     parser = DocsParser()
+    database = db()
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
         description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
+        selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
         link = _normalize_project_link(request.form.get("link", ""))
-        if not description and not link:
-            raise ValueError("Resource description or link is required.")
+        if selected_doc:
+            allowed_titles = {str(item.get("title", "")).strip() for item in database.get_all_docs().values()}
+            if selected_doc not in allowed_titles:
+                raise ValueError("Selected internal document is invalid.")
+            link = f"{selected_doc}.md"
+        if not description and not link and not note:
+            raise ValueError("Resource description, link, or note is required.")
 
         updated_resources: list[dict] = []
         matched = False
         for item in resources.get("resources", []):
             if int(item.get("id", 0)) == resource_id:
-                updated_resources.append({"description": description, "link": link})
+                updated_resources.append({"description": description, "link": link, "note": note})
                 matched = True
             else:
-                updated_resources.append({"description": item.get("description", ""), "link": item.get("link", "")})
+                updated_resources.append(
+                    {"description": item.get("description", ""), "link": item.get("link", ""), "note": item.get("note", "")}
+                )
         if not matched:
             raise ValueError("Resource entry not found.")
 
@@ -3207,6 +3315,7 @@ def edit_project_resource(project_name: str, resource_id: int):
             f"#PROJECT_{project_path.name}",
             resources.get("description", ""),
         )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
         flash("Resource updated.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3220,7 +3329,7 @@ def delete_project_resource(project_name: str, resource_id: int):
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
         updated_resources = [
-            {"description": item.get("description", ""), "link": item.get("link", "")}
+            {"description": item.get("description", ""), "link": item.get("link", ""), "note": item.get("note", "")}
             for item in resources.get("resources", [])
             if int(item.get("id", 0)) != resource_id
         ]
@@ -3234,6 +3343,7 @@ def delete_project_resource(project_name: str, resource_id: int):
             f"#PROJECT_{project_path.name}",
             resources.get("description", ""),
         )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
         flash("Resource removed.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3914,19 +4024,26 @@ def edit_doc_resources(doc_id: int):
     doc = next(iter(doc_map.values()))
     all_tags = database.get_all_tags()
     pending_resource_updates = session.pop(f"pending_doc_resource_updates_{doc_id}", None)
+    current_tags = _to_display_list(doc.get("tags"))
+    project_tags = _project_tags_from_projects_root(_load_conf())
+    selected_project_tags = pending_resource_updates.get("selected_project_tags", []) if isinstance(pending_resource_updates, dict) else []
+    if not isinstance(selected_project_tags, list) or not selected_project_tags:
+        selected_project_tags = [tag for tag in current_tags if str(tag).strip().startswith("#PROJECT_")]
 
     return render_template(
         "doc_edit.html",
         doc=doc,
         all_tags=all_tags,
+        project_tags=project_tags,
         current_resources={
-            "tags": _to_display_list(doc.get("tags")),
+            "tags": current_tags,
             "links": _link_map_to_items(doc.get("links")),
             "video_links": _link_map_to_items(doc.get("video_links")),
         },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
             "pending_updates": pending_resource_updates or {},
+            "selected_project_tags": selected_project_tags,
         },
     )
 
@@ -3941,6 +4058,8 @@ def save_doc_resources(doc_id: int):
 
     doc = next(iter(doc_map.values()))
     doc_title = str(doc.get("title", "")).strip()
+    current_tags = _to_display_list(doc.get("tags"))
+    current_project_tags = [tag for tag in current_tags if str(tag).strip().startswith("#PROJECT_")]
     conf = _load_conf()
     docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
     doc_path = docs_dir / f"{doc_title}.md"
@@ -3948,8 +4067,19 @@ def save_doc_resources(doc_id: int):
         flash("Markdown file for selected document was not found.", "danger")
         return redirect(url_for("edit_doc_resources", doc_id=doc_id))
 
-    tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
-    tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
+    allowed_project_tags = set(_project_tags_from_projects_root(conf))
+    tags_to_add = [tag for tag in _parse_multiline_tags(request.form.get("tags_to_add", "")) if tag not in allowed_project_tags]
+    tags_to_remove = [tag for tag in _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove"))) if tag not in allowed_project_tags]
+    selected_project_tags = [
+        tag for tag in _parse_multiline_tags("\n".join(request.form.getlist("selected_project_tags")))
+        if tag in allowed_project_tags
+    ]
+    for tag in selected_project_tags:
+        if tag not in current_project_tags and tag not in tags_to_add:
+            tags_to_add.append(tag)
+    for tag in current_project_tags:
+        if tag not in selected_project_tags and tag not in tags_to_remove:
+            tags_to_remove.append(tag)
     existing_links_original = request.form.getlist("existing_links_original")
     existing_links_description = request.form.getlist("existing_links_description")
     existing_links_link = request.form.getlist("existing_links_link")
@@ -4033,6 +4163,7 @@ def save_doc_resources(doc_id: int):
         session[f"pending_doc_resource_updates_{doc_id}"] = {
             "tags_to_add": request.form.get("tags_to_add", ""),
             "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
+            "selected_project_tags": selected_project_tags,
         }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",

@@ -6,6 +6,11 @@
   const columns = ['Not Started', 'In Progress', 'Done'];
   const statusOptions = JSON.parse(board.dataset.statusOptions || '["Not Started","In Progress","Done"]');
   let refreshHandle = null;
+  const deleteModalElement = document.getElementById('kanbanDeleteModal');
+  const deleteMessage = document.getElementById('kanban-delete-message');
+  const deleteConfirm = document.getElementById('kanban-delete-confirm');
+  const deleteModal = deleteModalElement ? new bootstrap.Modal(deleteModalElement) : null;
+  let pendingDelete = null;
 
   const escapeHtml = (value) => String(value || '')
     .replaceAll('&', '&amp;')
@@ -119,6 +124,21 @@
     feedback.textContent = message;
   };
 
+  const openDeletePrompt = (itemId, deliverableLabel) => {
+    if (!deleteModal || !deleteMessage || !deleteConfirm) {
+      return false;
+    }
+
+    pendingDelete = { itemId, deliverableLabel };
+    deleteMessage.textContent = deliverableLabel
+      ? `Remove the deliverable "${deliverableLabel}"?`
+      : 'Remove this deliverable?';
+    deleteConfirm.disabled = false;
+    deleteConfirm.textContent = 'Delete Deliverable';
+    deleteModal.show();
+    return true;
+  };
+
   const bindEvents = () => {
     const createForm = document.getElementById('kanban-create-form');
     if (createForm) {
@@ -168,7 +188,13 @@
       const deleteButton = form.querySelector('[data-action="delete"]');
       if (deleteButton) {
         deleteButton.addEventListener('click', async () => {
-          if (!window.confirm('Remove this deliverable?')) return;
+          const deliverableInput = form.querySelector('[name="deliverable"]');
+          const deliverableLabel = String(deliverableInput?.value || '').trim();
+
+          if (openDeletePrompt(form.dataset.itemId, deliverableLabel)) {
+            return;
+          }
+
           try {
             await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban/${encodeURIComponent(form.dataset.itemId)}/delete`, {
               method: 'POST',
@@ -183,6 +209,38 @@
       }
     });
   };
+
+  if (deleteConfirm && deleteModalElement) {
+    deleteConfirm.addEventListener('click', async () => {
+      if (!pendingDelete?.itemId) return;
+
+      deleteConfirm.disabled = true;
+      deleteConfirm.textContent = 'Deleting...';
+
+      try {
+        await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban/${encodeURIComponent(pendingDelete.itemId)}/delete`, {
+          method: 'POST',
+          headers: { Accept: 'application/json' }
+        });
+        deleteModal.hide();
+        setFeedback('Deliverable removed.', false);
+        await render();
+      } catch (error) {
+        deleteModal.hide();
+        setFeedback(error.message || 'Failed to remove deliverable.', true);
+      } finally {
+        pendingDelete = null;
+        deleteConfirm.disabled = false;
+        deleteConfirm.textContent = 'Delete Deliverable';
+      }
+    });
+
+    deleteModalElement.addEventListener('hidden.bs.modal', () => {
+      pendingDelete = null;
+      deleteConfirm.disabled = false;
+      deleteConfirm.textContent = 'Delete Deliverable';
+    });
+  }
 
   render();
 })();
