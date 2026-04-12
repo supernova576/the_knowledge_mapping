@@ -1274,10 +1274,33 @@ class DocsParser:
             "height": max(1, max_y - min_y),
         }
 
-    def load_canvas(self, project_path: str | Path) -> dict:
+    def load_canvas(self, project_path: str | Path, canvas_file_name: str | None = None) -> dict:
         project_dir = Path(project_path).resolve()
-        canvas_path = (project_dir / f"{project_dir.name}.canvas").resolve()
-        if project_dir != canvas_path.parent:
+        canvas_dir = (project_dir / "Canvas").resolve()
+        if project_dir != canvas_dir.parent:
+            raise ValueError("Invalid canvas directory path.")
+
+        requested_file_name = str(canvas_file_name or "").strip()
+        if requested_file_name:
+            canvas_path = (canvas_dir / requested_file_name).resolve()
+            if canvas_dir != canvas_path.parent:
+                raise ValueError("Invalid canvas file path.")
+        else:
+            canvas_files = sorted(
+                [entry for entry in canvas_dir.glob("*.canvas") if entry.is_file()],
+                key=lambda item: item.name.casefold(),
+            )
+            if not canvas_files:
+                return {
+                    "canvas_file_name": "",
+                    "nodes": [],
+                    "edges": [],
+                    "bounds": self.compute_canvas_bounds([]),
+                    "warnings": ["No canvas files found."],
+                }
+            canvas_path = canvas_files[0]
+
+        if canvas_dir != canvas_path.parent:
             raise ValueError("Invalid canvas file path.")
         if not canvas_path.exists() or not canvas_path.is_file():
             return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": [f"{canvas_path.name} not found."]}
@@ -1287,6 +1310,7 @@ class DocsParser:
             return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": ["Canvas JSON is malformed."]}
         validated = self.validate_canvas(data)
         return {
+            "canvas_file_name": canvas_path.name,
             "nodes": validated["nodes"],
             "edges": validated["edges"],
             "bounds": self.compute_canvas_bounds(validated["nodes"]),

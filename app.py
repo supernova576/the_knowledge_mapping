@@ -648,6 +648,71 @@ def _projects_root_path_from_conf(conf: dict | None = None) -> Path:
     return Path(loaded_conf.get("projects", {}).get("root_path", "/the-knowledge/01_PROJ")).resolve()
 
 
+def _project_canvas_dir(project_path: Path) -> Path:
+    project_dir = Path(project_path).resolve()
+    canvas_dir = (project_dir / "Canvas").resolve()
+    if project_dir != canvas_dir.parent:
+        raise ValueError("Invalid canvas path.")
+    return canvas_dir
+
+
+def _normalize_canvas_file_name(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("Canvas name is required.")
+    if len(normalized) > 120:
+        raise ValueError("Canvas name is too long.")
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError("Canvas name must not contain path separators.")
+    if normalized in {".", ".."}:
+        raise ValueError("Canvas name is invalid.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]+", normalized):
+        raise ValueError("Canvas name contains invalid characters.")
+    if not normalized.lower().endswith(".canvas"):
+        normalized = f"{normalized}.canvas"
+    return normalized
+
+
+def _set_rw_permissions(path: Path, *, is_directory: bool = False) -> None:
+    if os.name == "nt":
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        return
+
+    os.chmod(path, 0o777 if is_directory else 0o666)
+
+
+def _set_rw_permissions_for_all_users(path: Path) -> None:
+    _set_rw_permissions(path, is_directory=path.is_dir())
+
+
+def _ensure_project_canvas_storage(project_path: Path) -> Path:
+    project_dir = Path(project_path).resolve()
+    canvas_dir = _project_canvas_dir(project_dir)
+    canvas_dir.mkdir(parents=True, exist_ok=True)
+    _set_rw_permissions(canvas_dir, is_directory=True)
+
+    legacy_canvas_path = (project_dir / f"{project_dir.name}.canvas").resolve()
+    if legacy_canvas_path.exists() and legacy_canvas_path.is_file() and legacy_canvas_path.parent == project_dir:
+        target_path = (canvas_dir / legacy_canvas_path.name).resolve()
+        if target_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas migration target.")
+        if not target_path.exists():
+            shutil.move(str(legacy_canvas_path), str(target_path))
+        else:
+            legacy_canvas_path.unlink()
+        _set_rw_permissions_for_all_users(target_path)
+
+    return canvas_dir
+
+
+def _list_project_canvas_files(project_path: Path) -> list[str]:
+    canvas_dir = _ensure_project_canvas_storage(project_path)
+    return sorted(
+        [entry.name for entry in canvas_dir.iterdir() if entry.is_file() and entry.suffix.casefold() == ".canvas"],
+        key=str.casefold,
+    )
+
+
 def _sanitize_project_name(raw_project_name: str) -> str:
     project_name = str(raw_project_name or "").strip()
     if not project_name:
@@ -1015,15 +1080,6 @@ def _apply_doc_template(
 
     _set_rw_permissions_for_all_users(target_path)
     return {"status": "updated", "path": target_path, "file_name": normalized_file_name}
-
-
-def _set_rw_permissions_for_all_users(path: Path) -> None:
-    if os.name == "nt":
-        # On Windows, chmod mainly controls read-only flag.
-        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
-        return
-
-    os.chmod(path, 0o666)
 
 
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
@@ -3098,13 +3154,16 @@ def create_project():
         resources_content = resources_template.replace("| Tag |       |", f"| Tag | #PROJECT_{project_name} |")
         resources_path = project_dir / "Ressourcen.md"
         kanban_path = project_dir / "Kanban.md"
-        canvas_path = project_dir / f"{project_name}.canvas"
         resources_path.write_text(resources_content, encoding="utf-8")
         kanban_path.write_text(kanban_template, encoding="utf-8")
-        canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
         _set_rw_permissions_for_all_users(resources_path)
         _set_rw_permissions_for_all_users(kanban_path)
-        _set_rw_permissions_for_all_users(canvas_path)
+        canvas_dir = _ensure_project_canvas_storage(project_dir)
+        initial_canvas_path = (canvas_dir / f"{project_name}.canvas").resolve()
+        if initial_canvas_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas file path.")
+        initial_canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        _set_rw_permissions_for_all_users(initial_canvas_path)
 
         parser.parse_resources(project_dir)
         parser.parse_kanban(project_dir)
@@ -3504,18 +3563,80 @@ def project_canvas(project_name: str):
     parser = DocsParser()
     try:
         project_path = parser.resolve_project_path(project_name)
+        canvas_files = _list_project_canvas_files(project_path)
     except Exception:
         return render_template("404.html"), 404
-    return render_template("project_canvas.html", project_name=project_path.name)
+    return render_template(
+        "project_canvas.html",
+        project_name=project_path.name,
+        canvas_files=canvas_files,
+    )
 
 
-@app.route("/api/projects/<project_name>/canvas", methods=["GET"])
-def api_project_canvas(project_name: str):
+@app.route("/projects/<project_name>/canvas/<canvas_file_name>", methods=["GET"])
+def project_canvas_detail(project_name: str, canvas_file_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_files = _list_project_canvas_files(project_path)
+        if normalized_canvas_name not in canvas_files:
+            return render_template("404.html"), 404
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template(
+        "project_canvas_detail.html",
+        project_name=project_path.name,
+        canvas_files=canvas_files,
+        active_canvas_file=normalized_canvas_name,
+    )
+
+
+@app.route("/projects/<project_name>/canvas/create", methods=["POST"])
+def create_project_canvas(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_file_name = _normalize_canvas_file_name(request.form.get("canvas_name", ""))
+        canvas_dir = _ensure_project_canvas_storage(project_path)
+        canvas_path = (canvas_dir / canvas_file_name).resolve()
+        if canvas_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas file path.")
+        if canvas_path.exists():
+            raise ValueError("A canvas with this name already exists.")
+        canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        _set_rw_permissions_for_all_users(canvas_path)
+        flash("Canvas created.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_canvas", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/canvas/<canvas_file_name>/delete", methods=["POST"])
+def delete_project_canvas(project_name: str, canvas_file_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_dir = _ensure_project_canvas_storage(project_path)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_path = (canvas_dir / normalized_canvas_name).resolve()
+        if canvas_path.parent != canvas_dir or not canvas_path.exists() or not canvas_path.is_file():
+            raise ValueError("Canvas not found.")
+        canvas_path.unlink()
+        flash("Canvas deleted.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_canvas", project_name=project_name))
+
+
+@app.route("/api/projects/<project_name>/canvas/<canvas_file_name>", methods=["GET"])
+def api_project_canvas(project_name: str, canvas_file_name: str):
     parser = DocsParser()
     viewer = DocsViewer()
     try:
         project_path = parser.resolve_project_path(project_name)
-        canvas_data = parser.load_canvas(project_path)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_data = parser.load_canvas(project_path, normalized_canvas_name)
         rendered_nodes = []
         for node in canvas_data.get("nodes", []):
             node_text = str(node.get("text", "")).strip()
@@ -3524,6 +3645,7 @@ def api_project_canvas(project_name: str):
         return jsonify(
             {
                 "project_name": project_path.name,
+                "canvas_file_name": canvas_data.get("canvas_file_name", normalized_canvas_name),
                 "nodes": rendered_nodes,
                 "edges": canvas_data.get("edges", []),
                 "bounds": canvas_data.get("bounds", {}),

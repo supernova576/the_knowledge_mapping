@@ -8,6 +8,7 @@
   if (!host || !nodeLayer || !edgeLayer || !edgeSvg) return;
 
   const projectName = host.dataset.projectName;
+  const canvasFileName = host.dataset.canvasFileName;
   let scale = 1;
   let offsetX = 0;
   let offsetY = 0;
@@ -74,7 +75,10 @@
   };
 
   const render = async () => {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/canvas`, { headers: { Accept: 'application/json' } });
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectName)}/canvas/${encodeURIComponent(canvasFileName || '')}`,
+      { headers: { Accept: 'application/json' } }
+    );
     const payload = await response.json();
     if (!response.ok) {
       warningEl.textContent = payload.error || 'Failed to load canvas.';
