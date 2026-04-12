@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Learning Mode</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+<body>
+<div class="container py-4">
+    {% set active_page = 'learning' %}
+    {% include '_navbar.html' %}
+    <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 mb-0">Learning Mode — {{ learning.file_name }}</h1><a class="btn btn-outline-secondary" href="{{ url_for('learning_overview') }}">Exit</a></div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}{% for category, message in messages %}<div class="alert alert-{{ category }} mb-2">{{ message }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+
+    <div class="alert alert-info" role="alert">
+        Free-text questions are included in learning mode for practice and review, but they do not count toward the final score.
+    </div>
+
+    <form method="post" action="{{ url_for('learning_mode_finish', learning_id=learning.id) }}" id="finish-form">
+    {% set answer_key = {} %}
+    {% for item in parsed_learning.answers %}{% set _ = answer_key.update({item.question_id: item.correct_answers}) %}{% endfor %}
+    {% for question in parsed_learning.questions %}
+    <div class="card shadow-sm mb-3"><div class="card-body">
+        <h2 class="h6 mb-2">{{ question.id }} — {{ question.text }}</h2>
+        {% if question.type == 'FREETEXT' %}
+            <textarea class="form-control" name="answer_{{ question.id }}" rows="3">{{ (draft_answers.get(question.id, [""])[0]) if draft_answers else "" }}</textarea>
+        {% elif question.type == 'SINGLE_CHOICE' %}
+            {% for option in question.options %}
+            <div class="form-check"><input class="form-check-input" type="radio" name="answer_{{ question.id }}" value="{{ option }}" {% if option in draft_answers.get(question.id, []) %}checked{% endif %}><label class="form-check-label">{{ option }}</label></div>
+            {% endfor %}
+        {% else %}
+            {% for option in question.options %}
+            <div class="form-check"><input class="form-check-input" type="checkbox" name="answer_{{ question.id }}" value="{{ option }}" {% if option in draft_answers.get(question.id, []) %}checked{% endif %}><label class="form-check-label">{{ option }}</label></div>
+            {% endfor %}
+        {% endif %}
+        {% if review_attempt %}
+        <div class="mt-2 small">
+            {% if question.type == 'FREETEXT' %}
+            <div><strong>Expected answer:</strong> {{ answer_key.get(question.id, [])|join(', ') or '-' }}</div>
+            <div><strong>Submitted:</strong> {{ draft_answers.get(question.id, [])|join(', ') or '-' }}</div>
+            <div class="text-muted">This question is not part of the score.</div>
+            {% else %}
+            <div><strong>Correct:</strong> {{ answer_key.get(question.id, [])|join(', ') }}</div>
+            <div><strong>Submitted:</strong> {{ draft_answers.get(question.id, [])|join(', ') or '-' }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div></div>
+    {% endfor %}
+
+    <div class="d-flex gap-2">
+        <button class="btn btn-success" type="submit">Finished</button>
+        <button class="btn btn-outline-primary" type="button" id="save-draft-btn">Save progress</button>
+    </div>
+    </form>
+
+    <form method="post" action="{{ url_for('learning_mode_save', learning_id=learning.id) }}" id="save-form" class="d-none"></form>
+    {% include '_footer.html' %}
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+{% include '_theme_toggle_script.html' %}
+<script>
+document.getElementById('save-draft-btn').addEventListener('click', function () {
+    const finishForm = document.getElementById('finish-form');
+    const saveForm = document.getElementById('save-form');
+    saveForm.innerHTML = '';
+    new FormData(finishForm).forEach((value, key) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        saveForm.appendChild(input);
+    });
+    saveForm.submit();
+});
+</script>
+</body>
+</html>

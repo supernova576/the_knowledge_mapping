@@ -102,7 +102,7 @@
                                 <tbody>
                                     {% for row in section_rows %}
                                     <tr>
-                                        <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                        <td>{{ row.entry_indicator }} {{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                         <td>
                                             <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
                                                 <input type="hidden" name="section" value="{{ row.section }}" />
@@ -160,7 +160,7 @@
                                 {% for row in section_rows %}
                                 <tr>
                                     <td>{{ row.sw if row.sw else '-' }}</td>
-                                    <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                    <td>{{ row.entry_indicator }} {{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                     <td>
                                         <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
                                             <input type="hidden" name="section" value="{{ row.section }}" />
@@ -216,7 +216,7 @@
                                 {% for row in section_rows %}
                                 <tr>
                                     <td>{{ row.sw if row.sw else '-' }}</td>
-                                    <td>{{ row.checklist_item|render_hslu_inline_markdown }}</td>
+                                    <td>{{ row.entry_indicator }} {{ row.checklist_item|render_hslu_inline_markdown }}</td>
                                     <td>
                                         <form method="post" action="{{ url_for('hslu_semester_checklist_update_status') }}" class="d-flex gap-2 align-items-center">
                                             <input type="hidden" name="section" value="{{ row.section }}" />

@@ -5,15 +5,57 @@
     "docs": {
         "full_path_to_docs": "/the-knowledge/02_DOCS"
     },
+    "compliance_check": {
+        "structure": {
+            "enabled": true,
+            "strings_to_check": [
+                "## Zusätzliche Ressourcen",
+                "#### Erklärvideo",
+                "#### Externe Referenzen",
+                "#### Page History",
+                "#### Page Tags",
+                "## Beschreibung"
+            ]
+        },
+        "created": {
+            "enabled": true
+        },
+        "beschreibung": {
+            "enabled": true,
+            "max": 3
+        },
+        "external_links": {
+            "enabled": true,
+            "min": 1
+        },
+        "tags": {
+            "enabled": true,
+            "min": 2
+        },
+        "video_links": {
+            "enabled": true,
+            "char": 6000
+        },
+        "ai_feedback": {
+            "enabled": true,
+            "min": 80
+        }
+    },
     "todo": {
         "full_path_to_todo_file": "/the-knowledge/README.md"
     },
     "deadlines": {
         "full_path_to_deadlines_file": "/the-knowledge/Deadlines.md"
     },
+    "projects": {
+        "root_path": "/the-knowledge/01_PROJ"
+    },
     "git": {
         "full_path_to_git_dir": "/the-knowledge/.git",
         "executable": "git"
+    },
+    "pictures": {
+        "full_path_to_pictures": "/the-knowledge/04_IMAGES"
     },
     "log": {
         "log_file_path": "logs/app.log"
@@ -31,5 +73,16 @@
         "app_title": "The Knowledge Mapping",
         "timeout_seconds": 120,
         "error_output_path": "output/ai_feedback_error"
+    },
+    "learning": {
+        "learning_path": "/the-knowledge/07_LEARNINGS",
+        "learning_ai_prompt_path": "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md",
+        "learning_template_path": "/the-knowledge/03_TEMPLATES/2 - New Learning.md"
+    },
+    "playbooks": {
+        "enabled": true,
+        "path": "/the-knowledge/08_PLAYBOOKS",
+        "max_depth": 30,
+        "dry_run": false
     }
 }

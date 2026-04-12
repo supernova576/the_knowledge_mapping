@@ -19,9 +19,20 @@
 
         <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
             <h1 class="h3 mb-0">The Knowledge Overview Dashboard</h1>
-            <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
-                <button id="scan-submit" class="btn btn-primary">Run full scan</button>
-            </form>
+            <div class="d-flex align-items-center gap-2">
+                <div class="dropdown">
+                    <button class="btn btn-secondary dropdown-toggle" type="button" id="indexActionDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        Actions
+                    </button>
+                    <ul class="dropdown-menu" aria-labelledby="indexActionDropdown">
+                        <li><button type="button" class="dropdown-item" id="create-note-trigger">Create Note</button></li>
+                        <li><button type="button" class="dropdown-item" id="update-note-trigger">Update Note</button></li>
+                    </ul>
+                </div>
+                <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
+                    <button id="scan-submit" class="btn btn-primary">Run full scan</button>
+                </form>
+            </div>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -45,48 +56,53 @@
         <div class="row g-3 mb-4">
             <div class="col-lg col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
             <div class="col-lg col-md-6"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">Under Construction</h2><p class="display-6 text-info-emphasis mb-0">{{ under_construction_count }}</p></div></div></div>
-        </div>
-
-        <div class="card shadow-sm mb-4"><div class="card-body">
-            <h2 class="h5">Search & filter</h2>
-            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
-                <div class="col-md-3"><label class="form-label">View</label><select name="view" class="form-select">
-                    <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                    <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
-                    <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
-                    <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
-                    <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
-                    <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
-                    <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
-                </select></div>
-                <div class="col-md-7"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
-                <input type="hidden" name="sort" value="{{ selected_sort }}" />
-                <div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
-            </form>
-        </div></div>
-
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="card shadow-sm h-100"><div class="card-body">
-                    <h2 class="h5">Manual compliance</h2>
-                    <form method="post" action="{{ url_for('set_manual_compliance') }}" class="row g-2 align-items-end">
-                        <div class="col-md-12"><label class="form-label">Document name</label><select class="form-select" name="doc_title" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
-                        <div class="col-md-7"><label class="form-label">Manual compliant override</label><select class="form-select" name="manual_compliant_override"><option value="true">true</option><option value="false" selected>false</option></select></div>
-                        <div class="col-md-5 d-grid"><button class="btn btn-outline-success">Update manual compliance</button></div>
-                    </form>
+            <div class="col-lg-3 col-md-6">
+                <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
+                    <h2 class="h6 text-muted">ToDos open</h2>
+                    <p class="display-6 text-warning-emphasis mb-0">{{ open_todos_count }}</p>
                 </div></div>
             </div>
-            <div class="col-md-6">
-                <div class="card shadow-sm h-100"><div class="card-body">
-                    <h2 class="h5">Update docs</h2>
-                    <form method="post" action="{{ url_for('create_doc_from_todo_template') }}" class="row g-2 align-items-end">
-                        <input type="hidden" name="from_index" value="true" />
-                        <div class="col-md-12"><label class="form-label">Select document</label><select class="form-select" name="selected_doc" required><option value="" selected disabled>Select a document</option>{% for doc in manual_compliance_docs %}<option value="{{ doc.title }}">{{ doc.title }}</option>{% endfor %}</select></div>
-                        <div class="col-md-12"><label class="form-label">Reason for update</label><input class="form-control" name="reason" placeholder="Why should this note be updated?" required /></div>
-                        <br>
-                        <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Update Note</button></div>
+            <div class="col-lg-3 col-md-6">
+                <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
+                    <h2 class="h6 text-muted">Next deadlines (&lt;7d)</h2>
+                    <p class="display-6 text-warning-emphasis mb-0">{{ upcoming_deadlines_count }}</p>
+                </div></div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-danger-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Incompliant</h2><p class="display-6 text-danger mb-0">{{ incompliant_docs }}</p></div></div></div>
+            <div class="col-lg col-md-6"><div class="card shadow-sm border-info-subtle h-100"><div class="card-body"><h2 class="h6 text-info-emphasis">Under Construction</h2><p class="display-6 text-info-emphasis mb-0">{{ under_construction_count }}</p></div></div></div>
+            <div class="col-lg-6 col-md-12">
+                <div class="card shadow-sm border-secondary-subtle h-100"><div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                        <h2 class="h6 text-muted mb-0">Overall progress</h2>
+                        <span class="fw-semibold">{{ total_progress }}%</span>
+                    </div>
+                    <div class="km-battery-progress" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ total_progress }}">
+                        <div class="km-battery-progress-fill" style="width: {{ total_progress }}%; background-color: {{ total_progress_color }};"></div>
+                    </div>
+                </div></div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4 align-items-stretch">
+            <div class="col-12 d-flex">
+                <div class="card shadow-sm h-100 w-100"><div class="card-body">
+                    <h2 class="h5">Search & filter</h2>
+                    <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
+                        <div class="col-md-12"><label class="form-label">View</label><select name="view" class="form-select">
+                            <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
+                            <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
+                            <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
+                            <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
+                            <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
+                            <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                            <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
+                        </select></div>
+                        <div class="col-md-12"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
+                        <input type="hidden" name="sort" value="{{ selected_sort }}" />
+                        <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
                     </form>
                 </div></div>
             </div>
@@ -109,9 +125,9 @@
                     </select>
                 </form>
             </div>
-            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Actions</th></tr></thead><tbody>
-            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-info btn-sm text-white" href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}">Edit</a><button type="button" class="btn btn-outline-success btn-sm ai-feedback-trigger" data-file-name="{{ doc.title }}">Feedback</button></div></td></tr>
-            {% else %}<tr><td colspan="7" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
+            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Addons</th><th>Actions</th></tr></thead><tbody>
+            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% if doc.has_ai_feedback %}{% if doc.latest_ai_feedback %}<a class="badge text-bg-info text-decoration-none me-1" href="{{ url_for('ai_feedback_detail', feedback_id=doc.latest_ai_feedback.id) }}">AI Feedback</a>{% else %}<span class="badge text-bg-secondary me-1">AI Feedback</span>{% endif %}{% endif %}{% if doc.has_learning %}{% if doc.learning %}<a class="badge text-bg-info text-decoration-none me-1" href="{{ url_for('learning_detail', learning_id=doc.learning.id) }}">Learning</a>{% else %}<span class="badge text-bg-secondary me-1">Learning</span>{% endif %}{% endif %}</td><td><div class="dropdown"><button class="btn btn-secondary btn-sm dropdown-toggle km-actions-dropdown-toggle" type="button" id="dropdownMenuButton-{{ doc.id }}" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Actions</button><ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-{{ doc.id }}"><li><a class="dropdown-item" href="{{ url_for('view_doc', doc_id=doc.id) }}">View</a></li><li><a class="dropdown-item" href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}">Edit</a></li><li><button type="button" class="dropdown-item ai-feedback-trigger" data-file-name="{{ doc.title }}">AI Feedback</button></li><li><form method="post" action="{{ url_for('learning_doc_action') }}"><input type="hidden" name="selected_doc" value="{{ doc.title }}" /><input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" /><button type="submit" class="dropdown-item">{% if doc.has_learning %}View Learning{% else %}Add Learning{% endif %}</button></form></li><li><button type="button" class="dropdown-item trigger-playbook-button" data-note-name="{{ doc.title }}">Trigger Playbook</button></li></ul></div></td></tr>
+            {% else %}<tr><td colspan="8" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}
 </div>
@@ -138,6 +154,142 @@
         </div>
     </div>
 
+    <div class="modal fade" id="createNoteModal" tabindex="-1" aria-labelledby="createNoteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="post" action="{{ url_for('create_doc_from_todo_template') }}" id="create-note-form">
+                    <div class="modal-header">
+                        <h2 class="modal-title fs-5" id="createNoteModalLabel">Create Note</h2>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" name="from_index" value="true" />
+                        <input type="hidden" name="template_name" value="new" />
+                        <div class="mb-3">
+                            <label class="form-label" for="create-note-file-name">How should the note be called?</label>
+                            <input class="form-control" id="create-note-file-name" name="file_name" placeholder="Example Note Name" maxlength="200" required />
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label" for="create-note-priority">Priority</label>
+                            <select class="form-select" id="create-note-priority" name="priority" required>
+                                <option value="Low">Low</option>
+                                <option value="Medium" selected>Medium</option>
+                                <option value="High">High</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="create-note-submit">Create Note</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="updateNoteModal" tabindex="-1" aria-labelledby="updateNoteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="post" action="{{ url_for('create_doc_from_todo_template') }}" id="update-note-form">
+                    <div class="modal-header">
+                        <h2 class="modal-title fs-5" id="updateNoteModalLabel">Update Note</h2>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" name="from_index" value="true" />
+                        <input type="hidden" name="template_name" value="update" />
+                        <div class="mb-3">
+                            <label class="form-label" for="update-note-selected-doc">Select document</label>
+                            <select class="form-select" id="update-note-selected-doc" name="selected_doc" required>
+                                <option value="" selected disabled>Select a document</option>
+                                {% for doc in selectable_docs %}
+                                <option value="{{ doc.title }}">{{ doc.title }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="update-note-reason">Reason for update</label>
+                            <input class="form-control" id="update-note-reason" name="reason" placeholder="Why should this note be updated?" maxlength="300" required />
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label" for="update-note-priority">Priority</label>
+                            <select class="form-select" id="update-note-priority" name="priority" required>
+                                <option value="Low">Low</option>
+                                <option value="Medium" selected>Medium</option>
+                                <option value="High">High</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="update-note-submit">Update Note</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="triggerPlaybookModal" tabindex="-1" aria-labelledby="triggerPlaybookModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="post" id="trigger-playbook-form">
+                    <div class="modal-header">
+                        <h2 class="modal-title fs-5" id="triggerPlaybookModalLabel">Trigger Playbook</h2>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-3" id="trigger-playbook-message"></p>
+                        <input type="hidden" name="note_name" id="trigger-playbook-note-name" />
+                        <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" />
+                        <div class="mb-3">
+                            <label class="form-label" for="trigger-playbook-select">Playbook</label>
+                            <select id="trigger-playbook-select" class="form-select" required>
+                                <option value="" selected disabled>Select a playbook</option>
+                                {% for playbook in playbooks %}
+                                <option value="{{ playbook.name }}">{{ playbook.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div id="trigger-playbook-runtime-fields" class="row g-3"></div>
+                        <div class="mt-3">
+                            <div class="km-playbook-output card d-none" id="triggerPlaybookOutputPanel">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h2 class="h6 text-uppercase mb-0">Run Output</h2>
+                                        <span class="badge text-bg-secondary" id="triggerPlaybookOutputBadge">Idle</span>
+                                    </div>
+                                    <div id="triggerPlaybookOutputEntries" class="d-grid gap-2"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="trigger-playbook-submit">Trigger Playbook</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="triggerPlaybookPromptModal" tabindex="-1" aria-labelledby="triggerPlaybookPromptModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title fs-5" id="triggerPlaybookPromptModalLabel">Playbook Message</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="trigger-playbook-prompt-body" class="km-playbook-prompt-body"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger" id="trigger-playbook-prompt-abort">Abort</button>
+                    <button type="button" class="btn btn-success" id="trigger-playbook-prompt-confirm">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
@@ -152,6 +304,233 @@
             const aiFeedbackSelectedDoc = document.getElementById("ai-feedback-selected-doc");
             const aiFeedbackInlineForm = document.getElementById("ai-feedback-inline-form");
             const aiFeedbackConfirmSubmit = document.getElementById("ai-feedback-confirm-submit");
+            const createNoteTrigger = document.getElementById("create-note-trigger");
+            const updateNoteTrigger = document.getElementById("update-note-trigger");
+            const createNoteModalElement = document.getElementById("createNoteModal");
+            const updateNoteModalElement = document.getElementById("updateNoteModal");
+            const createNoteFileName = document.getElementById("create-note-file-name");
+            const createNotePriority = document.getElementById("create-note-priority");
+            const updateNoteSelectedDoc = document.getElementById("update-note-selected-doc");
+            const updateNoteReason = document.getElementById("update-note-reason");
+            const updateNotePriority = document.getElementById("update-note-priority");
+            const createNoteForm = document.getElementById("create-note-form");
+            const createNoteSubmit = document.getElementById("create-note-submit");
+            const updateNoteForm = document.getElementById("update-note-form");
+            const updateNoteSubmit = document.getElementById("update-note-submit");
+            const triggerPlaybookModalElement = document.getElementById("triggerPlaybookModal");
+            const triggerPlaybookForm = document.getElementById("trigger-playbook-form");
+            const triggerPlaybookMessage = document.getElementById("trigger-playbook-message");
+            const triggerPlaybookNoteName = document.getElementById("trigger-playbook-note-name");
+            const triggerPlaybookSelect = document.getElementById("trigger-playbook-select");
+            const triggerPlaybookSubmit = document.getElementById("trigger-playbook-submit");
+            const triggerPlaybookRuntimeFields = document.getElementById("trigger-playbook-runtime-fields");
+            const triggerPlaybookPromptModalElement = document.getElementById("triggerPlaybookPromptModal");
+            const triggerPlaybookPromptBody = document.getElementById("trigger-playbook-prompt-body");
+            const triggerPlaybookPromptAbort = document.getElementById("trigger-playbook-prompt-abort");
+            const triggerPlaybookPromptConfirm = document.getElementById("trigger-playbook-prompt-confirm");
+            const triggerPlaybookOutputPanel = document.getElementById("triggerPlaybookOutputPanel");
+            const triggerPlaybookOutputBadge = document.getElementById("triggerPlaybookOutputBadge");
+            const triggerPlaybookOutputEntries = document.getElementById("triggerPlaybookOutputEntries");
+            const triggerPlaybookPromptModal = triggerPlaybookPromptModalElement ? new bootstrap.Modal(triggerPlaybookPromptModalElement) : null;
+            let pendingTriggerPlaybookResume = null;
+            let triggerPromptDecisionSubmitted = false;
+            const playbookActionSchemas = {
+                create_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}],
+                update_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"reason", label:"Reason", type:"textarea", placeholder:"Why should this note be updated?", help:"Runtime context key: reason.", required:true}],
+                create_learning: [{key:"note_name", label:"Source note name", type:"text", placeholder:"Networks Week 03", help:"Runtime context key: note_name.", required:true}],
+                generate_ai_questions: [{key:"note_name", label:"Note name", type:"text", placeholder:"Networks Week 03", help:"Runtime context key: note_name.", required:true}],
+                generate_ai_feedback: [{key:"note_name", label:"Note name", type:"text", placeholder:"Essay Draft", help:"Runtime context key: note_name.", required:true}],
+                add_note_tags: [{key:"note_name", label:"Related note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"tag_list", label:"Tag list (JSON array)", type:"textarea", placeholder:"[\"#tag1\", \"#tag2\"]", help:"Runtime context key: tag_list.", required:true}],
+                create_todo: [{key:"note_name", label:"Related note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"priority", label:"Priority", type:"select", options:["Low", "Medium", "High"], placeholder:"Medium", help:"Runtime context key: priority.", required:true}, {key:"progress", label:"Progress", type:"text", placeholder:"Not Started", help:"Runtime context key: progress.", required:true}, {key:"type", label:"Todo type", type:"select", options:["New", "Update", "New/Update"], placeholder:"Update", help:"Runtime context key: type.", required:true}],
+                update_todo: [{key:"note_name", label:"Related note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"priority", label:"Priority", type:"select", options:["", "Low", "Medium", "High"], placeholder:"", help:"Runtime context key: priority.", required:false}, {key:"progress", label:"Progress", type:"select", options:["", "Not Started", "In Progress", "Done"], placeholder:"", help:"Runtime context key: progress.", required:false}],
+                delete_todo: [{key:"note_name", label:"Related note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}],
+                create_deadline: [{key:"deadline_name", label:"Deadline name", type:"text", placeholder:"Submit final report", help:"Runtime context key: deadline_name.", required:true}, {key:"days_in_advance", label:"Days in advance", type:"number", placeholder:"2", help:"Runtime context key: days_in_advance.", required:true}, {key:"hours_in_advance", label:"Hours in advance", type:"number", placeholder:"6", help:"Runtime context key: hours_in_advance.", required:true}, {key:"status", label:"Status", type:"select", options:["Not Started", "In Progress", "Done"], placeholder:"Not Started", help:"Runtime context key: status.", required:true}]
+            };
+            function escapeHtml(value) {
+                return String(value || "")
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#39;");
+            }
+            function getNestedValue(source, key) {
+                return source?.[key] ?? source?.input?.[key] ?? "";
+            }
+            function blockDisplayName(block) {
+                if (!block) return "";
+                const payload = block.payload || {};
+                return payload.label || payload.action || payload.operator || payload.trigger_type || block.id || "";
+            }
+            function isBranchPlaceholderBlock(block) {
+                if (!block || block.type !== "action") return false;
+                const payload = block.payload || {};
+                if (payload.placeholder) return true;
+                const actionName = String(payload.action || "").trim();
+                const label = String(payload.label || "").trim().toLowerCase();
+                return actionName === "create_todo" && label.endsWith("branch action");
+            }
+            function inferRuntimeContextRequirements(layout, presetContext) {
+                const required = new Map();
+                (layout?.blocks || []).forEach(function (block) {
+                    if (block.type === "action" && !isBranchPlaceholderBlock(block)) {
+                        (playbookActionSchemas[block.payload?.action] || []).forEach(function (field) {
+                            const configuredValue = getNestedValue(block.payload, field.key);
+                            if (field.required && !String(configuredValue || "").trim() && !String(presetContext[field.key] || "").trim()) {
+                                required.set(field.key, {
+                                    key: field.key,
+                                    label: field.label,
+                                    type: field.type || "text",
+                                    options: field.options || [],
+                                    placeholder: field.placeholder || "",
+                                    help: field.help + " Required by " + blockDisplayName(block) + ".",
+                                });
+                            }
+                        });
+                    }
+                    if (block.type === "flow" && String(block.payload?.input?.source || "").trim().toLowerCase() === "context") {
+                        const contextKey = String(block.payload?.input?.value_to_compare || "").trim();
+                        const fromActionOutput = ["from_action_output", "override_context_value"].some(function (key) {
+                            return String(block.payload?.input?.[key] || "").trim().toLowerCase() === "true";
+                        });
+                        if (contextKey && !fromActionOutput && !String(presetContext[contextKey] || "").trim()) {
+                            required.set(contextKey, {
+                                key: contextKey,
+                                label: "Context: " + contextKey,
+                                type: "text",
+                                placeholder: contextKey,
+                                help: "Required by " + blockDisplayName(block) + ".",
+                            });
+                        }
+                    }
+                });
+                return Array.from(required.values());
+            }
+            function renderTriggerPlaybookRuntimeFields(fields) {
+                if (!triggerPlaybookRuntimeFields) {
+                    return;
+                }
+                if (!fields.length) {
+                    triggerPlaybookRuntimeFields.innerHTML = '<div class="col-12 text-muted small">No additional runtime context is required.</div>';
+                    return;
+                }
+                triggerPlaybookRuntimeFields.innerHTML = fields.map(function (field) {
+                    const control = field.type === "select"
+                        ? '<select class="form-select" id="runtime-' + escapeHtml(field.key) + '" name="' + escapeHtml(field.key) + '" required>'
+                            + (field.options || []).map(function (option) {
+                                return '<option value="' + escapeHtml(option) + '">' + escapeHtml(option) + '</option>';
+                            }).join("")
+                            + '</select>'
+                        : '<input class="form-control" id="runtime-' + escapeHtml(field.key) + '" name="' + escapeHtml(field.key) + '" type="' + escapeHtml(field.type || "text") + '" placeholder="' + escapeHtml(field.placeholder || "") + '" required />';
+                    return '<div class="col-12">'
+                        + '<label class="form-label" for="runtime-' + escapeHtml(field.key) + '">' + escapeHtml(field.label) + '</label>'
+                        + control
+                        + '<div class="form-text">' + escapeHtml(field.help || "") + '</div>'
+                        + '</div>';
+                }).join("");
+            }
+            function setTriggerPlaybookPromptButtonsBusy(isBusy) {
+                if (triggerPlaybookPromptAbort) {
+                    triggerPlaybookPromptAbort.disabled = Boolean(isBusy);
+                    triggerPlaybookPromptAbort.textContent = isBusy ? "Waiting..." : "Abort";
+                }
+                if (triggerPlaybookPromptConfirm) {
+                    triggerPlaybookPromptConfirm.disabled = Boolean(isBusy);
+                    triggerPlaybookPromptConfirm.textContent = isBusy ? "Waiting..." : "Confirm";
+                }
+            }
+            function showTriggerPlaybookPrompts(run) {
+                if (!triggerPlaybookPromptModalElement || !triggerPlaybookPromptBody || !triggerPlaybookPromptModal) {
+                    return;
+                }
+                pendingTriggerPlaybookResume = run?.resume || null;
+                triggerPromptDecisionSubmitted = false;
+                const promptMessage = String(run?.prompt_message || run?.resume?.prompt_message || "").trim();
+                if (!run?.paused || !pendingTriggerPlaybookResume || !promptMessage) {
+                    pendingTriggerPlaybookResume = null;
+                    return;
+                }
+                triggerPlaybookPromptBody.innerHTML = "<p class=\"mb-3\">" + escapeHtml(promptMessage) + "</p>";
+                setTriggerPlaybookPromptButtonsBusy(false);
+                triggerPlaybookPromptModal.show();
+            }
+            function resumeTriggeredPlaybook(userChoice) {
+                const selectedPlaybook = triggerPlaybookSelect?.value || "";
+                if (!selectedPlaybook || !pendingTriggerPlaybookResume) {
+                    return;
+                }
+                setTriggerPlaybookPromptButtonsBusy(true);
+                fetch("/api/playbooks/" + encodeURIComponent(selectedPlaybook) + "/execute", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({resume: pendingTriggerPlaybookResume, user_choice: userChoice})
+                })
+                    .then(function (response) { return response.json(); })
+                    .then(function (payload) {
+                        if (!payload.ok) {
+                            triggerPlaybookMessage.classList.add("text-danger");
+                            triggerPlaybookMessage.textContent = payload.error || "Unable to resume playbook.";
+                            return;
+                        }
+                        const run = payload.result || {};
+                        pendingTriggerPlaybookResume = run.resume || null;
+                        triggerPlaybookMessage.classList.remove("text-danger");
+                        triggerPlaybookMessage.textContent = run.paused
+                            ? "Playbook is waiting for another confirmation."
+                            : (run.success ? "Playbook finished successfully." : "Playbook was aborted.");
+                        renderTriggerPlaybookOutput(run.logs || [], Boolean(run.success), Boolean(run.paused));
+                        if (run.paused && pendingTriggerPlaybookResume) {
+                            triggerPlaybookPromptBody.innerHTML = "<p class=\"mb-3\">" + escapeHtml(run.prompt_message || pendingTriggerPlaybookResume.prompt_message || "") + "</p>";
+                            setTriggerPlaybookPromptButtonsBusy(false);
+                            triggerPlaybookPromptModal.show();
+                            return;
+                        }
+                        triggerPlaybookPromptModal.hide();
+                    })
+                    .catch(function () {
+                        triggerPlaybookMessage.classList.add("text-danger");
+                        triggerPlaybookMessage.textContent = "Unable to resume playbook.";
+                    })
+                    .finally(function () {
+                        setTriggerPlaybookPromptButtonsBusy(false);
+                    });
+            }
+            function clearTriggerPlaybookOutput() {
+                if (!triggerPlaybookOutputPanel || !triggerPlaybookOutputBadge || !triggerPlaybookOutputEntries) {
+                    return;
+                }
+                triggerPlaybookOutputPanel.classList.add("d-none");
+                triggerPlaybookOutputBadge.textContent = "Idle";
+                triggerPlaybookOutputBadge.className = "badge text-bg-secondary";
+                triggerPlaybookOutputEntries.innerHTML = "";
+            }
+            function renderTriggerPlaybookOutput(logs, runSuccess, runPaused) {
+                if (!triggerPlaybookOutputPanel || !triggerPlaybookOutputBadge || !triggerPlaybookOutputEntries) {
+                    return;
+                }
+                if (!Array.isArray(logs) || !logs.length) {
+                    clearTriggerPlaybookOutput();
+                    return;
+                }
+                triggerPlaybookOutputPanel.classList.remove("d-none");
+                triggerPlaybookOutputBadge.textContent = runPaused ? "Waiting" : (runSuccess ? "Success" : "Failed");
+                triggerPlaybookOutputBadge.className = "badge " + (runPaused ? "text-bg-warning" : (runSuccess ? "text-bg-success" : "text-bg-danger"));
+                triggerPlaybookOutputEntries.innerHTML = logs.map(function (entry, index) {
+                    const isSuccess = Boolean(entry?.success);
+                    const stepType = String(entry?.step_type || "step").trim();
+                    const stepName = String(entry?.step_name || entry?.action || entry?.flow || entry?.step_id || ("Step " + (index + 1))).trim();
+                    const reason = String(entry?.reason || (isSuccess ? "Succeeded." : "Failed.")).trim();
+                    const promptMessage = String(entry?.prompt_message || "").trim();
+                    return '<div class="km-playbook-output-entry ' + (isSuccess ? 'is-success' : 'is-failure') + '">'
+                        + '<div class="d-flex justify-content-between align-items-start gap-3">'
+                        + '<div><div class="km-playbook-output-title">' + escapeHtml(stepName) + '</div><div class="km-playbook-output-meta">' + escapeHtml(stepType) + '</div></div>'
+                        + '<span class="badge ' + (isSuccess ? 'text-bg-success' : 'text-bg-danger') + '">' + (isSuccess ? 'Success' : 'Failed') + '</span>'
+                        + '</div>'
+                        + '<div class="km-playbook-output-reason">' + escapeHtml(reason) + '</div>'
+                        + (promptMessage ? '<div class="km-playbook-output-extra">Prompt: ' + escapeHtml(promptMessage) + '</div>' : '')
+                        + '</div>';
+                }).join("");
+            }
             if (scanForm && syncLoadingBanner) {
                 scanForm.addEventListener("submit", function () {
                     syncLoadingBanner.classList.remove("d-none");
@@ -178,6 +557,156 @@
                 aiFeedbackInlineForm.addEventListener("submit", function () {
                     aiFeedbackConfirmSubmit.disabled = true;
                     aiFeedbackConfirmSubmit.textContent = "Requesting...";
+                });
+            }
+
+            if (createNoteTrigger && createNoteModalElement) {
+                const createNoteModal = new bootstrap.Modal(createNoteModalElement);
+                createNoteTrigger.addEventListener("click", function () {
+                    if (createNoteFileName) {
+                        createNoteFileName.value = "";
+                    }
+                    if (createNotePriority) {
+                        createNotePriority.value = "Medium";
+                    }
+                    createNoteModal.show();
+                });
+            }
+
+            if (updateNoteTrigger && updateNoteModalElement) {
+                const updateNoteModal = new bootstrap.Modal(updateNoteModalElement);
+                updateNoteTrigger.addEventListener("click", function () {
+                    if (updateNoteSelectedDoc) {
+                        updateNoteSelectedDoc.selectedIndex = 0;
+                    }
+                    if (updateNoteReason) {
+                        updateNoteReason.value = "";
+                    }
+                    if (updateNotePriority) {
+                        updateNotePriority.value = "Medium";
+                    }
+                    updateNoteModal.show();
+                });
+            }
+
+            if (createNoteForm && createNoteSubmit) {
+                createNoteForm.addEventListener("submit", function () {
+                    createNoteSubmit.disabled = true;
+                    createNoteSubmit.textContent = "Creating...";
+                });
+            }
+
+            if (updateNoteForm && updateNoteSubmit) {
+                updateNoteForm.addEventListener("submit", function () {
+                    updateNoteSubmit.disabled = true;
+                    updateNoteSubmit.textContent = "Updating...";
+                });
+            }
+
+            if (triggerPlaybookModalElement && triggerPlaybookForm && triggerPlaybookMessage && triggerPlaybookNoteName && triggerPlaybookSelect && triggerPlaybookSubmit) {
+                const triggerPlaybookModal = new bootstrap.Modal(triggerPlaybookModalElement);
+                document.querySelectorAll(".trigger-playbook-button").forEach(function (button) {
+                    button.addEventListener("click", function () {
+                        const noteName = button.dataset.noteName || "";
+                        triggerPlaybookMessage.textContent = "Choose which playbook should run for " + noteName + ".";
+                        triggerPlaybookNoteName.value = noteName;
+                        triggerPlaybookSelect.value = "";
+                        renderTriggerPlaybookRuntimeFields([]);
+                        clearTriggerPlaybookOutput();
+                        pendingTriggerPlaybookResume = null;
+                        triggerPlaybookMessage.classList.remove("text-danger");
+                        triggerPlaybookSubmit.disabled = false;
+                        triggerPlaybookSubmit.textContent = "Trigger Playbook";
+                        triggerPlaybookModal.show();
+                    });
+                });
+
+                triggerPlaybookSelect.addEventListener("change", async function () {
+                    const selectedPlaybook = triggerPlaybookSelect.value || "";
+                    if (!selectedPlaybook) {
+                        renderTriggerPlaybookRuntimeFields([]);
+                        return;
+                    }
+                    const response = await fetch("/api/playbooks/" + encodeURIComponent(selectedPlaybook));
+                    const payload = await response.json();
+                    const presetContext = {note_name: triggerPlaybookNoteName.value || ""};
+                    if (!payload.ok) {
+                        renderTriggerPlaybookRuntimeFields([]);
+                        clearTriggerPlaybookOutput();
+                        return;
+                    }
+                    renderTriggerPlaybookRuntimeFields(inferRuntimeContextRequirements(payload.playbook?.config?.layout || {}, presetContext));
+                    clearTriggerPlaybookOutput();
+                });
+
+                triggerPlaybookForm.addEventListener("submit", function (event) {
+                    event.preventDefault();
+                    const selectedPlaybook = triggerPlaybookSelect.value || "";
+                    if (!selectedPlaybook) {
+                        return;
+                    }
+                    triggerPlaybookSubmit.disabled = true;
+                    triggerPlaybookSubmit.textContent = "Triggering...";
+                    const context = {};
+                    new FormData(triggerPlaybookForm).forEach(function (value, key) {
+                        if (key === "redirect_to") {
+                            return;
+                        }
+                        context[key] = value.toString().trim();
+                    });
+                    fetch("/api/playbooks/" + encodeURIComponent(selectedPlaybook) + "/execute", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({context: context})
+                    })
+                        .then(function (response) { return response.json(); })
+                        .then(function (payload) {
+                            triggerPlaybookSubmit.disabled = false;
+                            triggerPlaybookSubmit.textContent = "Trigger Playbook";
+                            if (!payload.ok) {
+                                triggerPlaybookMessage.classList.add("text-danger");
+                                triggerPlaybookMessage.textContent = payload.error || "Unable to trigger playbook.";
+                                renderTriggerPlaybookOutput(payload.result?.logs || [], false, false);
+                                return;
+                            }
+                            pendingTriggerPlaybookResume = payload.result?.resume || null;
+                            triggerPlaybookMessage.classList.remove("text-danger");
+                            triggerPlaybookMessage.textContent = payload.result?.paused
+                                ? "Playbook is waiting for your confirmation."
+                                : (payload.result?.success ? "Playbook finished successfully." : "Playbook finished with issues.");
+                            renderTriggerPlaybookOutput(payload.result?.logs || [], Boolean(payload.result?.success), Boolean(payload.result?.paused));
+                            showTriggerPlaybookPrompts(payload.result);
+                        })
+                        .catch(function () {
+                            triggerPlaybookSubmit.disabled = false;
+                            triggerPlaybookSubmit.textContent = "Trigger Playbook";
+                            pendingTriggerPlaybookResume = null;
+                            triggerPlaybookMessage.classList.add("text-danger");
+                            triggerPlaybookMessage.textContent = "Unable to trigger playbook.";
+                            clearTriggerPlaybookOutput();
+                        });
+                });
+            }
+            if (triggerPlaybookPromptAbort) {
+                triggerPlaybookPromptAbort.addEventListener("click", function () {
+                    triggerPromptDecisionSubmitted = true;
+                    resumeTriggeredPlaybook("abort");
+                });
+            }
+            if (triggerPlaybookPromptConfirm) {
+                triggerPlaybookPromptConfirm.addEventListener("click", function () {
+                    triggerPromptDecisionSubmitted = true;
+                    resumeTriggeredPlaybook("confirm");
+                });
+            }
+            if (triggerPlaybookPromptModalElement) {
+                triggerPlaybookPromptModalElement.addEventListener("hidden.bs.modal", function () {
+                    if (!pendingTriggerPlaybookResume || triggerPromptDecisionSubmitted) {
+                        triggerPromptDecisionSubmitted = false;
+                        return;
+                    }
+                    triggerPromptDecisionSubmitted = true;
+                    resumeTriggeredPlaybook("confirm");
                 });
             }
         })();

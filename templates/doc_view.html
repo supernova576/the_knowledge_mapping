@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>View document</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+
+<body>
+    <div class="container py-4">
+        {% set active_page = 'index' %}
+        {% include '_navbar.html' %}
+
+        <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
+            <h1 class="h3 mb-0">Markdown preview: {{ title }}</h1>
+            <div class="d-flex gap-2">
+                {% if doc.id %}
+                <a href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}" class="btn btn-outline-primary">Edit</a>
+                {% endif %}
+                {% set ai_feedback_doc_name = doc.title if doc.title else title %}
+                {% if ai_feedback_doc_name %}
+                <form method="post" action="{{ url_for('generate_ai_feedback') }}" class="m-0">
+                    <input type="hidden" name="selected_doc" value="{{ ai_feedback_doc_name }}" />
+                    <input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" />
+                    <button type="submit" class="btn btn-outline-success">AI Feedback</button>
+                </form>
+                {% endif %}
+                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Back</a>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="mb-3">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mb-2" role="alert">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <article class="km-markdown-preview">{{ content_html|safe }}</article>
+            </div>
+        </div>
+
+        {% include '_footer.html' %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+    {% include '_theme_toggle_script.html' %}
+</body>
+
+</html>

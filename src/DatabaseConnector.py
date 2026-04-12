@@ -24,6 +24,7 @@ class db:
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
+            self.cursor.execute("PRAGMA foreign_keys = ON")
 
             self.__init_db()
             logger.info("Database connected at %s", self.db_path)
@@ -49,7 +50,9 @@ class db:
                     is_compliant TEXT,
                     noncompliance_reason TEXT,
                     manual_compliant_override TEXT,
-                    is_under_construction TEXT
+                    is_under_construction TEXT,
+                    has_learning TEXT NOT NULL DEFAULT 'false',
+                    has_ai_feedback TEXT NOT NULL DEFAULT 'false'
                 )
                 """
             )
@@ -85,6 +88,68 @@ class db:
                 """
             )
 
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learnings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_name TEXT NOT NULL,
+                    source_note_name TEXT NOT NULL,
+                    path_to_learning TEXT NOT NULL UNIQUE,
+                    creation_date TEXT NOT NULL,
+                    last_modified_date TEXT NOT NULL DEFAULT 'N/A'
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learning_exam_drafts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    learning_id INTEGER NOT NULL UNIQUE,
+                    answers_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS learning_exam_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    learning_id INTEGER NOT NULL,
+                    answers_json TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    total_questions INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playbook_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    playbook_name TEXT NOT NULL,
+                    run_started_at TEXT NOT NULL,
+                    execution_time_ms INTEGER NOT NULL DEFAULT 0 CHECK (execution_time_ms >= 0),
+                    result_status TEXT NOT NULL CHECK (result_status IN ('successful', 'failed', 'paused', 'aborted')),
+                    was_resumed INTEGER NOT NULL DEFAULT 0 CHECK (was_resumed IN (0, 1)),
+                    run_context_json TEXT NOT NULL DEFAULT '{}',
+                    run_logs_json TEXT NOT NULL DEFAULT '[]',
+                    prompt_message TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            self._execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_playbook_runs_name_started
+                ON playbook_runs (playbook_name, run_started_at DESC, id DESC)
+                """
+            )
+
             self.conn.commit()
         except Exception:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
@@ -108,7 +173,7 @@ class db:
     def create_new_docs_entry(self, ndd: dict) -> None:
         try:
             self._execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction, has_learning, has_ai_feedback) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -120,6 +185,8 @@ class db:
                     ndd.get("noncompliance_reason", "N/A"),
                     ndd.get("manual_compliant_override", ""),
                     ndd.get("is_under_construction", "false"),
+                    ndd.get("has_learning", "false"),
+                    ndd.get("has_ai_feedback", "false"),
                 ),
             )
             self._commit()
@@ -204,7 +271,7 @@ class db:
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
             self._execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ? WHERE id = ?",
+                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ?, has_learning = ?, has_ai_feedback = ? WHERE id = ?",
                 (
                     udd.get("title", "N/A"),
                     udd.get("created_at", "N/A"),
@@ -216,6 +283,8 @@ class db:
                     udd.get("noncompliance_reason", "N/A"),
                     udd.get("manual_compliant_override", ""),
                     udd.get("is_under_construction", "false"),
+                    udd.get("has_learning", "false"),
+                    udd.get("has_ai_feedback", "false"),
                     id,
                 ),
             )
@@ -292,24 +361,6 @@ class db:
             logger.warning("Deleted all docs from database")
         except Exception:
             logger.error("sqlite_handler/delete_all_docs failed\n%s", traceback.format_exc())
-            adieu(1)
-
-    def update_manual_compliance_by_id(self, id: int, manual_override: str) -> None:
-        try:
-            if manual_override == "true":
-                self._execute(
-                    "UPDATE docs SET manual_compliant_override = ?, is_compliant = ?, noncompliance_reason = ? WHERE id = ?",
-                    ("true", "true", "N/A", id),
-                )
-            else:
-                self._execute(
-                    "UPDATE docs SET manual_compliant_override = ? WHERE id = ?",
-                    ("false", id),
-                )
-            self._commit()
-            logger.info("Updated manual compliance override for id=%s to=%s", id, manual_override)
-        except Exception:
-            logger.error("sqlite_handler/update_manual_compliance_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def get_non_compliant_docs(self) -> dict:
@@ -506,6 +557,250 @@ class db:
             )
         except Exception:
             logger.error("sqlite_handler/get_latest_ai_feedback_for_file failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def upsert_learning(self, row: dict) -> None:
+        try:
+            self._execute(
+                """
+                INSERT INTO learnings (file_name, source_note_name, path_to_learning, creation_date, last_modified_date)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(path_to_learning) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    source_note_name = excluded.source_note_name,
+                    creation_date = excluded.creation_date,
+                    last_modified_date = excluded.last_modified_date
+                """,
+                (
+                    str(row.get("file_name", "")).strip(),
+                    str(row.get("source_note_name", "")).strip(),
+                    str(row.get("path_to_learning", "")).strip(),
+                    str(row.get("creation_date", "N/A")).strip(),
+                    str(row.get("last_modified_date", "N/A")).strip(),
+                ),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/upsert_learning failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_all_learnings(self) -> list[dict]:
+        try:
+            return self._fetch_all_dict("SELECT * FROM learnings ORDER BY lower(file_name) ASC, id DESC")
+        except Exception:
+            logger.error("sqlite_handler/get_all_learnings failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_docs_by_tags(self, tags: list[str]) -> list[dict]:
+        try:
+            normalized_tags = sorted({str(tag).strip() for tag in tags if str(tag).strip()}, key=lambda value: value.casefold())
+            if not normalized_tags:
+                return []
+
+            clauses: list[str] = []
+            params: list[str] = []
+            for tag in normalized_tags:
+                clauses.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM json_each(
+                            CASE
+                                WHEN docs.tags IS NULL OR trim(docs.tags) = '' OR trim(docs.tags) = 'N/A' THEN '[]'
+                                ELSE docs.tags
+                            END
+                        )
+                        WHERE lower(trim(json_each.value)) = lower(trim(?))
+                    )
+                    """
+                )
+                params.append(tag)
+
+            where_clause = " OR ".join(clauses)
+            query = f"""
+                SELECT
+                    docs.id AS doc_id,
+                    docs.title AS doc_title,
+                    docs.tags AS doc_tags,
+                    learnings.id AS learning_id,
+                    learnings.file_name AS learning_file_name,
+                    learnings.source_note_name AS learning_source_note_name,
+                    learnings.path_to_learning AS learning_path_to_learning,
+                    learnings.creation_date AS learning_creation_date
+                FROM docs
+                LEFT JOIN learnings
+                    ON lower(trim(replace(learnings.source_note_name, '.md', ''))) = lower(trim(replace(docs.title, '.md', '')))
+                    OR lower(trim(replace(learnings.file_name, ' - Learning', ''))) = lower(trim(replace(docs.title, '.md', '')))
+                WHERE {where_clause}
+                ORDER BY lower(docs.title) ASC, learnings.id DESC
+            """
+            return self._fetch_all_dict(query, tuple(params))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_docs_by_tags failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_by_id(self, learning_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learnings WHERE id = ?", (learning_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learning_by_id(self, learning_id: int) -> None:
+        try:
+            self._execute("DELETE FROM learnings WHERE id = ?", (learning_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learning_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learnings_not_in_paths(self, kept_paths: list[str]) -> None:
+        try:
+            normalized_paths = [str(path).strip() for path in kept_paths if str(path).strip()]
+            if not normalized_paths:
+                self._execute("DELETE FROM learnings")
+                self._commit()
+                return
+
+            placeholders = ",".join("?" for _ in normalized_paths)
+            self._execute(
+                f"DELETE FROM learnings WHERE path_to_learning NOT IN ({placeholders})",
+                tuple(normalized_paths),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learnings_not_in_paths failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def upsert_learning_exam_draft(self, learning_id: int, answers_json: str, updated_at: str) -> None:
+        try:
+            self._execute(
+                """
+                INSERT INTO learning_exam_drafts (learning_id, answers_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(learning_id) DO UPDATE SET
+                    answers_json = excluded.answers_json,
+                    updated_at = excluded.updated_at
+                """,
+                (learning_id, answers_json, updated_at),
+            )
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/upsert_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_draft(self, learning_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learning_exam_drafts WHERE learning_id = ?", (learning_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def delete_learning_exam_draft(self, learning_id: int) -> None:
+        try:
+            self._execute("DELETE FROM learning_exam_drafts WHERE learning_id = ?", (learning_id,))
+            self._commit()
+        except Exception:
+            logger.error("sqlite_handler/delete_learning_exam_draft failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def create_learning_exam_attempt(
+        self,
+        learning_id: int,
+        answers_json: str,
+        score: float,
+        total_questions: int,
+        created_at: str,
+    ) -> int:
+        try:
+            cursor = self._execute(
+                """
+                INSERT INTO learning_exam_attempts (learning_id, answers_json, score, total_questions, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (learning_id, answers_json, score, total_questions, created_at),
+            )
+            self._commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            logger.error("sqlite_handler/create_learning_exam_attempt failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_attempts(self, learning_id: int) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM learning_exam_attempts
+                WHERE learning_id = ?
+                ORDER BY id DESC
+                """,
+                (learning_id,),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_attempts failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_learning_exam_attempt_by_id(self, attempt_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM learning_exam_attempts WHERE id = ?", (attempt_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_learning_exam_attempt_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def create_playbook_run(self, row: dict) -> int:
+        try:
+            cursor = self._execute(
+                """
+                INSERT INTO playbook_runs (
+                    playbook_name,
+                    run_started_at,
+                    execution_time_ms,
+                    result_status,
+                    was_resumed,
+                    run_context_json,
+                    run_logs_json,
+                    prompt_message,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row.get("playbook_name", "")).strip(),
+                    str(row.get("run_started_at", "N/A")).strip(),
+                    int(row.get("execution_time_ms", 0) or 0),
+                    str(row.get("result_status", "failed")).strip(),
+                    int(1 if bool(row.get("was_resumed", False)) else 0),
+                    str(row.get("run_context_json", "{}")).strip(),
+                    str(row.get("run_logs_json", "[]")).strip(),
+                    str(row.get("prompt_message", "")).strip(),
+                    str(row.get("metadata_json", "{}")).strip(),
+                ),
+            )
+            self._commit()
+            return int(cursor.lastrowid)
+        except Exception:
+            logger.error("sqlite_handler/create_playbook_run failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_playbook_runs(self, playbook_name: str) -> list[dict]:
+        try:
+            return self._fetch_all_dict(
+                """
+                SELECT * FROM playbook_runs
+                WHERE lower(playbook_name) = lower(?)
+                  AND lower(result_status) <> 'paused'
+                ORDER BY run_started_at DESC, id DESC
+                """,
+                (str(playbook_name or "").strip(),),
+            )
+        except Exception:
+            logger.error("sqlite_handler/get_playbook_runs failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_playbook_run_by_id(self, run_id: int) -> dict | None:
+        try:
+            return self._fetch_one_dict("SELECT * FROM playbook_runs WHERE id = ?", (run_id,))
+        except Exception:
+            logger.error("sqlite_handler/get_playbook_run_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def replace_all_hslu_sw_overview(self, rows: list[dict]) -> None:

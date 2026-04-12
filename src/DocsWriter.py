@@ -112,6 +112,42 @@ class DocsWriter:
         if not self.deadlines_path.exists():
             raise FileNotFoundError(f"Deadlines file not found: {self.deadlines_path}")
 
+    def _ensure_path_exists(self, target_path: Path | None, label: str) -> None:
+        if target_path is None:
+            raise FileNotFoundError(f"{label} path not configured.")
+        if not target_path.exists():
+            raise FileNotFoundError(f"{label} file not found: {target_path}")
+
+    def _escape_markdown_table_cell(self, value: str) -> str:
+        normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        normalized = normalized.replace("\n", "<br>")
+        normalized = normalized.replace("|", "\\|")
+        return normalized.strip()
+
+    def _extract_h1_section_bounds(self, lines: list[str], section_header: str) -> tuple[int, int]:
+        header_line = f"# {section_header}"
+        start = -1
+        for index, line in enumerate(lines):
+            if line.strip() == header_line:
+                start = index
+                break
+
+        if start == -1:
+            raise ValueError(f"Could not find markdown section: {header_line}")
+
+        end = start + 1
+        while end < len(lines):
+            stripped = lines[end].strip()
+            if stripped.startswith("# ") and stripped != header_line:
+                break
+            end += 1
+
+        return start, end
+
+    def _replace_h1_section(self, lines: list[str], section_header: str, replacement_lines: list[str]) -> list[str]:
+        start, end = self._extract_h1_section_bounds(lines, section_header)
+        return lines[:start] + replacement_lines + lines[end:]
+
     def _extract_deadlines_table_bounds(self, lines: list[str]) -> tuple[int, int]:
         start = -1
         end = -1
@@ -170,6 +206,77 @@ class DocsWriter:
             logger.error("Failed to write deadline markdown file\n%s", traceback.format_exc())
             adieu(1)
 
+    def write_project_resources_file(
+        self,
+        resources_path: Path,
+        resources: list[dict],
+        project_tag: str,
+        project_description: str,
+    ) -> None:
+        try:
+            self._ensure_path_exists(resources_path, "Resources")
+            lines = resources_path.read_text(encoding="utf-8").splitlines()
+
+            resource_lines = [
+                "# Ressourcen",
+                "",
+                "| Beschreibung | Link | Note |",
+                "| ------------ | ---- | ---- |",
+            ]
+            if resources:
+                for resource in resources:
+                    description = self._escape_markdown_table_cell(resource.get("description", ""))
+                    link = self._escape_markdown_table_cell(resource.get("link", ""))
+                    note = self._escape_markdown_table_cell(resource.get("note", ""))
+                    resource_lines.append(f"| {description} | {link} | {note} |")
+            else:
+                resource_lines.append("|  |  |  |")
+            resource_lines.append("")
+
+            settings_lines = [
+                "# Settings",
+                "",
+                "| Key | Value |",
+                "| --- | ----- |",
+                f"| Tag | {self._escape_markdown_table_cell(project_tag)} |",
+                f"| Description | {self._escape_markdown_table_cell(project_description)} |",
+                "",
+            ]
+
+            lines = self._replace_h1_section(lines, "Ressourcen", resource_lines)
+            lines = self._replace_h1_section(lines, "Settings", settings_lines)
+            resources_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        except Exception:
+            logger.error("Failed to write project resources markdown file %s\n%s", resources_path, traceback.format_exc())
+            raise
+
+    def write_project_kanban_file(self, kanban_path: Path, items: list[dict]) -> None:
+        try:
+            self._ensure_path_exists(kanban_path, "Kanban")
+            lines = kanban_path.read_text(encoding="utf-8").splitlines()
+
+            kanban_lines = [
+                "# Kanban",
+                "",
+                "| Deliverable | Status | Due |",
+                "| ----------- | ------ | --- |",
+            ]
+            if items:
+                for item in items:
+                    deliverable = self._escape_markdown_table_cell(item.get("deliverable", ""))
+                    status = self._escape_markdown_table_cell(item.get("status", "Not Started"))
+                    due = self._escape_markdown_table_cell(item.get("due", ""))
+                    kanban_lines.append(f"| {deliverable} | {status} | {due} |")
+            else:
+                kanban_lines.append("|  |  |  |")
+            kanban_lines.append("")
+
+            lines = self._replace_h1_section(lines, "Kanban", kanban_lines)
+            kanban_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        except Exception:
+            logger.error("Failed to write project kanban markdown file %s\n%s", kanban_path, traceback.format_exc())
+            raise
+
     def create_note_from_template(self, target_path: Path, template_content: str) -> None:
         try:
             target_path.write_text(template_content, encoding="utf-8")
@@ -221,6 +328,102 @@ class DocsWriter:
             logger.error("Failed to write AI feedback markdown file\n%s", traceback.format_exc())
             raise
 
+    def _safe_learning_stem(self, note_name: str) -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(note_name).strip()).strip(" ._")
+        if not safe_name:
+            raise ValueError("Invalid note name for learning output file.")
+        return safe_name
+
+    def _render_learning_json_block(self, payload: dict) -> str:
+        return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n```"
+
+    def render_learning_template(
+        self,
+        template_content: str,
+        note_name: str,
+        creation_date: str,
+        last_modified_date: str,
+        questions_payload: dict,
+        answers_payload: dict,
+    ) -> str:
+        rendered = str(template_content)
+        replacements = {
+            "{{ note_name }}": str(note_name).strip(),
+            "{{ creation_date }}": str(creation_date).strip(),
+            "{{ last_modified }}": str(last_modified_date).strip(),
+            "{{ questions }}": self._render_learning_json_block(questions_payload),
+            "{{ answers }}": self._render_learning_json_block(answers_payload),
+        }
+        for placeholder, value in replacements.items():
+            rendered = rendered.replace(placeholder, value)
+        return rendered
+
+    def write_learning_file(self, output_dir: Path, note_name: str, rendered_content: str) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = self._safe_learning_stem(note_name)
+        target_path = output_dir / f"{safe_stem} - Learning.md"
+        if target_path.exists():
+            raise FileExistsError(f"Learning file already exists: {target_path}")
+        target_path.write_text(rendered_content.rstrip() + "\n", encoding="utf-8")
+        return target_path
+
+    def update_learning_file_questions_answers(
+        self,
+        learning_path: Path,
+        last_modified_date: str,
+        questions_payload: dict,
+        answers_payload: dict,
+    ) -> None:
+        content = learning_path.read_text(encoding="utf-8")
+        questions_block = self._render_learning_json_block(questions_payload)
+        answers_block = self._render_learning_json_block(answers_payload)
+        updated_content = re.sub(
+            r"(?ims)(^##\s+Last Modified\s*$\n)(.*?)(?=^##\s+Questions\s*$)",
+            lambda match: f"{match.group(1)}{str(last_modified_date).strip() or 'N/A'}\n\n",
+            content,
+        )
+        if updated_content == content:
+            updated_content = re.sub(
+                r"(?ims)(^##\s+Creation\s*$\n.*?)(?=^##\s+Questions\s*$)",
+                rf"\1\n## Last Modified\n{str(last_modified_date).strip() or 'N/A'}\n\n",
+                content,
+            )
+        updated_content = re.sub(
+            r"(?ims)(^##\s+Questions\s*$\n)(.*?)(?=^##\s+Answers\s*$)",
+            lambda match: f"{match.group(1)}{questions_block}\n\n",
+            updated_content,
+        )
+        updated_content = re.sub(
+            r"(?ims)(^##\s+Answers\s*$\n)(.*?)(?=\Z)",
+            lambda match: f"{match.group(1)}{answers_block}\n",
+            updated_content,
+        )
+        learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
+    def _update_markdown_h2_section(self, content: str, section_name: str, section_value: str) -> str:
+        replacement_value = str(section_value).strip() or "N/A"
+        section_pattern = re.compile(
+            rf"(?ims)(^##\s+{re.escape(section_name)}\s*$\n)(.*?)(?=^##\s+|\Z)"
+        )
+        updated_content, match_count = section_pattern.subn(
+            lambda match: f"{match.group(1)}{replacement_value}\n\n",
+            content,
+            count=1,
+        )
+        if match_count == 0:
+            updated_content = f"## {section_name}\n{replacement_value}\n\n{content.lstrip()}"
+        return updated_content
+
+    def update_learning_file_note_name(self, learning_path: Path, note_name: str) -> None:
+        content = learning_path.read_text(encoding="utf-8")
+        updated_content = self._update_markdown_h2_section(content, "Note Name", note_name)
+        learning_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
+    def update_ai_feedback_file_note_name(self, feedback_path: Path, note_name: str) -> None:
+        content = feedback_path.read_text(encoding="utf-8")
+        updated_content = self._update_markdown_h2_section(content, "Note Name", note_name)
+        feedback_path.write_text(updated_content.rstrip() + "\n", encoding="utf-8")
+
     def prepend_template_to_existing_note(
         self,
         target_path: Path,
@@ -256,6 +459,8 @@ class DocsWriter:
         links_map: dict[str, str],
         video_links_map: dict[str, str],
         create_missing_sections: bool,
+        update_links_section: bool = True,
+        update_video_links_section: bool = True,
     ) -> tuple[bool, list[str]]:
         try:
             lines = doc_path.read_text(encoding="utf-8").splitlines()
@@ -272,8 +477,10 @@ class DocsWriter:
             if missing_sections:
                 lines = self._create_missing_sections(lines, missing_sections)
 
-            lines = self._update_link_section(lines, "#### Erklärvideo", video_links_map)
-            lines = self._update_link_section(lines, "#### Externe Referenzen", links_map)
+            if update_video_links_section:
+                lines = self._update_link_section(lines, "#### Erklärvideo", video_links_map)
+            if update_links_section:
+                lines = self._update_link_section(lines, "#### Externe Referenzen", links_map)
             lines = self._update_tags_section(lines, tags_to_add, tags_to_remove)
 
             doc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -281,6 +488,24 @@ class DocsWriter:
         except Exception:
             logger.error("Failed to update markdown resource sections in %s\n%s", doc_path, traceback.format_exc())
             adieu(1)
+
+    def add_tags_to_note(self, doc_path: Path, tags_to_add: list[str]) -> tuple[bool, list[str]]:
+        normalized_tags: list[str] = []
+        for tag in tags_to_add or []:
+            raw = str(tag or "").strip()
+            if not raw:
+                continue
+            normalized_tags.append(raw if raw.startswith("#") else f"#{raw}")
+        return self.update_doc_resources(
+            doc_path=doc_path,
+            tags_to_add=normalized_tags,
+            tags_to_remove=[],
+            links_map={},
+            video_links_map={},
+            create_missing_sections=False,
+            update_links_section=False,
+            update_video_links_section=False,
+        )
 
     def _insert_history_entry(self, current_content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
         history_header = "#### Page History"

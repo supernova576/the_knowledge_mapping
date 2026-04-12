@@ -91,7 +91,7 @@
                                 <td>{{ row.KW }}</td>
                                 <td>{{ row.SW }}</td>
                                 <td>{{ row.module|render_hslu_inline_markdown }}</td>
-                                <td>{{ row.thema|render_hslu_inline_markdown }}</td>
+                                <td>{{ row.entry_indicator }} {{ row.thema|render_hslu_inline_markdown }}</td>
                                 <td>
                                     <form method="post" action="{{ url_for('hslu_semester_overview_update_status') }}" class="d-flex gap-2 align-items-center">
                                         <input type="hidden" name="semester" value="{{ row.semester }}" />

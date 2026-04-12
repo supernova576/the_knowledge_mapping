@@ -1,23 +1,27 @@
 import html
 import json
 import os
+import errno
 import re
+import shutil
 import stat
 import traceback
 from urllib.parse import urlencode, urlparse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from markupsafe import Markup
 from werkzeug.exceptions import HTTPException
 
 from src.DatabaseConnector import db
-from src.DocsAIFeedback import DocsAIFeedback
+from src.DocsAIFeedback import DocsAIFeedback, OpenRouterImageNotSupportedError
 from src.DocsParser import DocsParser
+from src.DocsPlaybook import DocsPlaybook, PlaybookValidationError
 from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.DocsExporter import DocsExporter
+from src.DocsViewer import DocsViewer
 from src.logger import get_logger
 from src.timezone_utils import now_in_zurich, now_in_zurich_str
 
@@ -29,9 +33,33 @@ logger = get_logger(__name__)
 
 
 SW_STATUS_OPTIONS = ["", "Not Started", "In Progress", "Done", "Not Needed"]
+TODO_PROGRESS_OPTIONS = ["Not Started", "In Progress", "Done"]
 TODO_PRIORITY_OPTIONS = ["Low", "Medium", "High"]
 TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 DEADLINE_STATUS_OPTIONS = ["Not Started", "In Progress", "Done"]
+INDEX_PROGRESS_WEIGHTS = {
+    "under_construction": 0.2,
+    "incompliant": 0.2,
+    "todos": 0.2,
+    "deadlines": 0.2,
+    "ai_gap": 0.2,
+}
+UNFINISHED_SW_STATUSES = {"", "Not Started", "In Progress"}
+FINISHED_SW_STATUSES = {"Done", "Not Needed"}
+
+
+def _normalize_sw_status(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in SW_STATUS_OPTIONS else ""
+
+
+def _entry_indicator_for_sw_status(*statuses: str | None) -> str:
+    normalized_statuses = [_normalize_sw_status(status) for status in statuses]
+    if any(status in UNFINISHED_SW_STATUSES for status in normalized_statuses):
+        return "⚠️"
+    if any(status in FINISHED_SW_STATUSES for status in normalized_statuses):
+        return "✅"
+    return "⚠️"
 
 
 def _normalize_todo_priority(value: str | None) -> str:
@@ -39,6 +67,57 @@ def _normalize_todo_priority(value: str | None) -> str:
     if normalized not in {"low", "medium", "high"}:
         return "Medium"
     return normalized.capitalize()
+
+
+def _normalize_todo_progress(value: str | None, *, allow_empty: bool = False) -> str:
+    normalized = str(value or "").strip()
+    if allow_empty and not normalized:
+        return ""
+    if normalized not in TODO_PROGRESS_OPTIONS:
+        raise ValueError(
+            f"Todo progress must be one of: {', '.join(TODO_PROGRESS_OPTIONS)}."
+        )
+    return normalized
+
+
+def _parse_todo_last_update(value: str | None, reference_date: date | None = None) -> date | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+
+    today = reference_date or now_in_zurich().date()
+    for value_format in ("%d.%m.%Y", "%d.%m"):
+        try:
+            parsed = datetime.strptime(raw_value, value_format).date()
+            if value_format == "%d.%m":
+                parsed = parsed.replace(year=today.year)
+                if parsed > today:
+                    parsed = parsed.replace(year=today.year - 1)
+            return parsed
+        except ValueError:
+            continue
+
+    return None
+
+
+def _todo_last_update_is_stale(todo: dict, reference_date: date | None = None) -> bool:
+    priority_to_threshold = {
+        "High": 5,
+        "Medium": 10,
+        "Low": 15,
+    }
+    priority = _normalize_todo_priority(todo.get("priority"))
+    threshold_days = priority_to_threshold.get(priority, 0)
+
+    parsed_last_update = _parse_todo_last_update(todo.get("last_update"), reference_date=reference_date)
+    if parsed_last_update is None:
+        return True
+
+    today = reference_date or now_in_zurich().date()
+    days_since_update = (today - parsed_last_update).days
+    if days_since_update < 0:
+        days_since_update = 0
+    return days_since_update > threshold_days
 
 
 def _sort_todos_by_priority(todos: list[dict]) -> list[dict]:
@@ -98,6 +177,30 @@ def _sync_banner_state(sync_time: str | None) -> str:
         return "warning"
     return "danger"
 
+
+
+
+def _openrouter_media_support(conf: dict) -> dict[str, bool]:
+    modality_aliases: dict[str, set[str]] = {
+        "text": {"text"},
+        "image": {"image"},
+        "file": {"file", "document", "pdf"},
+        "audio": {"audio", "input_audio"},
+        "video": {"video"},
+    }
+    supported_modalities: set[str] = set()
+
+    try:
+        supported_modalities = DocsAIFeedback(conf).fetch_openrouter_input_modalities()
+    except Exception:
+        logger.warning("Unable to fetch OpenRouter input modalities for settings page.\n%s", traceback.format_exc())
+
+    normalized_modalities = {str(modality).strip().lower() for modality in supported_modalities if str(modality).strip()}
+
+    return {
+        key: any(alias in normalized_modalities for alias in aliases)
+        for key, aliases in modality_aliases.items()
+    }
 
 def _safe_redirect_target(target: str | None, fallback_endpoint: str) -> str:
     redirect_target = str(target or "").strip()
@@ -372,20 +475,11 @@ def _link_map_to_items(value) -> list[dict[str, str]]:
 
 
 
-def _normalize_manual_override(value: str | None) -> str:
-    return "true" if str(value).strip().lower() == "true" else "false"
-
-
 def _compliance_tag_class(doc: dict) -> str:
     if str(doc.get("is_under_construction", "false")).lower() == "true":
         return "text-bg-info"
 
-    is_compliant = doc.get("is_compliant") == "true"
-    manual_override = _normalize_manual_override(doc.get("manual_compliant_override")) == "true"
-
-    if manual_override:
-        return "compliance-tag-manual"
-    if is_compliant:
+    if doc.get("is_compliant") == "true":
         return "compliance-tag-compliant"
 
     return "compliance-tag-not-compliant"
@@ -428,6 +522,101 @@ def _load_conf() -> dict:
         return json.loads(conf_file.read())
 
 
+def _save_conf(conf_data: dict) -> None:
+    conf_path = Path(__file__).resolve().parent / "conf.json"
+    conf_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = conf_path.with_suffix(".json.tmp")
+    serialized = json.dumps(conf_data, indent=4)
+    payload = f"{serialized}\n"
+
+    try:
+        with open(temp_path, "w", encoding="utf-8") as conf_file:
+            conf_file.write(payload)
+            conf_file.flush()
+            os.fsync(conf_file.fileno())
+        os.replace(temp_path, conf_path)
+        return
+    except OSError as exc:
+        if exc.errno not in {errno.EBUSY, errno.EXDEV, errno.EPERM, errno.EACCES}:
+            raise
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+    # Docker bind mounts can reject atomic replacement even after the temp file is written.
+    with open(conf_path, "r+", encoding="utf-8") as conf_file:
+        conf_file.seek(0)
+        conf_file.write(payload)
+        conf_file.truncate()
+        conf_file.flush()
+        os.fsync(conf_file.fileno())
+
+
+def _sanitize_conf_text(value: str | None, field_name: str, max_length: int = 500) -> str:
+    sanitized = str(value or "").strip()
+    if not sanitized:
+        raise ValueError(f"{field_name} is required.")
+    if len(sanitized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if any(char in sanitized for char in ("\x00", "\r", "\n")):
+        raise ValueError(f"{field_name} contains invalid characters.")
+    return sanitized
+
+
+def _parse_provider_list(raw_value: str | None) -> list[str]:
+    candidate = str(raw_value or "").strip()
+    if not candidate:
+        raise ValueError("Openrouter Provider is required.")
+
+    parts = [item.strip() for item in re.split(r"[\n,]+", candidate) if item.strip()]
+    normalized = []
+    for provider in parts:
+        if len(provider) > 100:
+            raise ValueError("Openrouter Provider values must be 100 characters or fewer.")
+        if any(char in provider for char in ("\x00", "\r", "\n")):
+            raise ValueError("Openrouter Provider contains invalid characters.")
+        if provider not in normalized:
+            normalized.append(provider)
+
+    if not normalized:
+        raise ValueError("Openrouter Provider is required.")
+    return normalized
+
+
+def _parse_checkbox_bool(raw_value: str | None) -> bool:
+    return str(raw_value or "").strip().casefold() in {"1", "true", "on", "yes"}
+
+
+def _sanitize_non_negative_int(value: str | None, field_name: str, minimum: int = 0, maximum: int = 1000000) -> int:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError(f"{field_name} is required.")
+    if not re.fullmatch(r"\d+", raw):
+        raise ValueError(f"{field_name} must be a whole number.")
+    parsed = int(raw)
+    if parsed < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum}.")
+    if parsed > maximum:
+        raise ValueError(f"{field_name} is too large.")
+    return parsed
+
+
+def _parse_multiline_conf_strings(raw_value: str | None, field_name: str, max_items: int = 50) -> list[str]:
+    values = [line.strip() for line in str(raw_value or "").splitlines() if line.strip()]
+    if not values:
+        raise ValueError(f"{field_name} requires at least one value.")
+    if len(values) > max_items:
+        raise ValueError(f"{field_name} allows at most {max_items} values.")
+    cleaned: list[str] = []
+    for value in values:
+        if len(value) > 200:
+            raise ValueError(f"{field_name} entries must be 200 characters or fewer.")
+        if any(char in value for char in ("\x00", "\r")):
+            raise ValueError(f"{field_name} entries contain invalid characters.")
+        cleaned.append(value)
+    return cleaned
+
+
 def _today_dd_mm() -> str:
     return datetime.now().strftime("%d.%m")
 
@@ -448,6 +637,275 @@ def _normalize_md_filename(file_name: str) -> str:
         sanitized = f"{sanitized}.md"
 
     return sanitized
+
+
+def _docs_root_path_from_conf(conf: dict | None = None) -> Path:
+    loaded_conf = conf if isinstance(conf, dict) else _load_conf()
+    return Path(loaded_conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+
+def _projects_root_path_from_conf(conf: dict | None = None) -> Path:
+    loaded_conf = conf if isinstance(conf, dict) else _load_conf()
+    return Path(loaded_conf.get("projects", {}).get("root_path", "/the-knowledge/01_PROJ")).resolve()
+
+
+def _project_canvas_dir(project_path: Path) -> Path:
+    project_dir = Path(project_path).resolve()
+    canvas_dir = (project_dir / "Canvas").resolve()
+    if project_dir != canvas_dir.parent:
+        raise ValueError("Invalid canvas path.")
+    return canvas_dir
+
+
+def _normalize_canvas_file_name(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("Canvas name is required.")
+    if len(normalized) > 120:
+        raise ValueError("Canvas name is too long.")
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError("Canvas name must not contain path separators.")
+    if normalized in {".", ".."}:
+        raise ValueError("Canvas name is invalid.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]+", normalized):
+        raise ValueError("Canvas name contains invalid characters.")
+    if not normalized.lower().endswith(".canvas"):
+        normalized = f"{normalized}.canvas"
+    return normalized
+
+
+def _set_rw_permissions(path: Path, *, is_directory: bool = False) -> None:
+    if os.name == "nt":
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        return
+
+    os.chmod(path, 0o777 if is_directory else 0o666)
+
+
+def _set_rw_permissions_for_all_users(path: Path) -> None:
+    _set_rw_permissions(path, is_directory=path.is_dir())
+
+
+def _ensure_project_canvas_storage(project_path: Path) -> Path:
+    project_dir = Path(project_path).resolve()
+    canvas_dir = _project_canvas_dir(project_dir)
+    canvas_dir.mkdir(parents=True, exist_ok=True)
+    _set_rw_permissions(canvas_dir, is_directory=True)
+
+    legacy_canvas_path = (project_dir / f"{project_dir.name}.canvas").resolve()
+    if legacy_canvas_path.exists() and legacy_canvas_path.is_file() and legacy_canvas_path.parent == project_dir:
+        target_path = (canvas_dir / legacy_canvas_path.name).resolve()
+        if target_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas migration target.")
+        if not target_path.exists():
+            shutil.move(str(legacy_canvas_path), str(target_path))
+        else:
+            legacy_canvas_path.unlink()
+        _set_rw_permissions_for_all_users(target_path)
+
+    return canvas_dir
+
+
+def _list_project_canvas_files(project_path: Path) -> list[str]:
+    canvas_dir = _ensure_project_canvas_storage(project_path)
+    return sorted(
+        [entry.name for entry in canvas_dir.iterdir() if entry.is_file() and entry.suffix.casefold() == ".canvas"],
+        key=str.casefold,
+    )
+
+
+def _sanitize_project_name(raw_project_name: str) -> str:
+    project_name = str(raw_project_name or "").strip()
+    if not project_name:
+        raise ValueError("Project name is required.")
+    if len(project_name) > 120:
+        raise ValueError("Project name is too long.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]+", project_name):
+        raise ValueError("Project name contains invalid characters.")
+    if project_name in {".", ".."}:
+        raise ValueError("Project name is invalid.")
+    return project_name
+
+
+def _resolve_project_path(project_name: str, conf: dict | None = None) -> Path:
+    normalized_name = _sanitize_project_name(project_name)
+    projects_root = _projects_root_path_from_conf(conf)
+    target_path = (projects_root / normalized_name).resolve()
+    if projects_root != target_path and projects_root not in target_path.parents:
+        raise ValueError("Invalid project path.")
+    return target_path
+
+
+def _load_project_template(template_name: str, fallback_content: str) -> str:
+    template_path = Path("/the-knowledge/03_TEMPLATES") / f"{template_name}.md"
+    if template_path.exists() and template_path.is_file():
+        return template_path.read_text(encoding="utf-8")
+    return fallback_content
+
+
+def _is_external_link(href: str) -> bool:
+    return bool(re.match(r"^(?:https?://|mailto:)", str(href or "").strip(), flags=re.IGNORECASE))
+
+
+def _build_deadline_mapping_for_kanban(project_name: str, kanban_items: list[dict], parser: DocsParser) -> dict[str, dict]:
+    deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    by_name = {str(item.get("name", "")).strip(): item for item in deadlines}
+
+    mapping: dict[str, dict] = {}
+    for item in kanban_items:
+        deliverable = str(item.get("deliverable", "")).strip()
+        expected_name = f"{project_name} - {deliverable}" if deliverable else f"{project_name} - "
+        mapped = by_name.get(expected_name, {})
+        mapping[deliverable] = {
+            "name": expected_name,
+            "description": str(mapped.get("description", "")).strip(),
+            "time": str(mapped.get("time", "")).strip(),
+            "date": str(mapped.get("date", "")).strip(),
+            "status": str(mapped.get("status", "Not Started")).strip() or "Not Started",
+        }
+    return mapping
+
+
+def _normalize_project_text(value: str, *, field_name: str, max_length: int = 500) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if "|" in normalized:
+        raise ValueError(f"{field_name} must not contain '|'.")
+    return normalized
+
+
+def _normalize_project_multiline_text(value: str, *, field_name: str, max_length: int = 2000) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name} is too long.")
+    if "|" in normalized:
+        raise ValueError(f"{field_name} must not contain '|'.")
+    return normalized
+
+
+def _normalize_project_link(value: str) -> str:
+    normalized = _normalize_project_text(value, field_name="Resource link", max_length=1000)
+    if normalized and ("\n" in normalized or "\r" in normalized):
+        raise ValueError("Resource link must stay on a single line.")
+    return normalized
+
+
+def _normalize_project_doc_title(value: str) -> str:
+    normalized = _normalize_project_text(value, field_name="Document selection", max_length=255)
+    if not normalized:
+        return ""
+    return Path(normalized).stem.strip()
+
+
+def _normalize_project_tag(value: str, *, default: str) -> str:
+    normalized = _normalize_tag_value(_normalize_project_text(value, field_name="Project tag", max_length=255))
+    if not normalized:
+        return default
+    if not re.match(r"^#[-\w]+$", normalized):
+        raise ValueError("Project tag may only contain letters, numbers, underscores, and dashes.")
+    return normalized
+
+
+def _normalize_kanban_status(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in DEADLINE_STATUS_OPTIONS:
+        raise ValueError("Invalid kanban status.")
+    return normalized
+
+
+def _normalize_kanban_due(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if _parse_deadline_date(normalized) is None:
+        raise ValueError("Due date must match DD.MM.YYYY.")
+    return normalized
+
+
+def _project_resources_file(project_path: Path) -> Path:
+    resources_path = (project_path / "Ressourcen.md").resolve()
+    if project_path != resources_path.parent:
+        raise ValueError("Invalid resources path.")
+    return resources_path
+
+
+def _project_kanban_file(project_path: Path) -> Path:
+    kanban_path = (project_path / "Kanban.md").resolve()
+    if project_path != kanban_path.parent:
+        raise ValueError("Invalid kanban path.")
+    return kanban_path
+
+
+def _sync_project_kanban_deadlines(project_name: str, previous_items: list[dict], current_items: list[dict], conf: dict) -> None:
+    parser = DocsParser()
+    current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+
+    previous_names = {
+        f"{project_name} - {str(item.get('deliverable', '')).strip()}"
+        for item in previous_items
+        if str(item.get("deliverable", "")).strip()
+    }
+    current_names = {
+        f"{project_name} - {str(item.get('deliverable', '')).strip()}"
+        for item in current_items
+        if str(item.get("deliverable", "")).strip()
+    }
+
+    kept_deadlines = [
+        deadline for deadline in current_deadlines if str(deadline.get("name", "")).strip() not in (previous_names - current_names)
+    ]
+    by_name = {str(deadline.get("name", "")).strip(): deadline for deadline in kept_deadlines}
+
+    for item in current_items:
+        deliverable = str(item.get("deliverable", "")).strip()
+        if not deliverable:
+            continue
+
+        deadline_name = f"{project_name} - {deliverable}"
+        existing = by_name.get(deadline_name, {})
+        deadline_entry = {
+            "name": deadline_name,
+            "description": str(existing.get("description", "")).strip(),
+            "date": str(item.get("due", "")).strip() or "-",
+            "time": str(existing.get("time", "")).strip() or "-",
+            "status": _normalize_kanban_status(item.get("status", "Not Started")),
+        }
+
+        if deadline_name in by_name:
+            for index, deadline in enumerate(kept_deadlines):
+                if str(deadline.get("name", "")).strip() == deadline_name:
+                    kept_deadlines[index] = deadline_entry
+                    break
+        else:
+            kept_deadlines.append(deadline_entry)
+        by_name[deadline_name] = deadline_entry
+
+    writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+    writer.write_deadlines_table(kept_deadlines)
+
+
+def _docs_note_exists(note_name: str, conf: dict | None = None) -> bool:
+    normalized_doc = _normalize_md_filename(note_name)
+    if not normalized_doc:
+        return False
+
+    docs_dir = _docs_root_path_from_conf(conf)
+    target_path = (docs_dir / normalized_doc).resolve()
+    return docs_dir in target_path.parents and target_path.exists() and target_path.is_file()
+
+
+def _list_existing_doc_note_names(conf: dict | None = None) -> list[str]:
+    docs_dir = _docs_root_path_from_conf(conf)
+    if not docs_dir.exists() or not docs_dir.is_dir():
+        return []
+
+    note_names = {
+        doc_path.stem.strip()
+        for doc_path in docs_dir.rglob("*.md")
+        if doc_path.stem.strip()
+    }
+    return sorted(note_names, key=lambda value: value.casefold())
 
 
 
@@ -475,6 +933,17 @@ def _parse_multiline_tags(value: str) -> list[str]:
         if normalized:
             parsed.append(normalized)
     return parsed
+
+
+def _project_tags_from_projects_root(conf: dict) -> list[str]:
+    projects_root = _projects_root_path_from_conf(conf)
+    if not projects_root.exists() or not projects_root.is_dir():
+        return []
+
+    return [
+        f"#PROJECT_{project_dir.name}"
+        for project_dir in sorted((entry for entry in projects_root.iterdir() if entry.is_dir()), key=lambda item: item.name.casefold())
+    ]
 
 
 def _parse_json_array(value):
@@ -539,13 +1008,78 @@ def _render_doc_template(template_content: str) -> str:
             rendered += "\n"
         rendered += f"> Erstellt: {today}\n"
     return rendered
-def _set_rw_permissions_for_all_users(path: Path) -> None:
-    if os.name == "nt":
-        # On Windows, chmod mainly controls read-only flag.
-        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
-        return
 
-    os.chmod(path, 0o666)
+
+def _apply_doc_template(
+    template_key: str,
+    file_name: str,
+    *,
+    reason: str = "",
+    create_history: bool = False,
+    auto_create_history_if_missing: bool = False,
+) -> dict:
+    normalized_template_key = str(template_key or "").strip().lower()
+    if normalized_template_key not in {"new", "update"}:
+        raise ValueError("Invalid template action request.")
+
+    normalized_file_name = _normalize_md_filename(file_name)
+    if not normalized_file_name:
+        raise ValueError("Invalid file name. Please use a valid markdown file name.")
+
+    template_options = _load_template_options()
+    template_path = template_options.get(normalized_template_key)
+    if template_path is None or not template_path.exists():
+        raise FileNotFoundError("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.")
+
+    conf = _load_conf()
+    docs_dir = _docs_root_path_from_conf(conf)
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    target_path = (docs_dir / normalized_file_name).resolve()
+
+    if docs_dir not in target_path.parents:
+        raise ValueError("Invalid note path.")
+
+    try:
+        template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError("Failed to read template file.") from exc
+
+    if normalized_template_key == "new":
+        if target_path.exists():
+            return {"status": "exists", "path": target_path, "file_name": normalized_file_name}
+
+        writer.create_note_from_template(target_path, template_content)
+        _set_rw_permissions_for_all_users(target_path)
+        return {"status": "created", "path": target_path, "file_name": normalized_file_name}
+
+    normalized_reason = _normalize_update_reason(reason)
+    if not normalized_reason:
+        raise ValueError("Reason is required for update template.")
+
+    if not target_path.exists():
+        raise FileNotFoundError("Note file not found in 02_DOCS. Please provide an existing file name.")
+
+    success, missing_sections = writer.prepend_template_to_existing_note(
+        target_path=target_path,
+        template_content=template_content,
+        reason=normalized_reason,
+        create_history=create_history,
+    )
+    if not success and auto_create_history_if_missing and "#### Page History" in missing_sections:
+        success, missing_sections = writer.prepend_template_to_existing_note(
+            target_path=target_path,
+            template_content=template_content,
+            reason=normalized_reason,
+            create_history=True,
+        )
+
+    if not success:
+        if "#### Page History" in missing_sections:
+            raise ValueError("'#### Page History' not found in the target note.")
+        raise RuntimeError("Failed to update note from template.")
+
+    _set_rw_permissions_for_all_users(target_path)
+    return {"status": "updated", "path": target_path, "file_name": normalized_file_name}
 
 
 def _set_todo_in_progress(todo_id: str, file_name: str = "") -> None:
@@ -594,6 +1128,84 @@ def _append_todo(note: str, todo_type: str, progress: str, priority: str = "Medi
     writer.write_todos_table(todos)
 
 
+def _validate_note_name(note_name: str) -> str:
+    normalized = str(note_name or "").strip()
+    if not normalized:
+        raise ValueError("note_name is required.")
+    if "/" in normalized or "\\" in normalized:
+        raise ValueError("note_name must not include path separators.")
+    return normalized
+
+
+def _find_todo_index_by_note_name(todos: list[dict], note_name: str) -> int:
+    target_key = Path(str(note_name).strip()).stem.strip().casefold()
+    if not target_key:
+        return -1
+    for index, todo in enumerate(todos):
+        todo_key = Path(str(todo.get("note", "")).strip()).stem.strip().casefold()
+        if todo_key == target_key:
+            return index
+    return -1
+
+
+def _find_todo_index_by_id(todos: list[dict], todo_id: str) -> int:
+    if not str(todo_id).strip().isdigit():
+        return -1
+    target_id = str(int(str(todo_id).strip()))
+    for index, _todo in enumerate(todos, start=1):
+        if str(index) == target_id:
+            return index - 1
+    return -1
+
+
+def _update_todo_entry(
+    *,
+    todo_id: str | None = None,
+    note_name: str | None = None,
+    progress: str | None = None,
+    priority: str | None = None,
+) -> bool:
+    parser = DocsParser()
+    current_todos = parser.parse_todos_from_markdown()
+
+    todo_index = -1
+    if todo_id is not None and str(todo_id).strip():
+        todo_index = _find_todo_index_by_id(current_todos, str(todo_id))
+    elif note_name is not None and str(note_name).strip():
+        todo_index = _find_todo_index_by_note_name(current_todos, str(note_name))
+
+    if todo_index == -1:
+        return False
+
+    todo = current_todos[todo_index]
+    changed = False
+
+    if priority is not None and str(priority).strip():
+        todo["priority"] = _normalize_todo_priority(priority)
+        changed = True
+
+    if progress is not None:
+        normalized_progress = _normalize_todo_progress(progress, allow_empty=True)
+        if normalized_progress:
+            todo["progress"] = normalized_progress
+            changed = True
+
+    if not changed:
+        return True
+
+    todo["last_update"] = _today_dd_mm()
+    conf = _load_conf()
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    writer.write_todos_table(current_todos)
+    return True
+
+
+def _normalize_update_reason(raw_reason: str) -> str:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", str(raw_reason or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:300]
+
+
 def _normalize_todo_types(value):
     normalized = _normalize_value(value)
     if isinstance(normalized, list):
@@ -607,12 +1219,14 @@ def _load_todos(parser: DocsParser, query: str) -> list[dict]:
     todos = parser.parse_todos_from_markdown()
     processed_rows: list[dict] = []
     normalized_query = query.casefold()
+    today = now_in_zurich().date()
 
     for index, row in enumerate(todos, start=1):
         prepared = dict(row)
         prepared["id"] = index
         prepared["type_list"] = _normalize_todo_types(prepared.get("type"))
         prepared["priority"] = _normalize_todo_priority(prepared.get("priority"))
+        prepared["last_update_is_stale"] = _todo_last_update_is_stale(prepared, reference_date=today)
         if normalized_query and normalized_query not in str(prepared.get("note", "")).casefold():
             continue
         processed_rows.append(prepared)
@@ -680,6 +1294,104 @@ def _load_deadlines(parser: DocsParser, include_description: bool = False) -> li
     return sorted(processed_rows, key=_deadline_sort_key)
 
 
+def _count_open_todos(todos: list[dict]) -> int:
+    return len([todo for todo in todos if str(todo.get("progress", "")).strip() != "Done"])
+
+
+def _count_upcoming_deadlines(deadlines: list[dict], days_window: int = 7) -> int:
+    now = datetime.now()
+    cutoff = now + timedelta(days=days_window)
+    upcoming_count = 0
+
+    for deadline in deadlines:
+        if str(deadline.get("status", "")).strip() == "Done":
+            continue
+
+        deadline_date = _parse_deadline_date(deadline.get("date", ""))
+        if deadline_date is None:
+            continue
+
+        deadline_time = _parse_deadline_time(deadline.get("time", ""))
+        deadline_at = (
+            datetime.combine(deadline_date.date(), deadline_time)
+            if deadline_time is not None
+            else datetime.combine(deadline_date.date(), datetime.max.time())
+        )
+        if now <= deadline_at < cutoff:
+            upcoming_count += 1
+
+    return upcoming_count
+
+
+def _count_all_deadlines(deadlines: list[dict]) -> int:
+    return len(deadlines)
+
+
+def _normalize_ratio(value: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return max(0.0, min(1.0, value / total))
+
+
+def _normalize_count(value: int) -> float:
+    if value <= 0:
+        return 0.0
+    return value / (value + 1)
+
+
+def _calculate_latest_ai_feedback_average(database: db) -> float | None:
+    all_feedback_rows = _load_ai_feedback_rows(database, "", "")
+    latest_row_ids = _latest_ai_feedback_row_ids(all_feedback_rows)
+    scores = [
+        row["score_value"]
+        for row in all_feedback_rows
+        if int(row.get("id", 0)) in latest_row_ids and row.get("score_value") is not None
+    ]
+    return sum(scores) / len(scores) if scores else None
+
+
+def _calculate_index_progress(
+    *,
+    total_docs: int,
+    under_construction_count: int,
+    incompliant_docs: int,
+    open_todos_count: int,
+    total_deadlines_count: int,
+    average_ai_score: float | None,
+) -> dict:
+    safe_average_ai_score = 100.0 if average_ai_score is None else max(0.0, min(100.0, average_ai_score))
+    under_construction_norm = _normalize_ratio(under_construction_count, total_docs)
+    incompliant_norm = _normalize_ratio(incompliant_docs, total_docs)
+    todos_norm = _normalize_count(open_todos_count)
+    deadlines_norm = _normalize_count(total_deadlines_count)
+    ai_gap_norm = (100.0 - safe_average_ai_score) / 100.0
+
+    weighted_penalty = (
+        INDEX_PROGRESS_WEIGHTS["under_construction"] * under_construction_norm
+        + INDEX_PROGRESS_WEIGHTS["incompliant"] * incompliant_norm
+        + INDEX_PROGRESS_WEIGHTS["todos"] * todos_norm
+        + INDEX_PROGRESS_WEIGHTS["deadlines"] * deadlines_norm
+        + INDEX_PROGRESS_WEIGHTS["ai_gap"] * ai_gap_norm
+    )
+    progress_value = round(max(0.0, min(100.0, 100.0 * (1.0 - weighted_penalty))))
+
+    if progress_value >= 80:
+        progress_color = "bg-success"
+    elif progress_value >= 60:
+        progress_color = "bg-info"
+    elif progress_value >= 40:
+        progress_color = "bg-warning"
+    else:
+        progress_color = "bg-danger"
+
+    return {
+        "value": progress_value,
+        "color_class": progress_color,
+        "color": _progress_bar_color(progress_value),
+        "average_ai_score": safe_average_ai_score,
+    }
+
+
 def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module: str, sw: str) -> tuple[list[str], str, list[str], str, str, list[dict], str]:
     rows = parser.parse_hslu_sw_overview()
     semesters = sorted(
@@ -708,7 +1420,16 @@ def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module:
     if selected_sw:
         filtered_rows = [row for row in filtered_rows if str(row.get("SW", "")).strip() == selected_sw]
 
-    return semesters, selected_semester, modules, selected_module, selected_sw, filtered_rows, standard_semester
+    prepared_rows: list[dict] = []
+    for row in filtered_rows:
+        prepared_row = dict(row)
+        prepared_row["entry_indicator"] = _entry_indicator_for_sw_status(
+            prepared_row.get("downloaded"),
+            prepared_row.get("documented"),
+        )
+        prepared_rows.append(prepared_row)
+
+    return semesters, selected_semester, modules, selected_module, selected_sw, prepared_rows, standard_semester
 
 
 
@@ -758,7 +1479,9 @@ def _load_hslu_checklist(parser: DocsParser, semester: str, sw: str, sections: l
         if unique_key in seen:
             continue
         seen.add(unique_key)
-        deduplicated_rows.append(row)
+        prepared_row = dict(row)
+        prepared_row["entry_indicator"] = _entry_indicator_for_sw_status(prepared_row.get("status"))
+        deduplicated_rows.append(prepared_row)
 
     rows_by_section: dict[str, list[dict]] = {section: [] for section in selected_sections}
     for row in deduplicated_rows:
@@ -842,6 +1565,29 @@ def _interpolate_rgb(start: tuple[int, int, int], end: tuple[int, int, int], fac
     return tuple(round(start[index] + (end[index] - start[index]) * bounded_factor) for index in range(3))
 
 
+def _progress_bar_color(value: float) -> str:
+    bounded_value = max(0.0, min(100.0, float(value)))
+    color_stops = [
+        (0.0, (109, 56, 117)),
+        (30.0, (219, 31, 31)),
+        (50.0, (219, 106, 31)),
+        (75.0, (219, 191, 31)),
+        (90.0, (153, 219, 31)),
+        (100.0, (81, 120, 10)),
+    ]
+
+    for index in range(1, len(color_stops)):
+        end_position, end_color = color_stops[index]
+        start_position, start_color = color_stops[index - 1]
+        if bounded_value <= end_position:
+            segment_span = end_position - start_position
+            factor = 0.0 if segment_span == 0 else (bounded_value - start_position) / segment_span
+            rgb = _interpolate_rgb(start_color, end_color, factor)
+            return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+    return "#{:02X}{:02X}{:02X}".format(*color_stops[-1][1])
+
+
 def _feedback_score_color(value) -> str:
     score = _parse_feedback_score(value)
     if score is None:
@@ -877,6 +1623,59 @@ def _ensure_doc_can_receive_ai_feedback(database: db, selected_doc: str) -> None
         )
 
 
+def _load_latest_feedback_context(database: db, parser: DocsParser, selected_doc_note_name: str) -> dict | None:
+    latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
+    if not latest_feedback_for_context or not latest_feedback_for_context.get("path_to_feedback"):
+        return None
+
+    parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
+    return {
+        "version": parsed_latest_feedback.get("version"),
+        "score": parsed_latest_feedback.get("score"),
+        "creation_date": parsed_latest_feedback.get("creation_date"),
+        "feedback": parsed_latest_feedback.get("feedback"),
+    }
+
+
+def _create_ai_feedback_for_document(selected_doc: str, include_images: bool) -> dict:
+    conf = _load_conf()
+    database = db()
+    _ensure_doc_can_receive_ai_feedback(database, selected_doc)
+    parser = DocsParser()
+    _sync_ai_feedback_and_openrouter_credits(database)
+    ai_feedback_service = DocsAIFeedback(conf)
+    selected_doc_note_name = Path(selected_doc).stem.strip()
+    latest_feedback_context = _load_latest_feedback_context(database, parser, selected_doc_note_name)
+
+    feedback_payload = ai_feedback_service.generate_feedback(
+        selected_doc,
+        previous_feedback=latest_feedback_context,
+        include_images=include_images,
+    )
+
+    latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
+    next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
+
+    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+    rendered_feedback = writer.render_ai_feedback_template(
+        template_content=feedback_payload["feedback_template"],
+        note_name=feedback_payload["note_name"],
+        version=next_version,
+        creation_date=feedback_payload["creation_date"],
+        score=_format_feedback_score(feedback_payload["score"]),
+        feedback=feedback_payload["feedback"],
+    )
+    output_path = writer.write_ai_feedback_file(
+        output_dir=ai_feedback_service.output_path,
+        note_name=feedback_payload["note_name"],
+        version=next_version,
+        rendered_content=rendered_feedback,
+    )
+    _set_rw_permissions_for_all_users(output_path)
+    _sync_ai_feedback_and_openrouter_credits(database)
+    return feedback_payload
+
+
 def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> list[dict]:
     name_filter = str(name_query or "").strip().casefold()
     score_filter = str(score_query or "").strip()
@@ -889,6 +1688,8 @@ def _load_ai_feedback_rows(database: db, name_query: str, score_query: str) -> l
         prepared["score_color"] = _feedback_score_color(prepared.get("score"))
         prepared["version_display"] = str(prepared.get("version", "N/A"))
         prepared["creation_date"] = str(prepared.get("creation_date", "N/A")).strip() or "N/A"
+        prepared["doc_preview_url"] = _ai_feedback_doc_preview_url(prepared)
+        prepared["title_icon"] = "✅" if prepared["doc_preview_url"] else "❓"
 
         file_name = str(prepared.get("file_name", "")).strip()
         if name_filter and name_filter not in file_name.casefold():
@@ -948,6 +1749,744 @@ def _sync_ai_feedback_and_openrouter_credits(database: db) -> tuple[list[dict], 
     return synced_rows, credits_left_label
 
 
+def _load_learning_conf(conf: dict) -> dict:
+    return conf.get("learning", {})
+
+
+def _load_playbooks_conf(conf_data: dict) -> dict:
+    defaults = {
+        "enabled": True,
+        "path": "/the-knowledge/08_PLAYBOOKS",
+        "max_depth": 30,
+        "dry_run": False,
+    }
+    raw = conf_data.get("playbooks", {}) if isinstance(conf_data.get("playbooks", {}), dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled", defaults["enabled"])),
+        "path": str(raw.get("path", defaults["path"])).strip() or defaults["path"],
+        "max_depth": max(1, int(raw.get("max_depth", defaults["max_depth"]))),
+        "dry_run": bool(raw.get("dry_run", defaults["dry_run"])),
+    }
+
+
+def _append_deadline(name: str, date_label: str, time_label: str, status: str) -> None:
+    parser = DocsParser()
+    current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    current_deadlines.append(
+        {
+            "name": str(name).strip(),
+            "description": "Created by Playbook",
+            "date": str(date_label).strip(),
+            "time": str(time_label).strip(),
+            "status": str(status).strip() if str(status).strip() in DEADLINE_STATUS_OPTIONS else "Not Started",
+        }
+    )
+    writer = DocsWriter(deadlines_file_path=_load_conf().get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+    writer.write_deadlines_table(current_deadlines)
+
+
+def _perform_full_scan() -> None:
+    logger.info("UI requested full scan")
+    parser = DocsParser()
+    parser.parse_and_add_ALL_docs_to_db()
+    logger.info("UI full scan completed")
+
+
+def _playbook_action_handlers() -> dict:
+    def _resolve_note_path_for_playbook(note_name: str) -> Path:
+        parser = DocsParser()
+        return parser.find_note_path(_validate_note_name(note_name))
+
+    def _upsert_todo(note_name: str, todo_type: str, progress: str, priority: str, create_if_missing: bool) -> str:
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        matched_index = _find_todo_index_by_note_name(todos, note_name)
+        progress = _normalize_todo_progress(progress)
+        normalized_priority = _normalize_todo_priority(priority)
+
+        if matched_index == -1:
+            if not create_if_missing:
+                raise ValueError("Todo not found for note_name.")
+            todos.append(
+                {
+                    "note": note_name,
+                    "type": json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False),
+                    "progress": progress,
+                    "last_update": _today_dd_mm(),
+                    "priority": normalized_priority,
+                }
+            )
+            result_status = "created"
+        else:
+            current = todos[matched_index]
+            current["note"] = note_name
+            current["type"] = json.dumps([value.strip() for value in todo_type.split("/") if value.strip()], ensure_ascii=False)
+            current["progress"] = progress
+            current["priority"] = normalized_priority
+            current["last_update"] = _today_dd_mm()
+            result_status = "updated"
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(todos)
+        return result_status
+
+    def _action_create_note(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler create_note called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("create_note requires note_name.")
+        result = _apply_doc_template(template_key="new", file_name=note_name)
+        return {
+            "status": result["status"],
+            "note_name": Path(result["file_name"]).stem,
+        }
+
+    def _action_update_note(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        reason = str(action_input.get("reason", "")).strip()
+        logger.info("Playbook handler update_note called: note_name=%s", note_name)
+        if not note_name or not reason:
+            raise ValueError("update_note requires note_name and reason.")
+        result = _apply_doc_template(
+            template_key="update",
+            file_name=note_name,
+            reason=reason,
+            auto_create_history_if_missing=True,
+        )
+        return {
+            "status": result["status"],
+            "note_name": Path(result["file_name"]).stem,
+        }
+
+    def _action_create_learning(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler create_learning called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("create_learning requires note_name.")
+        normalized_doc = _normalize_md_filename(note_name)
+        if not normalized_doc:
+            raise ValueError("create_learning requires a valid note_name.")
+        _create_learning_for_doc(normalized_doc)
+        return {"status": "created"}
+
+    def _action_generate_ai_questions(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler generate_ai_questions called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("generate_ai_questions requires note_name.")
+        normalized_doc = _normalize_md_filename(note_name)
+        if not normalized_doc:
+            raise ValueError("generate_ai_questions requires a valid note_name.")
+        generated = _generate_learning_questions_for_doc(normalized_doc)
+        return {
+            "status": "generated",
+            "learning_name": str(generated.get("learning_row", {}).get("file_name", "")).strip(),
+            "questions_count": int(generated.get("questions_count", 0)),
+        }
+
+    def _action_generate_ai_feedback(action_input: dict, _: dict) -> dict:
+        note_name = str(action_input.get("note_name", "")).strip()
+        logger.info("Playbook handler generate_ai_feedback called: note_name=%s", note_name)
+        if not note_name:
+            raise ValueError("generate_ai_feedback requires note_name.")
+        feedback_payload = _create_ai_feedback_for_document(note_name, include_images=False)
+        return {"status": "created", "ai_feedback_score": feedback_payload.get("score")}
+
+    def _action_create_todo(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        todo_type = str(action_input.get("type", "Update")).strip() or "Update"
+        progress = str(action_input.get("progress", "Not Started")).strip()
+        priority = _normalize_todo_priority(str(action_input.get("priority", "Medium")))
+        logger.info(
+            "Playbook handler create_todo called: note_name=%s type=%s progress=%s priority=%s",
+            note_name,
+            todo_type,
+            progress,
+            priority,
+        )
+        status = _upsert_todo(
+            note_name=note_name,
+            todo_type=todo_type,
+            progress=progress,
+            priority=priority,
+            create_if_missing=True,
+        )
+        return {"status": status}
+
+    def _action_update_todo(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        raw_priority = str(action_input.get("priority", "")).strip()
+        raw_progress = action_input.get("progress")
+        progress = str(raw_progress).strip() if raw_progress is not None else ""
+        logger.info(
+            "Playbook handler update_todo called: note_name=%s progress=%s priority=%s",
+            note_name,
+            progress,
+            raw_priority,
+        )
+
+        updated = _update_todo_entry(
+            note_name=note_name,
+            progress=progress if raw_progress is not None else None,
+            priority=raw_priority if raw_priority else None,
+        )
+        if not updated:
+            raise ValueError("Todo not found for note_name.")
+        return {"status": "updated"}
+
+    def _action_delete_todo(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler delete_todo called: note_name=%s", note_name)
+
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        todo_index = _find_todo_index_by_note_name(todos, note_name)
+        if todo_index == -1:
+            raise ValueError("Todo not found for note_name.")
+        del todos[todo_index]
+
+        conf = _load_conf()
+        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
+        writer.write_todos_table(todos)
+        return {"status": "deleted"}
+
+    def _action_add_note_tags(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        tag_list = action_input.get("tag_list", [])
+        if isinstance(tag_list, str):
+            raw_tag_list = tag_list.strip()
+            if raw_tag_list.startswith("[") and raw_tag_list.endswith("]"):
+                try:
+                    parsed_tag_list = json.loads(raw_tag_list)
+                    tag_list = parsed_tag_list if isinstance(parsed_tag_list, list) else []
+                except json.JSONDecodeError as exc:
+                    raise ValueError("add_note_tags tag_list must be valid JSON array.") from exc
+            elif raw_tag_list:
+                tag_list = [entry.strip() for entry in raw_tag_list.splitlines() if entry.strip()]
+            else:
+                tag_list = []
+        if not isinstance(tag_list, list):
+            raise ValueError("add_note_tags requires tag_list as array.")
+        normalized_tags: list[str] = []
+        for raw_tag in tag_list:
+            tag = str(raw_tag or "").strip()
+            if not tag:
+                continue
+            if not tag.startswith("#"):
+                raise ValueError("Each tag in tag_list must start with '#'.")
+            if not re.match(r"^#[-\w]+$", tag):
+                raise ValueError("Tags may only contain letters, numbers, underscores, and dashes.")
+            if tag not in normalized_tags:
+                normalized_tags.append(tag)
+        if not normalized_tags:
+            raise ValueError("add_note_tags requires at least one valid tag.")
+
+        logger.info("Playbook handler add_note_tags called: note_name=%s tags=%s", note_name, normalized_tags)
+        note_path = _resolve_note_path_for_playbook(note_name)
+        writer = DocsWriter()
+        success, missing_sections = writer.add_tags_to_note(doc_path=note_path, tags_to_add=normalized_tags)
+        if not success:
+            raise ValueError(f"Missing chapter(s): {', '.join(missing_sections)}")
+        return {"status": "updated", "tags_added": len(normalized_tags)}
+
+    def _action_create_deadline(action_input: dict, _: dict) -> dict:
+        name = str(action_input.get("deadline_name", "")).strip()
+        days_in_advance_raw = str(action_input.get("days_in_advance", "0")).strip() or "0"
+        hours_in_advance_raw = str(action_input.get("hours_in_advance", "0")).strip() or "0"
+        status = str(action_input.get("status", "Not Started")).strip()
+        logger.info(
+            "Playbook handler create_deadline called: deadline_name=%s days_in_advance=%s hours_in_advance=%s status=%s",
+            name,
+            days_in_advance_raw,
+            hours_in_advance_raw,
+            status,
+        )
+        if not name:
+            raise ValueError("create_deadline requires deadline_name.")
+        try:
+            days_in_advance = int(days_in_advance_raw)
+            hours_in_advance = int(hours_in_advance_raw)
+        except ValueError as exc:
+            raise ValueError("create_deadline requires numeric days_in_advance and hours_in_advance.") from exc
+        if days_in_advance < 0 or hours_in_advance < 0:
+            raise ValueError("create_deadline requires non-negative days_in_advance and hours_in_advance.")
+        due_at = now_in_zurich() + timedelta(days=days_in_advance, hours=hours_in_advance)
+        date_label = due_at.strftime("%d.%m.%Y")
+        time_label = due_at.strftime("%H:%M")
+        _append_deadline(name=name, date_label=date_label, time_label=time_label, status=status)
+        return {"status": "created"}
+
+    def _action_inform_user(action_input: dict, _: dict) -> dict:
+        message = str(action_input.get("message", "")).strip()
+        user_choice = str(action_input.get("user_response", action_input.get("decision", ""))).strip().casefold()
+        logger.info("Playbook handler inform_user called: message_length=%s choice=%s", len(message), user_choice)
+        if not message:
+            raise ValueError("inform_user requires a message.")
+        if user_choice in {"abort", "no", "cancel", "false", "0"}:
+            return {"status": "aborted", "prompt_message": message, "control": "abort"}
+        if user_choice in {"confirm", "yes", "continue", "ok", "true", "1"}:
+            return {"status": "confirmed", "prompt_message": message}
+        return {
+            "status": "awaiting_user_response",
+            "prompt_message": message,
+            "control": "pause",
+        }
+
+    def _action_perform_note_sync(_: dict, __: dict) -> dict:
+        logger.info("Playbook handler perform_note_sync called")
+        _perform_full_scan()
+        return {"status": "synced"}
+
+    def _action_check_note_exists(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_note_exists called: note_name=%s", note_name)
+        parser = DocsParser()
+        exists = False
+        try:
+            parser.find_note_path(note_name)
+            exists = True
+        except FileNotFoundError:
+            exists = False
+        return {"status": "checked", "check_note_exists": exists}
+
+    def _action_check_todo_exists(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_todo_exists called: note_name=%s", note_name)
+        parser = DocsParser()
+        todos = parser.parse_todos_from_markdown()
+        todo_exists = _find_todo_index_by_note_name(todos, note_name) != -1
+        return {"status": "checked", "check_todo_exists": todo_exists}
+
+    def _action_check_note_compliant(action_input: dict, _: dict) -> dict:
+        note_name = _validate_note_name(action_input.get("note_name", ""))
+        logger.info("Playbook handler check_note_compliant called: note_name=%s", note_name)
+        note_key = Path(note_name).stem.strip().casefold()
+        note_doc = next(
+            (
+                item
+                for item in db().get_all_docs().values()
+                if Path(str(item.get("title", "")).strip()).stem.strip().casefold() == note_key
+            ),
+            None,
+        )
+        is_compliant = False
+        if note_doc:
+            is_flagged_under_construction = str(note_doc.get("is_under_construction", "false")).strip().casefold() == "true"
+            is_flagged_compliant = str(note_doc.get("is_compliant", "false")).strip().casefold() == "true"
+            is_compliant = is_flagged_compliant and not is_flagged_under_construction
+        return {"status": "checked", "check_note_compliant": is_compliant}
+
+    def _action_check_ai_feedback_min_score(_: dict, __: dict) -> dict:
+        logger.info("Playbook handler check_ai_feedback_min_score called")
+        conf = _load_conf()
+        compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
+        if not compliance_conf:
+            compliance_conf = conf.get("conpliance_check", {}) if isinstance(conf.get("conpliance_check", {}), dict) else {}
+        ai_feedback_conf = compliance_conf.get("ai_feedback", {}) if isinstance(compliance_conf.get("ai_feedback", {}), dict) else {}
+        minimum_score = ai_feedback_conf.get("min", DocsParser.DEFAULT_COMPLIANCE_CHECK["ai_feedback"]["min"])
+        try:
+            minimum_score = int(minimum_score)
+        except (TypeError, ValueError):
+            minimum_score = int(DocsParser.DEFAULT_COMPLIANCE_CHECK["ai_feedback"]["min"])
+        return {"status": "checked", "check_ai_feedback_min_score": minimum_score}
+
+    return {
+        "create_note": _action_create_note,
+        "update_note": _action_update_note,
+        "create_learning": _action_create_learning,
+        "generate_ai_questions": _action_generate_ai_questions,
+        "generate_ai_feedback": _action_generate_ai_feedback,
+        "add_note_tags": _action_add_note_tags,
+        "create_todo": _action_create_todo,
+        "update_todo": _action_update_todo,
+        "delete_todo": _action_delete_todo,
+        "create_deadline": _action_create_deadline,
+        "inform_user": _action_inform_user,
+        "perform_note_sync": _action_perform_note_sync,
+        "check_note_exists": _action_check_note_exists,
+        "check_todo_exists": _action_check_todo_exists,
+        "check_note_compliant": _action_check_note_compliant,
+        "check_ai_feedback_min_score": _action_check_ai_feedback_min_score,
+    }
+
+
+def _playbook_service() -> DocsPlaybook:
+    conf = _load_conf()
+    conf["playbooks"] = _load_playbooks_conf(conf)
+    return DocsPlaybook(conf=conf, action_handlers=_playbook_action_handlers())
+
+
+def _determine_playbook_run_status(*, success: bool, paused: bool, logs: list[dict]) -> str:
+    if paused:
+        return "paused"
+    if success:
+        return "successful"
+    has_abort_log = any("abort" in str(item.get("reason", "")).casefold() for item in logs if isinstance(item, dict))
+    return "aborted" if has_abort_log else "failed"
+
+
+def _summarize_playbook_logs(logs: list[dict]) -> dict:
+    safe_logs = [item for item in logs if isinstance(item, dict)]
+    success_count = sum(1 for item in safe_logs if bool(item.get("success", False)))
+    failed_count = sum(1 for item in safe_logs if not bool(item.get("success", False)))
+    action_count = sum(1 for item in safe_logs if str(item.get("step_type", "")).strip().casefold() == "action")
+    flow_count = sum(1 for item in safe_logs if str(item.get("step_type", "")).strip().casefold() == "flow")
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "action_count": action_count,
+        "flow_count": flow_count,
+        "total_steps": len(safe_logs),
+    }
+
+
+def _safe_json_dumps(value: object, fallback: str) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _safe_json_loads(value: str, fallback: object) -> object:
+    try:
+        loaded = json.loads(str(value or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+    return loaded
+
+
+def _store_playbook_run(
+    *,
+    playbook_name: str,
+    context: dict,
+    result_payload: dict,
+    execution_time_ms: int,
+    was_resumed: bool,
+) -> int | None:
+    logs = result_payload.get("logs", []) if isinstance(result_payload.get("logs", []), list) else []
+    success = bool(result_payload.get("success", False))
+    paused = bool(result_payload.get("paused", False))
+    if paused:
+        return None
+    prompt_message = str(result_payload.get("prompt_message", "")).strip()
+    metadata = _summarize_playbook_logs(logs)
+    status = _determine_playbook_run_status(success=success, paused=paused, logs=logs)
+    return db().create_playbook_run(
+        {
+            "playbook_name": str(playbook_name or "").strip(),
+            "run_started_at": now_in_zurich_str(),
+            "execution_time_ms": max(0, int(execution_time_ms)),
+            "result_status": status,
+            "was_resumed": bool(was_resumed),
+            "run_context_json": _safe_json_dumps(context, "{}"),
+            "run_logs_json": _safe_json_dumps(logs, "[]"),
+            "prompt_message": prompt_message,
+            "metadata_json": _safe_json_dumps(metadata, "{}"),
+        }
+    )
+
+
+def _doc_addon_flag_enabled(value: object) -> bool:
+    return str(value or "").strip().casefold() == "true"
+
+
+def _find_learning_for_doc(database: db, doc_title: str) -> dict | None:
+    normalized_doc = _normalize_md_filename(doc_title)
+    if not normalized_doc:
+        return None
+
+    doc_stem = Path(normalized_doc).stem.strip()
+    if not doc_stem:
+        return None
+
+    doc_key = doc_stem.casefold()
+    matching_rows = [
+        row
+        for row in database.get_all_learnings()
+        if str(row.get("source_note_name", "")).strip().replace(".md", "").casefold() == doc_key
+        or str(row.get("file_name", "")).strip().replace(" - Learning", "").casefold() == doc_key
+    ]
+    if not matching_rows:
+        return None
+
+    return max(matching_rows, key=lambda row: int(row.get("id", 0)))
+
+
+def _find_latest_ai_feedback_for_doc(database: db, doc_title: str) -> dict | None:
+    normalized_doc = _normalize_md_filename(doc_title)
+    if not normalized_doc:
+        return None
+
+    doc_stem = Path(normalized_doc).stem.strip()
+    if not doc_stem:
+        return None
+
+    doc_key = doc_stem.casefold()
+    matching_rows = [
+        row
+        for row in database.get_all_ai_feedback()
+        if Path(str(row.get("file_name", "")).strip()).stem.casefold() == doc_key
+    ]
+    if not matching_rows:
+        return None
+
+    return max(
+        matching_rows,
+        key=lambda row: (int(row.get("version", 0)), int(row.get("id", 0))),
+    )
+
+
+def _create_learning_for_doc(normalized_doc: str) -> dict:
+    conf = _load_conf()
+    learning_conf = _load_learning_conf(conf)
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    selected_doc_path = (docs_dir / normalized_doc).resolve()
+    if docs_dir not in selected_doc_path.parents or not selected_doc_path.exists():
+        raise ValueError("Selected markdown note does not exist.")
+
+    template_path = Path(learning_conf.get("learning_template_path", "/the-knowledge/03_TEMPLATES/2 - New Learning")).resolve()
+    output_dir = Path(learning_conf.get("learning_path", "/the-knowledge/07_LEARNINGS")).resolve()
+    template_content = template_path.read_text(encoding="utf-8")
+    writer = DocsWriter()
+    note_name = selected_doc_path.stem.strip()
+    rendered = writer.render_learning_template(
+        template_content=template_content,
+        note_name=note_name,
+        creation_date=_today_dd_mm_yyyy(),
+        last_modified_date="N/A",
+        questions_payload={"questions": []},
+        answers_payload={"answers": []},
+    )
+    learning_path = writer.write_learning_file(output_dir=output_dir, note_name=note_name, rendered_content=rendered)
+    _set_rw_permissions_for_all_users(learning_path)
+    DocsParser().sync_learning_to_db()
+
+    learning_row = _find_learning_for_doc(db(), normalized_doc)
+    if not learning_row:
+        raise RuntimeError("Learning file was created but could not be loaded from the database.")
+
+    return learning_row
+
+
+def _generate_learning_questions_for_doc(normalized_doc: str) -> dict:
+    conf = _load_conf()
+    database = db()
+
+    learning_row = _find_learning_for_doc(database, normalized_doc)
+    if not learning_row:
+        learning_row = _create_learning_for_doc(normalized_doc)
+
+    learning_conf = _load_learning_conf(conf)
+    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    source_note_name = str(learning_row.get("source_note_name", "")).strip() or Path(normalized_doc).stem.strip()
+    source_doc_path = (docs_dir / _normalize_md_filename(source_note_name)).resolve()
+    if docs_dir not in source_doc_path.parents or not source_doc_path.exists():
+        raise FileNotFoundError(f"Source note not found: {source_note_name}")
+
+    prompt_path = Path(learning_conf.get("learning_ai_prompt_path", "/the-knowledge/03_TEMPLATES/2 - Learning AI Prompt.md")).resolve()
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    ai_service = DocsAIFeedback(conf)
+    generated = ai_service.generate_learning_questions(
+        note_name=source_note_name,
+        note_content=source_doc_path.read_text(encoding="utf-8"),
+        prompt_content=prompt_content,
+    )
+    questions = _sanitize_learning_questions(generated.get("questions", []))
+    if not questions:
+        raise ValueError(
+            "Question generation returned no valid questions. Please review the prompt/model output and try again."
+        )
+    answers = _sanitize_learning_answers(generated.get("answers", []), {item["id"] for item in questions})
+    DocsWriter().update_learning_file_questions_answers(
+        learning_path=Path(learning_row["path_to_learning"]),
+        last_modified_date=_today_dd_mm_yyyy(),
+        questions_payload={"questions": questions},
+        answers_payload={"answers": answers},
+    )
+    _sync_openrouter_credits_only(database)
+    return {
+        "learning_row": learning_row,
+        "questions_count": len(questions),
+    }
+
+
+def _learning_status_icon(learning_row: dict) -> str:
+    source_note_name = str(learning_row.get("source_note_name", "")).strip()
+    if source_note_name and not _docs_note_exists(source_note_name):
+        return "❓"
+
+    learning_path = str(learning_row.get("path_to_learning", "")).strip()
+    if not learning_path:
+        return "⚠️"
+
+    try:
+        parsed_learning = DocsParser().parse_learning_file(learning_path)
+    except Exception:
+        logger.warning("Could not parse learning for status display: %s", learning_path)
+        return "⚠️"
+
+    questions = parsed_learning.get("questions", [])
+    answers = parsed_learning.get("answers", [])
+    question_count = len(questions) if isinstance(questions, list) else 0
+    answer_count = len(answers) if isinstance(answers, list) else 0
+
+    if question_count >= 1 and answer_count >= 1:
+        return "✅"
+    return "⚠️"
+
+
+def _learning_doc_preview_url(learning_row: dict) -> str | None:
+    source_note_name = str(learning_row.get("source_note_name", "")).strip()
+    return _doc_preview_url_from_note_name(source_note_name)
+
+
+def _doc_preview_url_from_note_name(note_name: str) -> str | None:
+    normalized_doc = _normalize_md_filename(note_name)
+    if not normalized_doc:
+        return None
+    if not _docs_note_exists(normalized_doc):
+        return None
+
+    return url_for("view_doc_by_path", relative_path=normalized_doc)
+
+
+def _ai_feedback_doc_preview_url(feedback_row: dict) -> str | None:
+    return _doc_preview_url_from_note_name(str(feedback_row.get("file_name", "")).strip())
+
+
+def _sanitize_learning_questions(raw_questions: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    allowed_types = {"MULTIPLE_CHOICE", "SINGLE_CHOICE", "FREETEXT"}
+    for index, question in enumerate(raw_questions, start=1):
+        if not isinstance(question, dict):
+            continue
+        qid = str(question.get("id", "")).strip() or f"Q{index:03d}"
+        qtype = str(question.get("type", "FREETEXT")).strip().upper()
+        if qtype not in allowed_types:
+            qtype = "FREETEXT"
+        text = re.sub(r"\s+", " ", str(question.get("text", "")).strip())
+        if not text:
+            continue
+        options = question.get("options", [])
+        if not isinstance(options, list):
+            options = []
+        options = [re.sub(r"\s+", " ", str(item).strip()) for item in options if str(item).strip()]
+        if qtype == "FREETEXT":
+            options = []
+        sanitized.append({"id": qid, "type": qtype, "text": text, "options": options})
+    return sanitized
+
+
+def _sanitize_learning_answers(raw_answers: list[dict], question_ids: set[str]) -> list[dict]:
+    sanitized: list[dict] = []
+    for answer in raw_answers:
+        if not isinstance(answer, dict):
+            continue
+        question_id = str(answer.get("question_id", "")).strip()
+        if not question_id or question_id not in question_ids:
+            continue
+        correct_answers = answer.get("correct_answers", [])
+        if not isinstance(correct_answers, list):
+            correct_answers = [str(correct_answers)]
+        cleaned_answers = [re.sub(r"\s+", " ", str(item).strip()) for item in correct_answers if str(item).strip()]
+        sanitized.append({"question_id": question_id, "correct_answers": cleaned_answers})
+    return sanitized
+
+
+def _split_multiline_form_values(value: str) -> list[str]:
+    return [line.strip() for line in str(value).replace("\r\n", "\n").split("\n") if line.strip()]
+
+
+def _normalize_learning_question_id(raw_value: str, fallback_index: int, used_ids: set[str]) -> str:
+    base_value = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw_value).strip()).strip("_-")
+    if not base_value:
+        base_value = f"Q{fallback_index:03d}"
+
+    candidate = base_value
+    suffix = 2
+    while candidate in used_ids:
+        candidate = f"{base_value}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _build_learning_payload_from_form(form_data) -> tuple[list[dict], list[dict]]:
+    ids = form_data.getlist("question_id[]")
+    texts = form_data.getlist("question_text[]")
+    types = form_data.getlist("question_type[]")
+    options_raw = form_data.getlist("question_options[]")
+    correct_answers_raw = form_data.getlist("question_correct_answers[]")
+
+    max_rows = max(len(ids), len(texts), len(types), len(options_raw), len(correct_answers_raw), 0)
+
+    def _safe_get(values: list[str], index: int) -> str:
+        return values[index] if index < len(values) else ""
+
+    used_ids: set[str] = set()
+    generated_index = 1
+    raw_questions: list[dict] = []
+    raw_answers: list[dict] = []
+
+    for index in range(max_rows):
+        question_text = re.sub(r"\s+", " ", str(_safe_get(texts, index)).strip())
+        if not question_text:
+            continue
+
+        question_id = _normalize_learning_question_id(_safe_get(ids, index), generated_index, used_ids)
+        while f"Q{generated_index:03d}" in used_ids:
+            generated_index += 1
+        used_ids.add(question_id)
+        generated_index += 1
+
+        question_type = str(_safe_get(types, index)).strip().upper() or "FREETEXT"
+        options = _split_multiline_form_values(_safe_get(options_raw, index))
+        correct_answers = _split_multiline_form_values(_safe_get(correct_answers_raw, index))
+        options = list(dict.fromkeys([re.sub(r"\s+", " ", item) for item in options]))
+        correct_answers = list(dict.fromkeys([re.sub(r"\s+", " ", item) for item in correct_answers]))
+        if question_type == "SINGLE_CHOICE" and correct_answers:
+            correct_answers = [correct_answers[0]]
+
+        raw_questions.append(
+            {"id": question_id, "type": question_type, "text": question_text, "options": options}
+        )
+        raw_answers.append({"question_id": question_id, "correct_answers": correct_answers})
+
+    questions = _sanitize_learning_questions(raw_questions)
+    answers = _sanitize_learning_answers(raw_answers, {item["id"] for item in questions})
+
+    question_type_map = {item["id"]: item["type"] for item in questions}
+    question_options_map = {
+        item["id"]: {str(option).strip() for option in item.get("options", [])}
+        for item in questions
+    }
+    normalized_answers: list[dict] = []
+    for answer in answers:
+        question_id = answer["question_id"]
+        question_type = question_type_map.get(question_id, "FREETEXT")
+        if question_type in {"SINGLE_CHOICE", "MULTIPLE_CHOICE"}:
+            options = question_options_map.get(question_id, set())
+            filtered = [item for item in answer["correct_answers"] if item in options]
+            if question_type == "SINGLE_CHOICE" and filtered:
+                filtered = [filtered[0]]
+            normalized_answers.append({"question_id": question_id, "correct_answers": filtered})
+            continue
+        normalized_answers.append(answer)
+
+    return questions, normalized_answers
+
+
+def _sync_openrouter_credits_only(database: db) -> str | None:
+    try:
+        credits_left = DocsAIFeedback(_load_conf()).fetch_openrouter_credits_left()
+        credits_left_label = f"{credits_left:.4f}".rstrip("0").rstrip(".")
+        database.upsert_setting("openrouter_credits_left", credits_left_label)
+        return credits_left_label
+    except Exception:
+        logger.warning("Could not refresh OpenRouter credits\n%s", traceback.format_exc())
+        return None
+
+
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
@@ -971,9 +2510,14 @@ def index():
         row["tags_list"] = _to_display_list(row.get("tags"))
         row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
         row["changed_at_list"] = _to_display_list(row.get("changed_at"))
-        row["manual_compliant_override"] = _normalize_manual_override(row.get("manual_compliant_override"))
         row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
         row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
+        row["has_learning"] = _doc_addon_flag_enabled(row.get("has_learning", "false"))
+        row["has_ai_feedback"] = _doc_addon_flag_enabled(row.get("has_ai_feedback", "false"))
+        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip()) if row["has_learning"] else None
+        row["latest_ai_feedback"] = (
+            _find_latest_ai_feedback_for_doc(database, str(row.get("title", "")).strip()) if row["has_ai_feedback"] else None
+        )
         if row["is_under_construction"] == "true":
             row["is_compliant"] = "Not Determined"
             row["noncompliance_reason_list"] = []
@@ -982,12 +2526,29 @@ def index():
 
     _sort_docs(processed_docs, sort_by)
     last_sync_time = database.get_last_sync_time()
+    open_todos_count = _count_open_todos(_load_todos(parser, query=""))
+    deadlines = _load_deadlines(parser, include_description=False)
+    upcoming_deadlines_count = _count_upcoming_deadlines(deadlines)
+    total_deadlines_count = _count_all_deadlines(deadlines)
 
     under_construction_count = len(under_construction_docs)
-    manual_compliance_docs = sorted(
+    average_ai_score = _calculate_latest_ai_feedback_average(database)
+    index_progress = _calculate_index_progress(
+        total_docs=total_docs,
+        under_construction_count=under_construction_count,
+        incompliant_docs=incompliant_docs,
+        open_todos_count=open_todos_count,
+        total_deadlines_count=total_deadlines_count,
+        average_ai_score=average_ai_score,
+    )
+    selectable_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
         key=lambda value: value["title"].casefold(),
     )
+    try:
+        playbooks = _playbook_service().list_playbooks()
+    except Exception:
+        playbooks = []
 
     return render_template(
         "index.html",
@@ -1001,7 +2562,13 @@ def index():
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
         under_construction_count=under_construction_count,
-        manual_compliance_docs=manual_compliance_docs,
+        open_todos_count=open_todos_count,
+        upcoming_deadlines_count=upcoming_deadlines_count,
+        total_progress=index_progress["value"],
+        total_progress_color_class=index_progress["color_class"],
+        total_progress_color=index_progress["color"],
+        selectable_docs=selectable_docs,
+        playbooks=playbooks,
     )
 
 
@@ -1026,6 +2593,183 @@ def version_control_overview():
         synced_at_alert=_sync_banner_state(synced_at),
         status_error=error_message,
     )
+
+
+@app.route("/playbooks", methods=["GET"])
+def playbooks_page():
+    service = _playbook_service()
+    if not service.enabled:
+        flash("Playbooks are disabled in configuration.", "warning")
+    playbooks = service.list_playbooks() if service.enabled else []
+    return render_template("playbooks.html", playbooks=playbooks)
+
+
+@app.route("/api/playbooks", methods=["GET"])
+def api_list_playbooks():
+    service = _playbook_service()
+    return jsonify({"ok": True, "playbooks": service.list_playbooks()})
+
+
+@app.route("/api/playbooks/<name>", methods=["GET"])
+def api_get_playbook(name: str):
+    try:
+        item = _playbook_service().get_playbook(name)
+        return jsonify({"ok": True, "playbook": item})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "Playbook not found."}), 404
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks/validate", methods=["POST"])
+def api_validate_playbook():
+    payload = request.get_json(silent=True) or {}
+    try:
+        validated = _playbook_service().validate_schema(payload)
+        return jsonify({"ok": True, "validated": validated})
+    except PlaybookValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks", methods=["POST"])
+def api_save_playbook():
+    payload = request.get_json(silent=True) or {}
+    try:
+        saved = _playbook_service().save_playbook(payload)
+        return jsonify({"ok": True, "playbook": saved})
+    except PlaybookValidationError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/playbooks/<name>", methods=["DELETE"])
+def api_delete_playbook(name: str):
+    try:
+        _playbook_service().delete_playbook(name)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/playbooks/<name>/execute", methods=["POST"])
+def api_execute_playbook(name: str):
+    payload = request.get_json(silent=True) or {}
+    context = payload.get("context", {}) if isinstance(payload.get("context", {}), dict) else {}
+    resume = payload.get("resume", {}) if isinstance(payload.get("resume", {}), dict) else {}
+    user_choice = str(payload.get("user_choice", "")).strip()
+    started_at = datetime.now()
+    final_context = context
+    try:
+        if resume:
+            final_context = resume.get("context", {}) if isinstance(resume.get("context", {}), dict) else {}
+            result = _playbook_service().resume_playbook(name, resume=resume, user_choice=user_choice)
+        else:
+            result = _playbook_service().execute_playbook(name, context=context)
+        execution_time_ms = int((datetime.now() - started_at).total_seconds() * 1000)
+        result_payload = {
+            "name": result.name,
+            "success": result.success,
+            "paused": result.paused,
+            "prompt_message": result.prompt_message,
+            "resume": result.resume,
+            "logs": result.logs,
+        }
+        run_id = _store_playbook_run(
+            playbook_name=name,
+            context=final_context,
+            result_payload=result_payload,
+            execution_time_ms=execution_time_ms,
+            was_resumed=bool(resume),
+        )
+        return jsonify({
+            "ok": True,
+            "result": result_payload,
+            "run_id": run_id,
+        })
+    except Exception as exc:
+        execution_time_ms = int((datetime.now() - started_at).total_seconds() * 1000)
+        failed_payload = {
+            "name": name,
+            "success": False,
+            "paused": False,
+            "prompt_message": "",
+            "resume": None,
+            "logs": [{"success": False, "step_type": "action", "step_name": "Execution", "reason": str(exc)}],
+        }
+        _store_playbook_run(
+            playbook_name=name,
+            context=final_context,
+            result_payload=failed_payload,
+            execution_time_ms=execution_time_ms,
+            was_resumed=bool(resume),
+        )
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "result": failed_payload,
+        }), 400
+
+
+@app.route("/api/playbooks/<name>/runs", methods=["GET"])
+def api_playbook_runs(name: str):
+    rows = db().get_playbook_runs(name)
+    runs = []
+    for row in rows:
+        metadata = _safe_json_loads(row.get("metadata_json", "{}"), {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        runs.append(
+            {
+                "id": row.get("id"),
+                "playbook_name": row.get("playbook_name"),
+                "run_started_at": row.get("run_started_at"),
+                "execution_time_ms": row.get("execution_time_ms", 0),
+                "result_status": row.get("result_status"),
+                "was_resumed": bool(row.get("was_resumed", 0)),
+                "metadata": metadata,
+            }
+        )
+    return jsonify({"ok": True, "runs": runs})
+
+
+@app.route("/playbooks/runs/<int:run_id>", methods=["GET"])
+def playbook_run_history_detail(run_id: int):
+    row = db().get_playbook_run_by_id(run_id)
+    if not row or str(row.get("result_status", "")).strip().casefold() == "paused":
+        flash("Playbook run was not found.", "warning")
+        return redirect(url_for("playbooks_page"))
+
+    metadata = _safe_json_loads(row.get("metadata_json", "{}"), {})
+    context_data = _safe_json_loads(row.get("run_context_json", "{}"), {})
+    logs_data = _safe_json_loads(row.get("run_logs_json", "[]"), [])
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if not isinstance(context_data, dict):
+        context_data = {}
+    if not isinstance(logs_data, list):
+        logs_data = []
+
+    return render_template(
+        "playbook_run_history_detail.html",
+        run=row,
+        metadata=metadata,
+        context_data=context_data,
+        logs_data=logs_data,
+    )
+
+
+@app.route("/playbooks/<name>/run", methods=["POST"])
+def playbook_run_from_index(name: str):
+    note_name = str(request.form.get("note_name", "")).strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "index")
+    try:
+        result = _playbook_service().execute_playbook(name, context={"note_name": note_name})
+        category = "success" if result.success else "warning"
+        flash(f"Playbook '{name}' executed. {len(result.logs)} step log(s) generated.", category)
+    except Exception as exc:
+        flash(f"Failed to execute playbook: {exc}", "danger")
+    return redirect(redirect_to)
 
 
 @app.route("/version_control/sync", methods=["POST"])
@@ -1147,13 +2891,199 @@ def export_docs_pdf():
     return send_file(output_pdf, as_attachment=True, download_name=output_pdf.name, mimetype="application/pdf")
 
 
+@app.route("/settings", methods=["GET"])
+def settings_page():
+    try:
+        conf = _load_conf()
+    except Exception as exc:
+        flash(f"Unable to load conf.json: {exc}", "danger")
+        conf = {}
+
+    ai_conf = conf.get("ai_feedback", {}) if isinstance(conf.get("ai_feedback", {}), dict) else {}
+    db_conf = conf.get("db", {}) if isinstance(conf.get("db", {}), dict) else {}
+    log_conf = conf.get("log", {}) if isinstance(conf.get("log", {}), dict) else {}
+    compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
+    compliance_defaults = DocsParser.DEFAULT_COMPLIANCE_CHECK
+    structure_conf = compliance_conf.get("structure", {}) if isinstance(compliance_conf.get("structure", {}), dict) else {}
+    created_conf = compliance_conf.get("created", {}) if isinstance(compliance_conf.get("created", {}), dict) else {}
+    beschreibung_conf = compliance_conf.get("beschreibung", {}) if isinstance(compliance_conf.get("beschreibung", {}), dict) else {}
+    external_links_conf = compliance_conf.get("external_links", {}) if isinstance(compliance_conf.get("external_links", {}), dict) else {}
+    tags_conf = compliance_conf.get("tags", {}) if isinstance(compliance_conf.get("tags", {}), dict) else {}
+    video_links_conf = compliance_conf.get("video_links", {}) if isinstance(compliance_conf.get("video_links", {}), dict) else {}
+    ai_feedback_conf = compliance_conf.get("ai_feedback", {}) if isinstance(compliance_conf.get("ai_feedback", {}), dict) else {}
+    provider_value = ", ".join(_parse_json_array(ai_conf.get("provider", [])))
+    structure_strings = structure_conf.get("strings_to_check", compliance_defaults["structure"]["strings_to_check"])
+    if not isinstance(structure_strings, list):
+        structure_strings = compliance_defaults["structure"]["strings_to_check"]
+    structure_strings_text = "\n".join([str(item).strip() for item in structure_strings if str(item).strip()])
+
+    settings_form = {
+        "openrouter_model": str(ai_conf.get("model", "")).strip(),
+        "openrouter_provider": provider_value,
+        "openrouter_api_key": str(ai_conf.get("api_key", "")).strip(),
+        "db_path": str(db_conf.get("db_path", "")).strip(),
+        "log_file_path": str(log_conf.get("log_file_path", "")).strip(),
+        "compliance_structure_enabled": bool(
+            structure_conf.get("enabled", compliance_defaults["structure"]["enabled"])
+        ),
+        "compliance_structure_strings_to_check": structure_strings_text,
+        "compliance_created_enabled": bool(created_conf.get("enabled", compliance_defaults["created"]["enabled"])),
+        "compliance_beschreibung_enabled": bool(
+            beschreibung_conf.get("enabled", compliance_defaults["beschreibung"]["enabled"])
+        ),
+        "compliance_beschreibung_max": str(
+            beschreibung_conf.get("max", compliance_defaults["beschreibung"]["max"])
+        ).strip(),
+        "compliance_external_links_enabled": bool(
+            external_links_conf.get("enabled", compliance_defaults["external_links"]["enabled"])
+        ),
+        "compliance_external_links_min": str(
+            external_links_conf.get("min", compliance_defaults["external_links"]["min"])
+        ).strip(),
+        "compliance_tags_enabled": bool(tags_conf.get("enabled", compliance_defaults["tags"]["enabled"])),
+        "compliance_tags_min": str(tags_conf.get("min", compliance_defaults["tags"]["min"])).strip(),
+        "compliance_video_links_enabled": bool(
+            video_links_conf.get("enabled", compliance_defaults["video_links"]["enabled"])
+        ),
+        "compliance_video_links_char": str(
+            video_links_conf.get("char", compliance_defaults["video_links"]["char"])
+        ).strip(),
+        "compliance_ai_feedback_enabled": bool(
+            ai_feedback_conf.get("enabled", compliance_defaults["ai_feedback"]["enabled"])
+        ),
+        "compliance_ai_feedback_min": str(
+            ai_feedback_conf.get("min", compliance_defaults["ai_feedback"]["min"])
+        ).strip(),
+    }
+    media_support = _openrouter_media_support(conf)
+
+    return render_template("settings.html", settings=settings_form, media_support=media_support)
+
+
+@app.route("/settings", methods=["POST"])
+def settings_save():
+    try:
+        conf = _load_conf()
+    except Exception as exc:
+        flash(f"Unable to load conf.json: {exc}", "danger")
+        return redirect(url_for("settings_page"))
+
+    try:
+        openrouter_model = _sanitize_conf_text(request.form.get("openrouter_model"), "Openrouter Model", max_length=200)
+        openrouter_api_key = _sanitize_conf_text(
+            request.form.get("openrouter_api_key"), "Openrouter API Key", max_length=500
+        )
+        db_path = _sanitize_conf_text(request.form.get("db_path"), "DB Path", max_length=500)
+        log_file_path = _sanitize_conf_text(request.form.get("log_file_path"), "Log File Path", max_length=500)
+        openrouter_provider = _parse_provider_list(request.form.get("openrouter_provider"))
+        compliance_structure_enabled = _parse_checkbox_bool(request.form.get("compliance_structure_enabled"))
+        compliance_structure_strings_to_check = _parse_multiline_conf_strings(
+            request.form.get("compliance_structure_strings_to_check"),
+            "Compliance Structure Strings",
+        )
+        compliance_created_enabled = _parse_checkbox_bool(request.form.get("compliance_created_enabled"))
+        compliance_beschreibung_enabled = _parse_checkbox_bool(request.form.get("compliance_beschreibung_enabled"))
+        compliance_beschreibung_max = _sanitize_non_negative_int(
+            request.form.get("compliance_beschreibung_max"),
+            "Compliance Beschreibung Max",
+            minimum=1,
+        )
+        compliance_external_links_enabled = _parse_checkbox_bool(request.form.get("compliance_external_links_enabled"))
+        compliance_external_links_min = _sanitize_non_negative_int(
+            request.form.get("compliance_external_links_min"),
+            "Compliance External Links Min",
+            minimum=0,
+        )
+        compliance_tags_enabled = _parse_checkbox_bool(request.form.get("compliance_tags_enabled"))
+        compliance_tags_min = _sanitize_non_negative_int(
+            request.form.get("compliance_tags_min"),
+            "Compliance Tags Min",
+            minimum=0,
+        )
+        compliance_video_links_enabled = _parse_checkbox_bool(request.form.get("compliance_video_links_enabled"))
+        compliance_video_links_char = _sanitize_non_negative_int(
+            request.form.get("compliance_video_links_char"),
+            "Compliance Video Links Character Threshold",
+            minimum=1,
+        )
+        compliance_ai_feedback_enabled = _parse_checkbox_bool(request.form.get("compliance_ai_feedback_enabled"))
+        compliance_ai_feedback_min = _sanitize_non_negative_int(
+            request.form.get("compliance_ai_feedback_min"),
+            "Compliance AI Feedback Minimum Score",
+            minimum=0,
+        )
+    except ValueError as validation_error:
+        flash(str(validation_error), "danger")
+        return redirect(url_for("settings_page"))
+
+    ai_conf = conf.setdefault("ai_feedback", {})
+    if not isinstance(ai_conf, dict):
+        ai_conf = {}
+        conf["ai_feedback"] = ai_conf
+
+    db_conf = conf.setdefault("db", {})
+    if not isinstance(db_conf, dict):
+        db_conf = {}
+        conf["db"] = db_conf
+
+    log_conf = conf.setdefault("log", {})
+    if not isinstance(log_conf, dict):
+        log_conf = {}
+        conf["log"] = log_conf
+    compliance_conf = conf.setdefault("compliance_check", {})
+    if not isinstance(compliance_conf, dict):
+        compliance_conf = {}
+        conf["compliance_check"] = compliance_conf
+
+    ai_conf["model"] = openrouter_model
+    ai_conf["provider"] = openrouter_provider
+    ai_conf["api_key"] = openrouter_api_key
+    db_conf["db_path"] = db_path
+    log_conf["log_file_path"] = log_file_path
+    compliance_conf["structure"] = {
+        "enabled": compliance_structure_enabled,
+        "strings_to_check": compliance_structure_strings_to_check,
+    }
+    compliance_conf["created"] = {
+        "enabled": compliance_created_enabled,
+    }
+    compliance_conf["beschreibung"] = {
+        "enabled": compliance_beschreibung_enabled,
+        "max": compliance_beschreibung_max,
+    }
+    compliance_conf["external_links"] = {
+        "enabled": compliance_external_links_enabled,
+        "min": compliance_external_links_min,
+    }
+    compliance_conf["tags"] = {
+        "enabled": compliance_tags_enabled,
+        "min": compliance_tags_min,
+    }
+    compliance_conf["video_links"] = {
+        "enabled": compliance_video_links_enabled,
+        "char": compliance_video_links_char,
+    }
+    compliance_conf["ai_feedback"] = {
+        "enabled": compliance_ai_feedback_enabled,
+        "min": compliance_ai_feedback_min,
+    }
+
+    try:
+        _save_conf(conf)
+    except Exception as exc:
+        logger.error("Failed to save settings\n%s", traceback.format_exc())
+        flash(f"Unable to save settings: {exc}", "danger")
+        return redirect(url_for("settings_page"))
+
+    flash("Settings saved successfully.", "success")
+    flash("Changes apply only after rebuilding the Docker container.", "warning")
+    return redirect(url_for("settings_page"))
+
+
 @app.route("/scan", methods=["POST"])
 def scan_docs():
     try:
-        logger.info("UI requested full scan")
-        parser = DocsParser()
-        parser.parse_and_add_ALL_docs_to_db()
-        logger.info("UI full scan completed")
+        _perform_full_scan()
         flash("Scan completed successfully.", "success")
     except BaseException as exc:
         if isinstance(exc, SystemExit):
@@ -1169,44 +3099,565 @@ def scan_docs():
     return redirect(url_for("index"))
 
 
-@app.route("/compliance/manual", methods=["POST"])
-def set_manual_compliance():
-    doc_id = request.form.get("doc_id", "").strip()
-    doc_title = request.form.get("doc_title", "").strip()
-    manual_override = _normalize_manual_override(request.form.get("manual_compliant_override", "false"))
+@app.route("/projects", methods=["GET"])
+def projects_overview():
+    parser = DocsParser()
+    viewer = DocsViewer()
+    conf = _load_conf()
+    projects_root = _projects_root_path_from_conf(conf)
+    project_cards: list[dict] = []
 
-    if manual_override not in ("true", "false"):
-        logger.warning("Invalid manual compliance value for id=%s value=%s", doc_id, manual_override)
-        flash("Manual compliance value must be true or false.", "danger")
-        return redirect(url_for("index"))
+    if projects_root.exists() and projects_root.is_dir():
+        for project_dir in sorted([entry for entry in projects_root.iterdir() if entry.is_dir()], key=lambda item: item.name.casefold()):
+            try:
+                resources = parser.parse_resources(project_dir)
+                description_markdown = str(resources.get("description", "")).strip()
+                description_html = viewer.render_markdown_text(description_markdown) if description_markdown else ""
+                project_cards.append(
+                    {
+                        "name": project_dir.name,
+                        "description": description_markdown,
+                        "description_html": Markup(description_html),
+                    }
+                )
+            except Exception:
+                logger.warning("Failed to parse project resources for %s", project_dir)
+                project_cards.append({"name": project_dir.name, "description": "", "description_html": Markup("")})
 
+    return render_template("projects_overview.html", projects=project_cards, projects_root=str(projects_root))
+
+
+@app.route("/projects/create", methods=["POST"])
+def create_project():
+    conf = _load_conf()
+    parser = DocsParser()
     try:
-        database = db()
-        if not doc_id and doc_title:
-            matched_docs = database.get_docs_by_name(doc_title, exact_match=True)
-            if not matched_docs:
-                flash(f"Document title not found: {doc_title}", "warning")
-                return redirect(url_for("index"))
-            doc_id = str(next(iter(matched_docs.values())).get("id", "")).strip()
+        project_name = _sanitize_project_name(request.form.get("project_name", ""))
+        projects_root = _projects_root_path_from_conf(conf)
+        projects_root.mkdir(parents=True, exist_ok=True)
+        project_dir = (projects_root / project_name).resolve()
+        if projects_root != project_dir and projects_root not in project_dir.parents:
+            raise ValueError("Invalid project path.")
+        if project_dir.exists():
+            raise ValueError("A project with this name already exists.")
 
-        if not doc_id:
-            logger.warning("Manual compliance update requested without doc_id/doc_title")
-            flash("Please select a document.", "warning")
-            return redirect(url_for("index"))
+        project_dir.mkdir(parents=True, exist_ok=False)
+        resources_template = _load_project_template(
+            "3 - Ressourcen",
+            "# Ressourcen\n\n| Beschreibung | Link | Note |\n| ------------ | ---- | ---- |\n|              |      |      |\n\n# Settings\n\n| Key | Value |\n| --- | ----- |\n| Tag |       |\n| Description|     |\n",
+        )
+        kanban_template = _load_project_template(
+            "3 - Kanban",
+            "# Kanban\n\n| Deliverable | Status | Due |\n| ----------- | ------ | --- |\n|             |        |     |\n",
+        )
 
-        database.update_manual_compliance_by_id(int(doc_id), manual_override)
-        if manual_override == "true":
-            flash(f"Document id={doc_id} is now manually marked as compliant.", "success")
+        resources_content = resources_template.replace("| Tag |       |", f"| Tag | #PROJECT_{project_name} |")
+        resources_path = project_dir / "Ressourcen.md"
+        kanban_path = project_dir / "Kanban.md"
+        resources_path.write_text(resources_content, encoding="utf-8")
+        kanban_path.write_text(kanban_template, encoding="utf-8")
+        _set_rw_permissions_for_all_users(resources_path)
+        _set_rw_permissions_for_all_users(kanban_path)
+        canvas_dir = _ensure_project_canvas_storage(project_dir)
+        initial_canvas_path = (canvas_dir / f"{project_name}.canvas").resolve()
+        if initial_canvas_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas file path.")
+        initial_canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        _set_rw_permissions_for_all_users(initial_canvas_path)
+
+        parser.parse_resources(project_dir)
+        parser.parse_kanban(project_dir)
+        flash(f"Project '{project_name}' created.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("projects_overview"))
+
+
+@app.route("/projects/<project_name>/delete", methods=["POST"])
+def delete_project(project_name: str):
+    parser = DocsParser()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        project_tag = f"#PROJECT_{project_path.name}"
+        tagged_docs = sorted(
+            [
+                str(doc.get("title", "")).strip()
+                for doc in database.get_docs_by_tag(project_tag).values()
+                if str(doc.get("title", "")).strip()
+            ],
+            key=str.casefold,
+        )
+        force_delete = request.form.get("force_delete", "false").strip().lower() == "true"
+        if tagged_docs and not force_delete:
+            flash(
+                f"Project '{project_path.name}' is still assigned to {len(tagged_docs)} note(s). Please confirm deletion after reviewing them.",
+                "warning",
+            )
+            return redirect(url_for("project_detail", project_name=project_path.name))
+        shutil.rmtree(project_path)
+        flash(f"Project '{project_path.name}' deleted.", "success")
+    except FileNotFoundError:
+        flash("Project not found.", "danger")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("projects_overview"))
+
+
+@app.route("/projects/<project_name>", methods=["GET"])
+def project_detail(project_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        kanban = parser.parse_kanban(project_path)
+    except Exception:
+        return render_template("404.html"), 404
+
+    description_html = viewer.render_markdown_text(resources.get("description", ""))
+    tagged_docs = sorted(
+        [
+            str(doc.get("title", "")).strip()
+            for doc in database.get_docs_by_tag(str(resources.get("tag", f"#PROJECT_{project_path.name}")).strip()).values()
+            if str(doc.get("title", "")).strip()
+        ],
+        key=str.casefold,
+    )
+    return render_template(
+        "project_detail.html",
+        project_name=project_path.name,
+        resources=resources,
+        kanban=kanban,
+        description_html=Markup(description_html),
+        tagged_docs=tagged_docs,
+    )
+
+
+@app.route("/projects/<project_name>/resources", methods=["GET"])
+def project_resources(project_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+    except Exception:
+        return render_template("404.html"), 404
+
+    categorized_resources = {"internal": [], "external": [], "freetext": []}
+    for link_item in resources.get("resources", []):
+        href = str(link_item.get("link", "")).strip()
+        label = str(link_item.get("description", "")).strip() or href
+        note = str(link_item.get("note", "")).strip()
+        is_external = _is_external_link(href)
+        internal_url = ""
+        if href and not is_external:
+            target_value = href.strip("./")
+            if target_value:
+                internal_url = url_for("view_doc_by_path", relative_path=target_value)
+        enriched_item = {
+            **link_item,
+            "label": label,
+            "note": note,
+            "is_external": bool(href) and is_external,
+            "internal_url": internal_url,
+            "type_label": "Free Text Note" if not href else ("External Link" if is_external else "Internal Doc"),
+        }
+        if not href:
+            categorized_resources["freetext"].append(enriched_item)
+        elif is_external:
+            categorized_resources["external"].append(enriched_item)
         else:
-            flash(f"Manual compliance override removed for id={doc_id}.", "success")
-    except ValueError:
-        logger.warning("Manual compliance update failed due to non-numeric id: %s", doc_id)
-        flash("ID must be numeric.", "danger")
+            categorized_resources["internal"].append(enriched_item)
 
-    return redirect(url_for("index"))
+    selectable_docs = sorted(
+        [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
+        key=str.casefold,
+    )
+
+    return render_template(
+        "project_resources.html",
+        project_name=project_path.name,
+        resources=resources,
+        description_html=Markup(viewer.render_markdown_text(resources.get("description", ""))),
+        resource_groups=categorized_resources,
+        resource_count=len(resources.get("resources", [])),
+        selectable_docs=selectable_docs,
+    )
+
+
+@app.route("/projects/<project_name>/resources/settings", methods=["POST"])
+def update_project_resources_settings(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        updated_description = _normalize_project_multiline_text(request.form.get("description", ""), field_name="Project description")
+        default_tag = f"#PROJECT_{project_path.name}"
+        updated_tag = _normalize_project_tag(request.form.get("tag", ""), default=default_tag)
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            resources.get("resources", []),
+            updated_tag,
+            updated_description,
+        )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        flash("Project settings updated.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/add", methods=["POST"])
+def add_project_resource(project_name: str):
+    parser = DocsParser()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
+        selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
+        link = _normalize_project_link(request.form.get("link", ""))
+        if selected_doc:
+            allowed_titles = {str(item.get("title", "")).strip() for item in database.get_all_docs().values()}
+            if selected_doc not in allowed_titles:
+                raise ValueError("Selected internal document is invalid.")
+            link = f"{selected_doc}.md"
+        if not description and not link and not note:
+            raise ValueError("Resource description, link, or note is required.")
+
+        updated_resources = [*resources.get("resources", []), {"description": description, "link": link, "note": note}]
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        flash("Resource added.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/<int:resource_id>/edit", methods=["POST"])
+def edit_project_resource(project_name: str, resource_id: int):
+    parser = DocsParser()
+    database = db()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
+        note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
+        selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
+        link = _normalize_project_link(request.form.get("link", ""))
+        if selected_doc:
+            allowed_titles = {str(item.get("title", "")).strip() for item in database.get_all_docs().values()}
+            if selected_doc not in allowed_titles:
+                raise ValueError("Selected internal document is invalid.")
+            link = f"{selected_doc}.md"
+        if not description and not link and not note:
+            raise ValueError("Resource description, link, or note is required.")
+
+        updated_resources: list[dict] = []
+        matched = False
+        for item in resources.get("resources", []):
+            if int(item.get("id", 0)) == resource_id:
+                updated_resources.append({"description": description, "link": link, "note": note})
+                matched = True
+            else:
+                updated_resources.append(
+                    {"description": item.get("description", ""), "link": item.get("link", ""), "note": item.get("note", "")}
+                )
+        if not matched:
+            raise ValueError("Resource entry not found.")
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        flash("Resource updated.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/resources/<int:resource_id>/delete", methods=["POST"])
+def delete_project_resource(project_name: str, resource_id: int):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        resources = parser.parse_resources(project_path)
+        updated_resources = [
+            {"description": item.get("description", ""), "link": item.get("link", ""), "note": item.get("note", "")}
+            for item in resources.get("resources", [])
+            if int(item.get("id", 0)) != resource_id
+        ]
+        if len(updated_resources) == len(resources.get("resources", [])):
+            raise ValueError("Resource entry not found.")
+
+        writer = DocsWriter()
+        writer.write_project_resources_file(
+            _project_resources_file(project_path),
+            updated_resources,
+            f"#PROJECT_{project_path.name}",
+            resources.get("description", ""),
+        )
+        _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        flash("Resource removed.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_resources", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/kanban", methods=["GET"])
+def project_kanban(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template(
+        "project_kanban.html",
+        project_name=project_path.name,
+        kanban=kanban,
+        deadline_mapping=deadline_mapping,
+        deadline_status_options=DEADLINE_STATUS_OPTIONS,
+    )
+
+
+@app.route("/api/projects/<project_name>/kanban", methods=["GET"])
+def api_project_kanban(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({**kanban, "deadline_mapping": deadline_mapping})
+
+
+@app.route("/api/projects/<project_name>/kanban", methods=["POST"])
+def api_add_project_kanban_item(project_name: str):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deliverable = _normalize_project_text(payload.get("deliverable", ""), field_name="Deliverable", max_length=200)
+        status = _normalize_kanban_status(payload.get("status", "Not Started"))
+        due = _normalize_kanban_due(payload.get("due", ""))
+        if not deliverable:
+            raise ValueError("Deliverable is required.")
+        if any(str(item.get("deliverable", "")).strip().casefold() == deliverable.casefold() for item in kanban.get("items", [])):
+            raise ValueError("A kanban item with this deliverable already exists.")
+
+        current_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        previous_items = list(current_items)
+        current_items.append({"deliverable": deliverable, "status": status, "due": due})
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban), 201
+
+
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>", methods=["POST"])
+def api_update_project_kanban_item(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        deliverable = _normalize_project_text(payload.get("deliverable", ""), field_name="Deliverable", max_length=200)
+        status = _normalize_kanban_status(payload.get("status", "Not Started"))
+        due = _normalize_kanban_due(payload.get("due", ""))
+        if not deliverable:
+            raise ValueError("Deliverable is required.")
+
+        current_items = []
+        previous_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        matched = False
+        for item in kanban.get("items", []):
+            existing_deliverable = str(item.get("deliverable", "")).strip()
+            if int(item.get("id", 0)) != item_id and existing_deliverable.casefold() == deliverable.casefold():
+                raise ValueError("A kanban item with this deliverable already exists.")
+
+            if int(item.get("id", 0)) == item_id:
+                current_items.append({"deliverable": deliverable, "status": status, "due": due})
+                matched = True
+            else:
+                current_items.append(
+                    {
+                        "deliverable": item.get("deliverable", ""),
+                        "status": item.get("status", "Not Started"),
+                        "due": item.get("due", ""),
+                    }
+                )
+        if not matched:
+            raise ValueError("Kanban item not found.")
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>/delete", methods=["POST"])
+def api_delete_project_kanban_item(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        previous_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        current_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+            if int(item.get("id", 0)) != item_id
+        ]
+        if len(current_items) == len(previous_items):
+            raise ValueError("Kanban item not found.")
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
+@app.route("/projects/<project_name>/canvas", methods=["GET"])
+def project_canvas(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_files = _list_project_canvas_files(project_path)
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template(
+        "project_canvas.html",
+        project_name=project_path.name,
+        canvas_files=canvas_files,
+    )
+
+
+@app.route("/projects/<project_name>/canvas/<canvas_file_name>", methods=["GET"])
+def project_canvas_detail(project_name: str, canvas_file_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_files = _list_project_canvas_files(project_path)
+        if normalized_canvas_name not in canvas_files:
+            return render_template("404.html"), 404
+    except Exception:
+        return render_template("404.html"), 404
+    return render_template(
+        "project_canvas_detail.html",
+        project_name=project_path.name,
+        canvas_files=canvas_files,
+        active_canvas_file=normalized_canvas_name,
+    )
+
+
+@app.route("/projects/<project_name>/canvas/create", methods=["POST"])
+def create_project_canvas(project_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_file_name = _normalize_canvas_file_name(request.form.get("canvas_name", ""))
+        canvas_dir = _ensure_project_canvas_storage(project_path)
+        canvas_path = (canvas_dir / canvas_file_name).resolve()
+        if canvas_path.parent != canvas_dir:
+            raise ValueError("Invalid canvas file path.")
+        if canvas_path.exists():
+            raise ValueError("A canvas with this name already exists.")
+        canvas_path.write_text("{\"nodes\": [], \"edges\": []}\n", encoding="utf-8")
+        _set_rw_permissions_for_all_users(canvas_path)
+        flash("Canvas created.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_canvas", project_name=project_name))
+
+
+@app.route("/projects/<project_name>/canvas/<canvas_file_name>/delete", methods=["POST"])
+def delete_project_canvas(project_name: str, canvas_file_name: str):
+    parser = DocsParser()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        canvas_dir = _ensure_project_canvas_storage(project_path)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_path = (canvas_dir / normalized_canvas_name).resolve()
+        if canvas_path.parent != canvas_dir or not canvas_path.exists() or not canvas_path.is_file():
+            raise ValueError("Canvas not found.")
+        canvas_path.unlink()
+        flash("Canvas deleted.", "success")
+    except Exception as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("project_canvas", project_name=project_name))
+
+
+@app.route("/api/projects/<project_name>/canvas/<canvas_file_name>", methods=["GET"])
+def api_project_canvas(project_name: str, canvas_file_name: str):
+    parser = DocsParser()
+    viewer = DocsViewer()
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        normalized_canvas_name = _normalize_canvas_file_name(canvas_file_name)
+        canvas_data = parser.load_canvas(project_path, normalized_canvas_name)
+        rendered_nodes = []
+        for node in canvas_data.get("nodes", []):
+            node_text = str(node.get("text", "")).strip()
+            rendered_nodes.append({**node, "html": viewer.render_markdown_text(node_text) if node_text else ""})
+
+        return jsonify(
+            {
+                "project_name": project_path.name,
+                "canvas_file_name": canvas_data.get("canvas_file_name", normalized_canvas_name),
+                "nodes": rendered_nodes,
+                "edges": canvas_data.get("edges", []),
+                "bounds": canvas_data.get("bounds", {}),
+                "warnings": canvas_data.get("warnings", []),
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 404
 
 
 @app.route("/todo", methods=["GET"])
+
 def todo_overview():
     query = request.args.get("q", "").strip()
     parser = DocsParser()
@@ -1478,17 +3929,8 @@ def update_todo_progress():
         return redirect(url_for("todo_overview"))
 
     try:
-        current_todos = DocsParser().parse_todos_from_markdown()
-
-        for index, todo in enumerate(current_todos, start=1):
-            if str(index) == todo_id:
-                todo["progress"] = progress
-                todo["last_update"] = _today_dd_mm()
-                break
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(current_todos)
+        if not _update_todo_entry(todo_id=todo_id, progress=progress):
+            raise ValueError("Todo not found.")
         flash("Todo progress updated.", "success")
     except BaseException:
         flash("Failed to update todo progress.", "danger")
@@ -1506,17 +3948,8 @@ def update_todo_priority():
         return redirect(url_for("todo_overview"))
 
     try:
-        current_todos = DocsParser().parse_todos_from_markdown()
-
-        for index, todo in enumerate(current_todos, start=1):
-            if str(index) == todo_id:
-                todo["priority"] = priority
-                todo["last_update"] = _today_dd_mm()
-                break
-
-        conf = _load_conf()
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        writer.write_todos_table(current_todos)
+        if not _update_todo_entry(todo_id=todo_id, priority=priority):
+            raise ValueError("Todo not found.")
         flash("Todo priority updated.", "success")
     except BaseException:
         flash("Failed to update todo priority.", "danger")
@@ -1529,110 +3962,189 @@ def create_doc_from_todo_template():
     todo_id = request.form.get("todo_id", "").strip()
     template_key = request.form.get("template_name", "").strip().lower()
     file_name = request.form.get("file_name", "").strip()
-    reason = request.form.get("reason", "").strip()
+    reason = _normalize_update_reason(request.form.get("reason", ""))
+    priority = _normalize_todo_priority(request.form.get("priority", "Medium"))
     create_history = request.form.get("create_history", "false").strip().lower() == "true"
 
     from_index = request.form.get("from_index", "false").strip().lower() == "true"
     selected_doc = request.form.get("selected_doc", "").strip()
 
-    if from_index:
-        template_key = "update"
+    if from_index and selected_doc:
         file_name = selected_doc
 
-    if template_key not in {"new", "update"}:
-        flash("Invalid template action request.", "warning")
-        return redirect(url_for("todo_overview"))
-
-    normalized_file_name = _normalize_md_filename(file_name)
-    if not normalized_file_name:
-        flash("Invalid file name. Please use a valid markdown file name.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    template_options = _load_template_options()
-    template_path = template_options.get(template_key)
-    if template_path is None or not template_path.exists():
-        flash("Template file not found. Please verify templates in /the-knowledge/03_TEMPLATES.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    conf = _load_conf()
-    docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
-    writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-    target_path = docs_dir / normalized_file_name
+    redirect_target = url_for("index") if from_index else url_for("todo_overview")
 
     try:
-        template_content = _render_doc_template(template_path.read_text(encoding="utf-8"))
-    except OSError:
-        flash("Failed to read template file.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
+        result = _apply_doc_template(
+            template_key=template_key,
+            file_name=file_name,
+            reason=reason,
+            create_history=create_history,
+            auto_create_history_if_missing=from_index,
+        )
+    except ValueError as exc:
+        if template_key == "update" and str(exc) == "'#### Page History' not found in the target note.":
+            normalized_file_name = _normalize_md_filename(file_name)
+            flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
+            return redirect(
+                url_for(
+                    "todo_overview",
+                    missing_history="1",
+                    todo_id=todo_id,
+                    template_name=template_key,
+                    file_name=normalized_file_name,
+                    reason=reason,
+                )
+            )
+        flash(str(exc), "warning" if "Invalid template action request" in str(exc) or "Reason is required" in str(exc) else "danger")
+        return redirect(redirect_target)
+    except FileNotFoundError as exc:
+        flash(str(exc), "danger")
+        return redirect(redirect_target)
+    except RuntimeError as exc:
+        flash(str(exc), "danger")
+        return redirect(redirect_target)
+    except BaseException:
+        flash("Failed to create note from template." if template_key == "new" else "Failed to update note from template.", "danger")
+        return redirect(redirect_target)
+
+    normalized_file_name = result["file_name"]
+    target_path = result["path"]
 
     if template_key == "new":
-        if target_path.exists():
+        if result["status"] == "exists":
             flash("A note with this file name already exists. Please choose another file name.", "danger")
-            return redirect(url_for("todo_overview"))
+            return redirect(redirect_target)
 
-        try:
-            writer.create_note_from_template(target_path, template_content)
-            _set_rw_permissions_for_all_users(target_path)
-            _set_todo_in_progress(todo_id, normalized_file_name)
-            flash("New note created from template successfully.", "success")
-        except BaseException:
-            flash("Failed to create note from template.", "danger")
-        return redirect(url_for("todo_overview"))
-
-    if not reason:
-        flash("Reason is required for update template.", "warning")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    if not target_path.exists():
-        flash("Note file not found in 02_DOCS. Please provide an existing file name.", "danger")
-        return redirect(url_for("index") if from_index else url_for("todo_overview"))
-
-    success, missing_sections = writer.prepend_template_to_existing_note(
-        target_path=target_path,
-        template_content=template_content,
-        reason=reason,
-        create_history=create_history,
-    )
-    if not success and from_index and "#### Page History" in missing_sections:
-        success, missing_sections = writer.prepend_template_to_existing_note(
-            target_path=target_path,
-            template_content=template_content,
-            reason=reason,
-            create_history=True,
-        )
-
-    if not success and "#### Page History" in missing_sections:
-        flash("'#### Page History' not found. Confirm automatic creation to continue.", "warning")
-        return redirect(
-            url_for(
-                "todo_overview",
-                missing_history="1",
-                todo_id=todo_id,
-                template_name=template_key,
-                file_name=normalized_file_name,
-                reason=reason,
-            )
-        )
-
-    try:
-        _set_rw_permissions_for_all_users(target_path)
         if from_index:
             _append_todo(
-                note=f"{Path(normalized_file_name).stem} ({reason})",
-                todo_type="Update",
+                note=Path(normalized_file_name).stem,
+                todo_type="New",
                 progress="In Progress",
-                priority="Medium",
+                priority=priority,
             )
-            flash("Update note request created and todo added.", "success")
+            flash("New note created and todo added successfully.", "success")
             return redirect(url_for("index"))
 
         _set_todo_in_progress(todo_id, normalized_file_name)
-        flash("Note updated from template successfully.", "success")
-    except BaseException:
-        flash("Failed to update note from template.", "danger")
+        flash("New note created from template successfully.", "success")
+        return redirect(redirect_target)
 
-    return redirect(url_for("index") if from_index else url_for("todo_overview"))
+    if from_index:
+        _append_todo(
+            note=f"{Path(normalized_file_name).stem} ({reason})",
+            todo_type="Update",
+            progress="In Progress",
+            priority=priority,
+        )
+        flash("Update note request created and todo added.", "success")
+        return redirect(url_for("index"))
 
+    _set_todo_in_progress(todo_id, normalized_file_name)
+    flash("Note updated from template successfully.", "success")
+    return redirect(redirect_target)
+
+
+
+
+@app.route("/docs/<int:doc_id>/view", methods=["GET"])
+def view_doc(doc_id: int):
+    database = db()
+    doc_map = database.get_docs_by_id(doc_id)
+    if not doc_map:
+        flash("Document not found.", "warning")
+        return redirect(url_for("index"))
+
+    doc = next(iter(doc_map.values()))
+    doc_title = str(doc.get("title", "")).strip()
+    if not doc_title:
+        flash("Document title is missing.", "danger")
+        return redirect(url_for("index"))
+
+    try:
+        viewer = DocsViewer(_load_conf())
+        title, content_html = viewer.render_doc_to_html(doc_title)
+    except FileNotFoundError:
+        flash("Markdown file for selected document was not found.", "danger")
+        return redirect(url_for("index"))
+    except ValueError:
+        flash("Invalid document file name.", "danger")
+        return redirect(url_for("index"))
+    except Exception:
+        logger.error("Markdown view route failed for doc_id=%s\n%s", doc_id, traceback.format_exc())
+        flash("Failed to render markdown preview.", "danger")
+        return redirect(url_for("index"))
+
+    return render_template("doc_view.html", doc=doc, title=title, content_html=content_html)
+
+
+@app.route("/docs/view/by-name/<slug>", methods=["GET"])
+def view_doc_by_slug(slug: str):
+    try:
+        viewer = DocsViewer(_load_conf())
+        resolved_file_name = viewer.find_filename_by_slug(slug)
+    except Exception:
+        flash("Could not resolve linked note.", "warning")
+        return redirect(url_for("index"))
+
+    database = db()
+    resolved_title = Path(resolved_file_name).stem
+    doc_map = database.get_docs_by_name(resolved_title, exact_match=True)
+    if not doc_map:
+        flash("Linked note exists on disk but is missing in the index. Run full scan first.", "warning")
+        return redirect(url_for("index"))
+
+    doc_id = int(next(iter(doc_map.keys())))
+    return redirect(url_for("view_doc", doc_id=doc_id))
+
+
+@app.route("/docs/view/by-path/<path:relative_path>", methods=["GET"])
+def view_doc_by_path(relative_path: str):
+    try:
+        viewer = DocsViewer(_load_conf())
+        title, content_html = viewer.render_doc_to_html_by_relative_path(relative_path)
+    except FileNotFoundError:
+        flash("Linked note not found on disk.", "warning")
+        return redirect(url_for("index"))
+    except ValueError:
+        flash("Invalid linked note path.", "warning")
+        return redirect(url_for("index"))
+    except Exception:
+        logger.error("Markdown view route failed for relative_path=%s\n%s", relative_path, traceback.format_exc())
+        flash("Failed to render linked note preview.", "danger")
+        return redirect(url_for("index"))
+
+    docs_root = Path(viewer.conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
+    resolved_doc = (docs_root / relative_path).resolve()
+    resolved_title = resolved_doc.stem
+
+    database = db()
+    doc_map = database.get_docs_by_name(resolved_title, exact_match=True)
+    doc_for_template = next(iter(doc_map.values())) if doc_map else {"id": None}
+
+    return render_template("doc_view.html", doc=doc_for_template, title=title, content_html=content_html)
+
+
+@app.route("/docs/pictures/<path:file_name>", methods=["GET"])
+def view_doc_picture(file_name: str):
+    try:
+        conf = _load_conf()
+        pictures_root = Path(conf.get("pictures", {}).get("full_path_to_pictures", "")).resolve()
+        if not pictures_root.exists() or not pictures_root.is_dir():
+            raise FileNotFoundError("Configured pictures directory does not exist.")
+
+        requested_name = Path(file_name).name.strip()
+        if not requested_name:
+            raise ValueError("Invalid picture file name.")
+
+        return send_from_directory(str(pictures_root), requested_name, as_attachment=False)
+    except FileNotFoundError:
+        return ("Picture not found.", 404)
+    except ValueError:
+        return ("Invalid picture path.", 400)
+    except Exception:
+        logger.error("Picture route failed for file_name=%s\n%s", file_name, traceback.format_exc())
+        return ("Failed to load picture.", 500)
 
 @app.route("/docs/<int:doc_id>/edit", methods=["GET"])
 def edit_doc_resources(doc_id: int):
@@ -1645,19 +4157,26 @@ def edit_doc_resources(doc_id: int):
     doc = next(iter(doc_map.values()))
     all_tags = database.get_all_tags()
     pending_resource_updates = session.pop(f"pending_doc_resource_updates_{doc_id}", None)
+    current_tags = _to_display_list(doc.get("tags"))
+    project_tags = _project_tags_from_projects_root(_load_conf())
+    selected_project_tags = pending_resource_updates.get("selected_project_tags", []) if isinstance(pending_resource_updates, dict) else []
+    if not isinstance(selected_project_tags, list) or not selected_project_tags:
+        selected_project_tags = [tag for tag in current_tags if str(tag).strip().startswith("#PROJECT_")]
 
     return render_template(
         "doc_edit.html",
         doc=doc,
         all_tags=all_tags,
+        project_tags=project_tags,
         current_resources={
-            "tags": _to_display_list(doc.get("tags")),
+            "tags": current_tags,
             "links": _link_map_to_items(doc.get("links")),
             "video_links": _link_map_to_items(doc.get("video_links")),
         },
         edit_state={
             "missing_sections": request.args.get("missing_sections", "").strip(),
             "pending_updates": pending_resource_updates or {},
+            "selected_project_tags": selected_project_tags,
         },
     )
 
@@ -1672,6 +4191,8 @@ def save_doc_resources(doc_id: int):
 
     doc = next(iter(doc_map.values()))
     doc_title = str(doc.get("title", "")).strip()
+    current_tags = _to_display_list(doc.get("tags"))
+    current_project_tags = [tag for tag in current_tags if str(tag).strip().startswith("#PROJECT_")]
     conf = _load_conf()
     docs_dir = Path(conf.get("docs", {}).get("full_path_to_docs", "")).resolve()
     doc_path = docs_dir / f"{doc_title}.md"
@@ -1679,8 +4200,19 @@ def save_doc_resources(doc_id: int):
         flash("Markdown file for selected document was not found.", "danger")
         return redirect(url_for("edit_doc_resources", doc_id=doc_id))
 
-    tags_to_add = _parse_multiline_tags(request.form.get("tags_to_add", ""))
-    tags_to_remove = _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove")))
+    allowed_project_tags = set(_project_tags_from_projects_root(conf))
+    tags_to_add = [tag for tag in _parse_multiline_tags(request.form.get("tags_to_add", "")) if tag not in allowed_project_tags]
+    tags_to_remove = [tag for tag in _parse_multiline_tags("\n".join(request.form.getlist("selected_tags_to_remove"))) if tag not in allowed_project_tags]
+    selected_project_tags = [
+        tag for tag in _parse_multiline_tags("\n".join(request.form.getlist("selected_project_tags")))
+        if tag in allowed_project_tags
+    ]
+    for tag in selected_project_tags:
+        if tag not in current_project_tags and tag not in tags_to_add:
+            tags_to_add.append(tag)
+    for tag in current_project_tags:
+        if tag not in selected_project_tags and tag not in tags_to_remove:
+            tags_to_remove.append(tag)
     existing_links_original = request.form.getlist("existing_links_original")
     existing_links_description = request.form.getlist("existing_links_description")
     existing_links_link = request.form.getlist("existing_links_link")
@@ -1764,6 +4296,7 @@ def save_doc_resources(doc_id: int):
         session[f"pending_doc_resource_updates_{doc_id}"] = {
             "tags_to_add": request.form.get("tags_to_add", ""),
             "tags_to_remove": "\n".join(request.form.getlist("selected_tags_to_remove")),
+            "selected_project_tags": selected_project_tags,
         }
         flash(
             f"Missing chapter(s): {', '.join(missing_sections)}. Confirm creation to continue.",
@@ -1816,12 +4349,7 @@ def ai_feedback_overview():
         key=lambda item: item["title"].casefold(),
     )
 
-    scores = [
-        row["score_value"]
-        for row in all_feedback_rows
-        if row.get("included_in_average") and row.get("score_value") is not None
-    ]
-    average_score = sum(scores) / len(scores) if scores else None
+    average_score = _calculate_latest_ai_feedback_average(database)
     openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
 
     return render_template(
@@ -1834,6 +4362,7 @@ def ai_feedback_overview():
         selected_score=score_query,
         available_docs=available_docs,
         openrouter_credits_left=openrouter_credits_left,
+        remap_docs=_list_existing_doc_note_names(),
     )
 
 
@@ -1866,52 +4395,17 @@ def generate_ai_feedback():
         return redirect(redirect_to)
 
     try:
-        conf = _load_conf()
-        database = db()
-        _ensure_doc_can_receive_ai_feedback(database, selected_doc)
-        parser = DocsParser()
-        _sync_ai_feedback_and_openrouter_credits(database)
-        ai_feedback_service = DocsAIFeedback(conf)
-        selected_doc_note_name = Path(selected_doc).stem.strip()
-        latest_feedback_context = None
-        latest_feedback_for_context = database.get_latest_ai_feedback_for_file(selected_doc_note_name)
-        if latest_feedback_for_context and latest_feedback_for_context.get("path_to_feedback"):
-            parsed_latest_feedback = parser.parse_ai_feedback_file(latest_feedback_for_context["path_to_feedback"])
-            latest_feedback_context = {
-                "version": parsed_latest_feedback.get("version"),
-                "score": parsed_latest_feedback.get("score"),
-                "creation_date": parsed_latest_feedback.get("creation_date"),
-                "feedback": parsed_latest_feedback.get("feedback"),
-            }
-
-        feedback_payload = ai_feedback_service.generate_feedback(
-            selected_doc,
-            previous_feedback=latest_feedback_context,
-        )
-
-        latest_feedback = database.get_latest_ai_feedback_for_file(feedback_payload["note_name"])
-        next_version = int(latest_feedback.get("version", 0)) + 1 if latest_feedback else 1
-
-        writer = DocsWriter(conf.get("todo", {}).get("full_path_to_todo_file", ""))
-        rendered_feedback = writer.render_ai_feedback_template(
-            template_content=feedback_payload["feedback_template"],
-            note_name=feedback_payload["note_name"],
-            version=next_version,
-            creation_date=feedback_payload["creation_date"],
-            score=_format_feedback_score(feedback_payload["score"]),
-            feedback=feedback_payload["feedback"],
-        )
-        output_path = writer.write_ai_feedback_file(
-            output_dir=ai_feedback_service.output_path,
-            note_name=feedback_payload["note_name"],
-            version=next_version,
-            rendered_content=rendered_feedback,
-        )
-        _set_rw_permissions_for_all_users(output_path)
-
-        _sync_ai_feedback_and_openrouter_credits(database)
+        feedback_payload = _create_ai_feedback_for_document(selected_doc, include_images=True)
         flash(f"AI feedback created successfully for {feedback_payload['note_name']}.", "success")
         return redirect(redirect_to)
+    except OpenRouterImageNotSupportedError as exc:
+        logger.warning("OpenRouter model does not support image input for %s\n%s", selected_doc, traceback.format_exc())
+        return render_template(
+            "ai_feedback_image_fallback.html",
+            selected_doc=selected_doc,
+            redirect_to=redirect_to,
+            error_message=str(exc),
+        )
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         logger.error("AI feedback generation failed\n%s", traceback.format_exc())
         flash(str(exc), "warning")
@@ -1924,6 +4418,39 @@ def generate_ai_feedback():
         logger.error("AI feedback generation failed with BaseException\n%s", traceback.format_exc())
         flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
         return redirect(redirect_to)
+
+
+@app.route("/ai_feedback/generate/retry_without_images", methods=["POST"])
+def generate_ai_feedback_without_images():
+    selected_doc = request.form.get("selected_doc", "").strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    if not selected_doc:
+        flash("Please select a document for AI feedback.", "warning")
+        return redirect(redirect_to)
+
+    try:
+        feedback_payload = _create_ai_feedback_for_document(selected_doc, include_images=False)
+        flash(f"AI feedback created successfully for {feedback_payload['note_name']} without images.", "success")
+        return redirect(redirect_to)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        logger.error("AI feedback text-only retry failed\n%s", traceback.format_exc())
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
+    except SystemExit:
+        logger.error("AI feedback text-only retry aborted by SystemExit\n%s", traceback.format_exc())
+        flash("AI feedback generation failed due to a file, database, or parser exit. Check logs and paths.", "danger")
+        return redirect(redirect_to)
+    except BaseException as exc:
+        logger.error("AI feedback text-only retry failed with BaseException\n%s", traceback.format_exc())
+        flash(f"AI feedback generation failed unexpectedly: {exc}", "danger")
+        return redirect(redirect_to)
+
+
+@app.route("/ai_feedback/generate/cancel", methods=["POST"])
+def cancel_ai_feedback_generation():
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    flash("AI feedback generation was cancelled.", "warning")
+    return redirect(redirect_to)
 
 
 @app.route("/ai_feedback/<int:feedback_id>", methods=["GET"])
@@ -1979,6 +4506,560 @@ def ai_feedback_delete(feedback_id: int):
     except Exception as exc:
         logger.error("AI feedback delete failed\n%s", traceback.format_exc())
         return render_template("500.html", error_message=str(exc)), 500
+
+
+@app.route("/ai_feedback/<int:feedback_id>/remap", methods=["POST"])
+def ai_feedback_remap(feedback_id: int):
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "ai_feedback_overview")
+    selected_note_name = str(request.form.get("selected_note_name", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_note_name)
+    if not normalized_doc:
+        flash("Please select a valid markdown note name for remapping.", "warning")
+        return redirect(redirect_to)
+
+    database = db()
+    feedback_row = database.get_ai_feedback_by_id(feedback_id)
+    if not feedback_row:
+        flash("AI feedback entry not found.", "warning")
+        return redirect(redirect_to)
+
+    if not _docs_note_exists(normalized_doc):
+        flash("The selected note does not exist in the configured docs folder.", "warning")
+        return redirect(redirect_to)
+
+    feedback_path = Path(str(feedback_row.get("path_to_feedback", "")).strip()).resolve()
+    if not feedback_path.exists() or not feedback_path.is_file():
+        flash("AI feedback file not found for remapping.", "warning")
+        return redirect(redirect_to)
+
+    try:
+        DocsWriter().update_ai_feedback_file_note_name(feedback_path, Path(normalized_doc).stem.strip())
+        _set_rw_permissions_for_all_users(feedback_path)
+        _sync_ai_feedback_and_openrouter_credits(database)
+        flash("AI feedback was remapped successfully.", "success")
+    except Exception as exc:
+        logger.error("AI feedback remap failed\n%s", traceback.format_exc())
+        flash(f"Failed to remap AI feedback: {exc}", "danger")
+    return redirect(redirect_to)
+
+
+@app.route("/learning", methods=["GET"])
+def learning_overview():
+    database = db()
+    name_query = request.args.get("name", "").strip().casefold()
+    learning_rows = database.get_all_learnings()
+    if name_query:
+        learning_rows = [row for row in learning_rows if name_query in str(row.get("file_name", "")).casefold()]
+    prepared_learning_rows = []
+    for row in learning_rows:
+        prepared_row = dict(row)
+        prepared_row["status_icon"] = _learning_status_icon(prepared_row)
+        prepared_row["doc_preview_url"] = _learning_doc_preview_url(prepared_row)
+        prepared_learning_rows.append(prepared_row)
+    available_docs = sorted(
+        [str(item.get("title", "")).strip() for item in database.get_all_docs().values() if str(item.get("title", "")).strip()],
+        key=lambda value: value.casefold(),
+    )
+    openrouter_credits_left = str(database.get_setting("openrouter_credits_left", "N/A") or "").strip() or "N/A"
+    return render_template(
+        "learning.html",
+        learning_rows=prepared_learning_rows,
+        total_learnings=len(database.get_all_learnings()),
+        selected_name=request.args.get("name", "").strip(),
+        available_docs=available_docs,
+        all_tags=database.get_all_tags(),
+        openrouter_credits_left=openrouter_credits_left,
+        remap_docs=_list_existing_doc_note_names(),
+    )
+
+
+@app.route("/learning/sync", methods=["POST"])
+def learning_sync():
+    parser = DocsParser()
+    synced_rows = parser.sync_learning_to_db()
+    credits_left_label = _sync_openrouter_credits_only(db())
+    if credits_left_label is None:
+        flash(f"Synced {len(synced_rows)} learning file(s). OpenRouter credits could not be refreshed.", "warning")
+    else:
+        flash(f"Synced {len(synced_rows)} learning file(s). OpenRouter credits left: ${credits_left_label}.", "success")
+    return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/create", methods=["POST"])
+def learning_create():
+    selected_doc = str(request.form.get("selected_doc", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_doc)
+    if not normalized_doc:
+        flash("Please select a valid markdown note.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    try:
+        learning_row = _create_learning_for_doc(normalized_doc)
+        flash(f"Learning file created: {Path(str(learning_row.get('path_to_learning', '')).strip()).name}", "success")
+    except Exception as exc:
+        flash(str(exc), "warning")
+    return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/doc-action", methods=["POST"])
+def learning_doc_action():
+    selected_doc = str(request.form.get("selected_doc", "")).strip()
+    redirect_to = _safe_redirect_target(request.form.get("redirect_to"), "index")
+    normalized_doc = _normalize_md_filename(selected_doc)
+    if not normalized_doc:
+        flash("Please select a valid markdown note.", "warning")
+        return redirect(redirect_to)
+
+    database = db()
+    existing_learning = _find_learning_for_doc(database, normalized_doc)
+    if existing_learning:
+        return redirect(url_for("learning_detail", learning_id=int(existing_learning["id"])))
+
+    try:
+        learning_row = _create_learning_for_doc(normalized_doc)
+        flash(f"Learning file created: {Path(str(learning_row.get('path_to_learning', '')).strip()).name}", "success")
+        return redirect(url_for("learning_detail", learning_id=int(learning_row["id"])))
+    except Exception as exc:
+        flash(str(exc), "warning")
+        return redirect(redirect_to)
+
+
+@app.route("/learning/<int:learning_id>/remap", methods=["POST"])
+def learning_remap(learning_id: int):
+    selected_note_name = str(request.form.get("selected_note_name", "")).strip()
+    normalized_doc = _normalize_md_filename(selected_note_name)
+    if not normalized_doc:
+        flash("Please select a valid markdown note name for remapping.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    if not _docs_note_exists(normalized_doc):
+        flash("The selected note does not exist in the configured docs folder.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    if not learning_path.exists() or not learning_path.is_file():
+        flash("Learning file not found for remapping.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    try:
+        DocsWriter().update_learning_file_note_name(learning_path, Path(normalized_doc).stem.strip())
+        _set_rw_permissions_for_all_users(learning_path)
+        DocsParser().sync_learning_to_db()
+        flash("Learning was remapped successfully.", "success")
+    except Exception as exc:
+        logger.error("Learning remap failed\n%s", traceback.format_exc())
+        flash(f"Failed to remap learning: {exc}", "danger")
+    return redirect(url_for("learning_overview"))
+
+
+@app.route("/learning/<int:learning_id>", methods=["GET"])
+def learning_detail(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    attempts = database.get_learning_exam_attempts(learning_id)
+    grouped_questions = {"FREETEXT": [], "MULTIPLE_CHOICE": [], "SINGLE_CHOICE": []}
+    answers_by_question_id = {
+        str(item.get("question_id", "")).strip(): [str(value).strip() for value in item.get("correct_answers", []) if str(value).strip()]
+        for item in parsed_learning.get("answers", [])
+        if isinstance(item, dict)
+    }
+    editor_rows: list[dict] = []
+    for question in parsed_learning.get("questions", []):
+        question_type = str(question.get("type", "FREETEXT")).upper()
+        grouped_questions.setdefault(question_type, []).append(question)
+        editor_rows.append(
+            {
+                "id": str(question.get("id", "")).strip(),
+                "type": question_type,
+                "text": str(question.get("text", "")).strip(),
+                "options_text": "\n".join(
+                    [str(item).strip() for item in question.get("options", []) if str(item).strip()]
+                ),
+                "correct_answers_text": "\n".join(answers_by_question_id.get(str(question.get("id", "")).strip(), [])),
+            }
+        )
+    return render_template(
+        "learning_detail.html",
+        learning=learning_row,
+        doc_preview_url=_learning_doc_preview_url(learning_row),
+        parsed_learning=parsed_learning,
+        grouped_questions=grouped_questions,
+        editor_rows=editor_rows,
+        attempts=attempts,
+    )
+
+@app.route("/learning/<int:learning_id>/attempts/<int:attempt_id>", methods=["GET"])
+def learning_attempt_review(learning_id: int, attempt_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    attempt = database.get_learning_exam_attempt_by_id(attempt_id)
+    if not attempt or int(attempt.get("learning_id", 0)) != learning_id:
+        flash("Attempt entry not found.", "warning")
+        return redirect(url_for("learning_detail", learning_id=learning_id))
+
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    answer_key_map = {
+        str(item.get("question_id", "")).strip(): [str(value).strip() for value in item.get("correct_answers", []) if str(value).strip()]
+        for item in parsed_learning.get("answers", [])
+        if isinstance(item, dict)
+    }
+    try:
+        submitted_answers = json.loads(attempt.get("answers_json", "{}"))
+    except json.JSONDecodeError:
+        submitted_answers = {}
+    if not isinstance(submitted_answers, dict):
+        submitted_answers = {}
+
+    rows: list[dict] = []
+    for question in parsed_learning.get("questions", []):
+        question_id = str(question.get("id", "")).strip()
+        expected_answers = sorted(answer_key_map.get(question_id, []))
+        given_answers = sorted([str(value).strip() for value in submitted_answers.get(question_id, []) if str(value).strip()])
+        question_type = str(question.get("type", "FREETEXT")).strip().upper()
+        is_scored = question_type != "FREETEXT"
+        rows.append(
+            {
+                "id": question_id or "N/A",
+                "text": str(question.get("text", "")).strip() or "N/A",
+                "question_type": question_type,
+                "given_answers": given_answers,
+                "expected_answers": expected_answers,
+                "is_scored": is_scored,
+                "is_correct": (expected_answers == given_answers) if is_scored else None,
+            }
+        )
+
+    return render_template(
+        "learning_attempt_review.html",
+        learning=learning_row,
+        doc_preview_url=_learning_doc_preview_url(learning_row),
+        attempt=attempt,
+        comparison_rows=rows,
+    )
+
+
+@app.route("/learning/<int:learning_id>/save", methods=["POST"])
+def learning_save(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    questions, answers = _build_learning_payload_from_form(request.form)
+
+    if not questions:
+        flash("Please add at least one question with text before saving.", "warning")
+        return redirect(url_for("learning_detail", learning_id=learning_id))
+
+    writer = DocsWriter()
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    writer.update_learning_file_questions_answers(
+        learning_path=learning_path,
+        last_modified_date=_today_dd_mm_yyyy(),
+        questions_payload={"questions": questions},
+        answers_payload={"answers": answers},
+    )
+    flash("Learning questions saved.", "success")
+    return redirect(url_for("learning_detail", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/generate", methods=["POST"])
+def learning_generate_questions(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    try:
+        source_note_name = str(learning_row.get("source_note_name", "")).strip()
+        _generate_learning_questions_for_doc(_normalize_md_filename(source_note_name))
+        flash("Learning questions generated successfully.", "success")
+    except Exception as exc:
+        logger.error("Learning question generation failed\n%s", traceback.format_exc())
+        flash(str(exc), "warning")
+    return redirect(url_for("learning_detail", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/delete", methods=["POST"])
+def learning_delete(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    learning_path = Path(str(learning_row.get("path_to_learning", "")).strip()).resolve()
+    if learning_path.exists() and learning_path.is_file():
+        learning_path.unlink()
+    database.delete_learning_by_id(learning_id)
+    flash("Learning deleted, including related drafts and attempts.", "success")
+    return redirect(url_for("learning_overview"))
+
+
+def _extract_user_answers_from_form(form_data, questions: list[dict]) -> dict[str, list[str]]:
+    answers: dict[str, list[str]] = {}
+    for question in questions:
+        qid = str(question.get("id", "")).strip()
+        if not qid:
+            continue
+        if str(question.get("type")) == "MULTIPLE_CHOICE":
+            raw_values = form_data.getlist(f"answer_{qid}")
+        else:
+            raw_values = [form_data.get(f"answer_{qid}", "")]
+        cleaned = [re.sub(r"\s+", " ", str(item).strip()) for item in raw_values if str(item).strip()]
+        answers[qid] = cleaned
+    return answers
+
+
+def _build_fused_learning_payload(learning_rows: list[dict]) -> dict:
+    parser = DocsParser()
+    fused_questions: list[dict] = []
+    fused_answers_map: dict[str, list[str]] = {}
+    included_learning_rows: list[dict] = []
+
+    for learning_row in learning_rows:
+        learning_id = int(learning_row.get("id", 0))
+        if learning_id <= 0:
+            continue
+        parsed_learning = parser.parse_learning_file(learning_row.get("path_to_learning", ""))
+        answer_map = {
+            str(item.get("question_id", "")).strip(): item.get("correct_answers", [])
+            for item in parsed_learning.get("answers", [])
+            if isinstance(item, dict)
+        }
+        for question in parsed_learning.get("questions", []):
+            qid = str(question.get("id", "")).strip()
+            if not qid:
+                continue
+            fused_qid = f"L{learning_id}__{qid}"
+            fused_questions.append(
+                {
+                    "id": fused_qid,
+                    "type": str(question.get("type", "FREETEXT")).strip().upper(),
+                    "text": str(question.get("text", "")).strip(),
+                    "options": question.get("options", []),
+                    "learning_file_name": str(learning_row.get("file_name", "")).strip(),
+                }
+            )
+            fused_answers_map[fused_qid] = [str(item).strip() for item in answer_map.get(qid, []) if str(item).strip()]
+        included_learning_rows.append(learning_row)
+
+    return {"questions": fused_questions, "answers_map": fused_answers_map, "learning_rows": included_learning_rows}
+
+
+@app.route("/learning/<int:learning_id>/mode", methods=["GET"])
+def learning_mode(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    draft = database.get_learning_exam_draft(learning_id)
+    draft_answers = {}
+    if draft:
+        try:
+            draft_answers = json.loads(draft.get("answers_json", "{}"))
+        except json.JSONDecodeError:
+            draft_answers = {}
+    return render_template("learning_mode.html", learning=learning_row, parsed_learning=parsed_learning, draft_answers=draft_answers, review_attempt=None)
+
+
+@app.route("/learning/mode/fused", methods=["POST"])
+def learning_mode_fused():
+    database = db()
+    exam_source = str(request.form.get("exam_source", "learnings")).strip().lower()
+    selected_rows: list[dict] = []
+
+    if exam_source == "tags":
+        selected_tags = [_normalize_tag_value(tag) for tag in request.form.getlist("selected_tags")]
+        selected_tags = sorted({tag for tag in selected_tags if tag}, key=lambda value: value.casefold())
+        if not selected_tags:
+            flash("Please select at least one tag.", "warning")
+            return redirect(url_for("learning_overview"))
+        allowed_tags = set(database.get_all_tags())
+        if any(tag not in allowed_tags for tag in selected_tags):
+            flash("One or more selected tags are invalid.", "danger")
+            return redirect(url_for("learning_overview"))
+
+        doc_learning_rows = database.get_learning_docs_by_tags(selected_tags)
+        docs_with_learning: list[dict] = []
+        docs_without_learning: list[dict] = []
+        selected_learning_ids: set[int] = set()
+        seen_docs_without_learning: set[int] = set()
+
+        for row in doc_learning_rows:
+            doc_id = int(row.get("doc_id", 0))
+            doc_title = str(row.get("doc_title", "")).strip()
+            learning_id = row.get("learning_id")
+            if learning_id is None:
+                if doc_id not in seen_docs_without_learning:
+                    docs_without_learning.append({"id": doc_id, "title": doc_title})
+                    seen_docs_without_learning.add(doc_id)
+                continue
+            docs_with_learning.append(
+                {"id": doc_id, "title": doc_title, "learning_file_name": str(row.get("learning_file_name", "")).strip()}
+            )
+            selected_learning_ids.add(int(learning_id))
+
+        if not selected_learning_ids:
+            flash("No learning entries found for the selected tags.", "warning")
+            return redirect(url_for("learning_overview"))
+
+        if docs_without_learning:
+            return render_template(
+                "learning_tag_warning.html",
+                selected_tags=selected_tags,
+                docs_with_learning=sorted(docs_with_learning, key=lambda value: value["title"].casefold()),
+                docs_without_learning=sorted(docs_without_learning, key=lambda value: value["title"].casefold()),
+                selected_learning_ids=sorted(selected_learning_ids),
+            )
+
+        for learning_id in sorted(selected_learning_ids):
+            learning_row = database.get_learning_by_id(learning_id)
+            if learning_row:
+                selected_rows.append(learning_row)
+    else:
+        raw_learning_ids = [str(value).strip() for value in request.form.getlist("selected_learning_ids")]
+        selected_learning_ids = sorted({int(value) for value in raw_learning_ids if value.isdigit() and int(value) > 0})
+        if not selected_learning_ids:
+            flash("Please select at least one learning.", "warning")
+            return redirect(url_for("learning_overview"))
+        for learning_id in selected_learning_ids:
+            learning_row = database.get_learning_by_id(learning_id)
+            if learning_row:
+                selected_rows.append(learning_row)
+
+    fused_payload = _build_fused_learning_payload(selected_rows)
+    if not fused_payload["questions"]:
+        flash("No questions found in the selected learning files.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    return render_template(
+        "learning_mode_fused.html",
+        selected_learning_rows=fused_payload["learning_rows"],
+        parsed_learning={"questions": fused_payload["questions"], "answers": []},
+        draft_answers={},
+        review_attempt=None,
+        answers_map=fused_payload["answers_map"],
+    )
+
+
+@app.route("/learning/mode/fused/finish", methods=["POST"])
+def learning_mode_fused_finish():
+    answers_map_raw = str(request.form.get("answers_map_json", "")).strip()
+    selected_learning_ids = [str(value).strip() for value in request.form.getlist("selected_learning_ids")]
+    selected_ids = sorted({int(value) for value in selected_learning_ids if value.isdigit() and int(value) > 0})
+    if not answers_map_raw or not selected_ids:
+        flash("Invalid fused exam payload.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    try:
+        answers_map = json.loads(answers_map_raw)
+    except json.JSONDecodeError:
+        flash("Invalid fused exam answer key.", "warning")
+        return redirect(url_for("learning_overview"))
+    if not isinstance(answers_map, dict):
+        flash("Invalid fused exam answer key.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    database = db()
+    selected_rows = [database.get_learning_by_id(learning_id) for learning_id in selected_ids]
+    selected_rows = [row for row in selected_rows if row]
+    fused_payload = _build_fused_learning_payload(selected_rows)
+    if not fused_payload["questions"]:
+        flash("No questions found in the selected learning files.", "warning")
+        return redirect(url_for("learning_overview"))
+
+    questions = fused_payload["questions"]
+    user_answers = _extract_user_answers_from_form(request.form, questions)
+    correct = 0
+    scored_questions = 0
+    for question in questions:
+        if str(question.get("type", "FREETEXT")).strip().upper() == "FREETEXT":
+            continue
+        qid = str(question.get("id", "")).strip()
+        expected = sorted([str(item).strip() for item in answers_map.get(qid, []) if str(item).strip()])
+        actual = sorted([str(item).strip() for item in user_answers.get(qid, []) if str(item).strip()])
+        scored_questions += 1
+        if expected == actual:
+            correct += 1
+
+    flash(
+        f"Fused exam finished. Score: {correct}/{scored_questions}. Free-text questions are shown for review but are not scored.",
+        "success",
+    )
+    return render_template(
+        "learning_mode_fused.html",
+        selected_learning_rows=fused_payload["learning_rows"],
+        parsed_learning={"questions": questions, "answers": []},
+        draft_answers=user_answers,
+        review_attempt={"score": correct, "total_questions": scored_questions},
+        answers_map=answers_map,
+    )
+
+
+@app.route("/learning/<int:learning_id>/mode/save", methods=["POST"])
+def learning_mode_save(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    answers = _extract_user_answers_from_form(request.form, parsed_learning.get("questions", []))
+    database.upsert_learning_exam_draft(learning_id, json.dumps(answers, ensure_ascii=False), now_in_zurich_str())
+    flash("Learning progress saved.", "success")
+    return redirect(url_for("learning_mode", learning_id=learning_id))
+
+
+@app.route("/learning/<int:learning_id>/mode/finish", methods=["POST"])
+def learning_mode_finish(learning_id: int):
+    database = db()
+    learning_row = database.get_learning_by_id(learning_id)
+    if not learning_row:
+        flash("Learning entry not found.", "warning")
+        return redirect(url_for("learning_overview"))
+    parsed_learning = DocsParser().parse_learning_file(learning_row.get("path_to_learning", ""))
+    questions = parsed_learning.get("questions", [])
+    answers_map = {str(item.get("question_id", "")): item.get("correct_answers", []) for item in parsed_learning.get("answers", []) if isinstance(item, dict)}
+    user_answers = _extract_user_answers_from_form(request.form, questions)
+    correct = 0
+    scored_questions = 0
+    for question in questions:
+        if str(question.get("type", "FREETEXT")).strip().upper() == "FREETEXT":
+            continue
+        qid = str(question.get("id", "")).strip()
+        expected = sorted([str(item).strip() for item in answers_map.get(qid, []) if str(item).strip()])
+        actual = sorted([str(item).strip() for item in user_answers.get(qid, []) if str(item).strip()])
+        scored_questions += 1
+        if expected == actual:
+            correct += 1
+    attempt_id = database.create_learning_exam_attempt(
+        learning_id=learning_id,
+        answers_json=json.dumps(user_answers, ensure_ascii=False),
+        score=float(correct),
+        total_questions=scored_questions,
+        created_at=now_in_zurich_str(),
+    )
+    database.delete_learning_exam_draft(learning_id)
+    attempt = database.get_learning_exam_attempt_by_id(attempt_id)
+    flash(f"Exam finished. Score: {correct}/{scored_questions}. Free-text questions are shown for review but are not scored.", "success")
+    return render_template("learning_mode.html", learning=learning_row, parsed_learning=parsed_learning, draft_answers=user_answers, review_attempt=attempt)
 
 
 @app.errorhandler(404)

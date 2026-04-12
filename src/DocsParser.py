@@ -10,6 +10,42 @@ from .timezone_utils import now_in_zurich_str
 logger = get_logger(__name__)
 class DocsParser:
     UNDER_CONSTRUCTION_MARKER = "> ==unter Bearbeitung=="
+    DEFAULT_REQUIRED_NOTE_STRUCTURE_STRINGS = [
+        "## Zusätzliche Ressourcen",
+        "#### Erklärvideo",
+        "#### Externe Referenzen",
+        "#### Page History",
+        "#### Page Tags",
+    ]
+    DEFAULT_COMPLIANCE_CHECK = {
+        "structure": {
+            "enabled": True,
+            "strings_to_check": DEFAULT_REQUIRED_NOTE_STRUCTURE_STRINGS,
+        },
+        "created": {
+            "enabled": True,
+        },
+        "beschreibung": {
+            "enabled": True,
+            "max": 3,
+        },
+        "external_links": {
+            "enabled": True,
+            "min": 1,
+        },
+        "tags": {
+            "enabled": True,
+            "min": 2,
+        },
+        "video_links": {
+            "enabled": True,
+            "char": 6000,
+        },
+        "ai_feedback": {
+            "enabled": True,
+            "min": 80,
+        },
+    }
     PROGRESS_ICON_TO_STATE = {
         "![[not started.png]]": "Not Started",
         "![[in progress.png]]": "In Progress",
@@ -24,6 +60,7 @@ class DocsParser:
         "": "",
     }
     TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
+    KANBAN_STATUS_VALUES = {"not started": "Not Started", "in progress": "In Progress", "done": "Done"}
     def __init__(self) -> None:
         try:
             path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -34,6 +71,9 @@ class DocsParser:
                 self.deadlines_file_path: str = j.get("deadlines", {}).get("full_path_to_deadlines_file", "/the-knowledge/Deadlines.md")
                 self.hslu_base_path: str = j.get("hslu", {}).get("full_path_to_hslu", "/the-knowledge/00_HSLU")
                 self.ai_feedback_path: str = j.get("ai_feedback", {}).get("output_path") or j.get("ai_feedback", {}).get("the_knowledge_path", "")
+                self.learning_path: str = j.get("learning", {}).get("learning_path", "/the-knowledge/07_LEARNINGS")
+                self.projects_root_path: str = j.get("projects", {}).get("root_path", "/the-knowledge/01_PROJ")
+                self.compliance_check: dict = self.__load_compliance_check_config(j.get("compliance_check", {}))
             if self.docs_path is False:
                 raise Exception("Docs-Pfad wurde nicht gefunden oder ist ungültig!")
             logger.info("Docs parser initialized with docs_path=%s", self.docs_path)
@@ -113,6 +153,73 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse markdown link map\n%s", traceback.format_exc())
             adieu(1)
+    def __coerce_bool(self, value: object, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().casefold()
+            if lowered in {"true", "1", "yes", "y", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "n", "off"}:
+                return False
+        return fallback
+    def __coerce_int(self, value: object, fallback: int, minimum: int = 0) -> int:
+        try:
+            parsed = int(str(value).strip())
+            if parsed < minimum:
+                return fallback
+            return parsed
+        except (TypeError, ValueError):
+            return fallback
+    def __coerce_string_list(self, value: object, fallback: list[str]) -> list[str]:
+        if not isinstance(value, list):
+            return fallback
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return normalized if normalized else fallback
+    def __load_compliance_check_config(self, raw_config: object) -> dict:
+        defaults = self.DEFAULT_COMPLIANCE_CHECK
+        config = raw_config if isinstance(raw_config, dict) else {}
+
+        structure_raw = config.get("structure", {}) if isinstance(config.get("structure", {}), dict) else {}
+        created_raw = config.get("created", {}) if isinstance(config.get("created", {}), dict) else {}
+        beschreibung_raw = config.get("beschreibung", {}) if isinstance(config.get("beschreibung", {}), dict) else {}
+        external_links_raw = config.get("external_links", {}) if isinstance(config.get("external_links", {}), dict) else {}
+        tags_raw = config.get("tags", {}) if isinstance(config.get("tags", {}), dict) else {}
+        video_links_raw = config.get("video_links", {}) if isinstance(config.get("video_links", {}), dict) else {}
+        ai_feedback_raw = config.get("ai_feedback", {}) if isinstance(config.get("ai_feedback", {}), dict) else {}
+
+        return {
+            "structure": {
+                "enabled": self.__coerce_bool(structure_raw.get("enabled"), defaults["structure"]["enabled"]),
+                "strings_to_check": self.__coerce_string_list(
+                    structure_raw.get("strings_to_check"),
+                    defaults["structure"]["strings_to_check"],
+                ),
+            },
+            "created": {
+                "enabled": self.__coerce_bool(created_raw.get("enabled"), defaults["created"]["enabled"]),
+            },
+            "beschreibung": {
+                "enabled": self.__coerce_bool(beschreibung_raw.get("enabled"), defaults["beschreibung"]["enabled"]),
+                "max": self.__coerce_int(beschreibung_raw.get("max"), defaults["beschreibung"]["max"], minimum=1),
+            },
+            "external_links": {
+                "enabled": self.__coerce_bool(external_links_raw.get("enabled"), defaults["external_links"]["enabled"]),
+                "min": self.__coerce_int(external_links_raw.get("min"), defaults["external_links"]["min"], minimum=0),
+            },
+            "tags": {
+                "enabled": self.__coerce_bool(tags_raw.get("enabled"), defaults["tags"]["enabled"]),
+                "min": self.__coerce_int(tags_raw.get("min"), defaults["tags"]["min"], minimum=0),
+            },
+            "video_links": {
+                "enabled": self.__coerce_bool(video_links_raw.get("enabled"), defaults["video_links"]["enabled"]),
+                "char": self.__coerce_int(video_links_raw.get("char"), defaults["video_links"]["char"], minimum=1),
+            },
+            "ai_feedback": {
+                "enabled": self.__coerce_bool(ai_feedback_raw.get("enabled"), defaults["ai_feedback"]["enabled"]),
+                "min": self.__coerce_int(ai_feedback_raw.get("min"), defaults["ai_feedback"]["min"], minimum=0),
+            },
+        }
     def __to_db_text(self, value: str | list[str] | dict[str, str]) -> str:
         try:
             if isinstance(value, (list, dict)):
@@ -183,46 +290,119 @@ class DocsParser:
         except Exception:
             logger.error("Failed to parse tags\n%s", traceback.format_exc())
             adieu(1)
-    def __enumerate_compliance(self, doc_content: str) -> tuple[str, str]:
+    def __normalize_doc_key(self, value: str) -> str:
+        return re.sub(r"\.md$", "", str(value or "").strip(), flags=re.IGNORECASE).casefold()
+
+    def __build_learning_doc_keys(self, learning_row: dict) -> set[str]:
+        keys: set[str] = set()
+        for raw_value in (
+            learning_row.get("source_note_name", ""),
+            learning_row.get("file_name", ""),
+        ):
+            normalized = self.__normalize_doc_key(raw_value)
+            if not normalized:
+                continue
+            keys.add(normalized)
+            keys.add(re.sub(r"\s*-\s*learning$", "", normalized, flags=re.IGNORECASE).strip())
+        return {item for item in keys if item}
+
+    def __enumerate_compliance(self, doc_content: str, doc_title: str, database: db) -> tuple[str, str]:
         try:
             cleaned = self.__strip_ignored_sections(doc_content)
             noncompliance_reasons: list[str] = []
+            compliance_conf = self.compliance_check
+
+            structure_enabled = compliance_conf["structure"]["enabled"]
+            note_structure_ok = (not structure_enabled) or self.__has_required_note_structure(cleaned)
+            if structure_enabled and not note_structure_ok:
+                noncompliance_reasons.append("Struktur: Nicht alle Kapitel da")
+
             created_at = self.__parse_created_at_from_doc(cleaned)
-            created_at_ok = created_at != "N/A"
-            if not created_at_ok:
+            created_enabled = compliance_conf["created"]["enabled"]
+            created_at_ok = (not created_enabled) or (created_at != "N/A")
+            if created_enabled and not created_at_ok:
                 noncompliance_reasons.append("Erstelldatum: Nicht vorhanden")
+
+            beschreibung_max = compliance_conf["beschreibung"]["max"]
             beschreibung_text = self.__extract_beschreibung_text(cleaned)
             sentence_count = len([s for s in re.split(r"(?<=[.!?])\s+", beschreibung_text) if s.strip()])
-            beschreibung_ok = sentence_count <= 3 and bool(beschreibung_text)
-            if not beschreibung_ok:
+            beschreibung_enabled = compliance_conf["beschreibung"]["enabled"]
+            beschreibung_ok = (not beschreibung_enabled) or (sentence_count <= beschreibung_max and bool(beschreibung_text))
+            if beschreibung_enabled and not beschreibung_ok:
                 noncompliance_reasons.append(
-                    "Beschreibung: Maximal 3 Sätze!"
+                    f"Beschreibung: Maximal {beschreibung_max} Sätze!"
                 )
+
             external_refs_block = self.__extract_subsection_block(cleaned, "Externe Referenzen")
             external_links = self.__extract_markdown_links(external_refs_block) if external_refs_block else []
-            external_links_ok = len(external_links) >= 1
-            if not external_links_ok:
-                noncompliance_reasons.append("Links: Mind. 1 externer Link")
+            external_links_min = compliance_conf["external_links"]["min"]
+            external_links_enabled = compliance_conf["external_links"]["enabled"]
+            external_links_ok = (not external_links_enabled) or (len(external_links) >= external_links_min)
+            if external_links_enabled and not external_links_ok:
+                noncompliance_reasons.append(f"Links: Mind. {external_links_min} externer Link")
+
             tags_block = self.__extract_subsection_block(cleaned, "Page Tags")
             tags = list(dict.fromkeys(re.findall(r"(?<!\w)#[-\w]+", tags_block)))
-            tags_ok = len(tags) >= 2
-            if not tags_ok:
-                noncompliance_reasons.append("Tags: Mind. 2 Tags")
-            requires_video = len(cleaned) > 6000
+            tags_min = compliance_conf["tags"]["min"]
+            tags_enabled = compliance_conf["tags"]["enabled"]
+            tags_ok = (not tags_enabled) or (len(tags) >= tags_min)
+            if tags_enabled and not tags_ok:
+                noncompliance_reasons.append(f"Tags: Mind. {tags_min} Tags")
+
+            video_char_threshold = compliance_conf["video_links"]["char"]
+            video_links_enabled = compliance_conf["video_links"]["enabled"]
+            requires_video = video_links_enabled and (len(cleaned) > video_char_threshold)
             if requires_video:
                 video_block = self.__extract_subsection_block(cleaned, "Erklärvideo")
                 video_links = self.__extract_markdown_links(video_block) if video_block else []
                 video_ok = len(video_links) >= 1
                 if not video_ok:
                     noncompliance_reasons.append(
-                        "Erklärvideo: ab 6000 Zeichen"
+                        f"Erklärvideo: ab {video_char_threshold} Zeichen"
                     )
             else:
                 video_ok = True
-            is_compliant = "true" if (created_at_ok and beschreibung_ok and external_links_ok and tags_ok and video_ok) else "false"
+
+            ai_feedback_conf = compliance_conf["ai_feedback"]
+            ai_feedback_enabled = ai_feedback_conf["enabled"]
+            ai_feedback_min = ai_feedback_conf["min"]
+            ai_feedback_ok = True
+            if ai_feedback_enabled:
+                latest_feedback = database.get_latest_ai_feedback_for_file(doc_title)
+                if latest_feedback is not None:
+                    try:
+                        latest_score = float(latest_feedback.get("score"))
+                        ai_feedback_ok = latest_score >= ai_feedback_min
+                    except (TypeError, ValueError):
+                        ai_feedback_ok = False
+                    if not ai_feedback_ok:
+                        noncompliance_reasons.append("AI Feedback: Wert zu niedrig")
+
+            is_compliant = (
+                "true"
+                if (
+                    note_structure_ok
+                    and created_at_ok
+                    and beschreibung_ok
+                    and external_links_ok
+                    and tags_ok
+                    and video_ok
+                    and ai_feedback_ok
+                )
+                else "false"
+            )
             return is_compliant, self.__to_db_text(noncompliance_reasons)
         except Exception:
             logger.error("Failed to evaluate compliance\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __has_required_note_structure(self, doc_content: str) -> bool:
+        try:
+            normalized_content = str(doc_content or "")
+            required_strings = self.compliance_check["structure"]["strings_to_check"]
+            return all(required_string in normalized_content for required_string in required_strings)
+        except Exception:
+            logger.error("Failed to check note structure compliance\n%s", traceback.format_exc())
             adieu(1)
 
     def __extract_beschreibung_text(self, doc_content: str) -> str:
@@ -260,17 +440,27 @@ class DocsParser:
             logger.info("Starting full docs sync at %s", sync_time)
             scanned_doc_titles: set[str] = set()
             collected_tags: set[str] = set()
+            learning_doc_keys: set[str] = set()
+            ai_feedback_doc_keys = {
+                self.__normalize_doc_key(row.get("file_name", ""))
+                for row in db_object.get_all_ai_feedback()
+                if self.__normalize_doc_key(row.get("file_name", ""))
+            }
+            for learning_row in db_object.get_all_learnings():
+                learning_doc_keys.update(self.__build_learning_doc_keys(learning_row))
             for doc_full_path in self.__get_full_document_list():
                 with open(doc_full_path, "r", encoding="utf-8") as f:
                     file_contents = f.read()
+                doc_title = self.__parse_title_from_doc(doc_full_path)
+                normalized_doc_title = self.__normalize_doc_key(doc_title)
                 is_under_construction = self.__is_under_construction(file_contents)
                 if is_under_construction:
                     is_compliant = "Not Determined"
                     noncompliance_reason = "N/A"
                 else:
-                    is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents)
+                    is_compliant, noncompliance_reason = self.__enumerate_compliance(file_contents, doc_title, db_object)
                 append_dict = {
-                    "title": self.__parse_title_from_doc(doc_full_path),
+                    "title": doc_title,
                     "created_at": self.__parse_created_at_from_doc(file_contents),
                     "changed_at": self.__parse_changed_at_from_doc(file_contents),
                     "links": self.__parse_links_from_doc(file_contents),
@@ -280,6 +470,8 @@ class DocsParser:
                     "noncompliance_reason": noncompliance_reason,
                     "manual_compliant_override": "false",
                     "is_under_construction": "true" if is_under_construction else "false",
+                    "has_learning": "true" if normalized_doc_title in learning_doc_keys else "false",
+                    "has_ai_feedback": "true" if normalized_doc_title in ai_feedback_doc_keys else "false",
                 }
                 raw_tags = append_dict.get("tags", "N/A")
                 if isinstance(raw_tags, str) and raw_tags.startswith("[") and raw_tags.endswith("]"):
@@ -704,6 +896,73 @@ class DocsParser:
             logger.error("Failed to parse AI feedback file %s\n%s", file_path, traceback.format_exc())
             raise
 
+    def _extract_markdown_section(self, content: str, section_name: str) -> str:
+        match = re.search(rf"(?ims)^##\s+{re.escape(section_name)}\s*$\n(.*?)(?=^##\s+|\Z)", content)
+        return match.group(1).strip() if match else ""
+
+    def _parse_json_code_block(self, raw_block: str) -> dict:
+        stripped = str(raw_block or "").strip()
+        if not stripped:
+            return {}
+
+        code_match = re.search(r"(?is)^```json\s*(.*?)\s*```$", stripped)
+        candidate = code_match.group(1).strip() if code_match else stripped
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def parse_learning_file(self, file_path: str | Path) -> dict:
+        target_path = Path(file_path).resolve()
+        content = target_path.read_text(encoding="utf-8")
+        note_name = self._extract_markdown_section(content, "Note Name") or target_path.stem.replace(" - Learning", "").strip()
+        creation_date = self._extract_markdown_section(content, "Creation") or "N/A"
+        last_modified_date = self._extract_markdown_section(content, "Last Modified") or "N/A"
+        questions_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Questions"))
+        answers_payload = self._parse_json_code_block(self._extract_markdown_section(content, "Answers"))
+
+        parsed_questions = questions_payload.get("questions", [])
+        parsed_answers = answers_payload.get("answers", [])
+        if not isinstance(parsed_questions, list):
+            parsed_questions = []
+        if not isinstance(parsed_answers, list):
+            parsed_answers = []
+
+        return {
+            "file_name": target_path.stem.strip(),
+            "source_note_name": str(note_name).strip() or target_path.stem.strip(),
+            "path_to_learning": str(target_path),
+            "creation_date": str(creation_date).strip() or "N/A",
+            "last_modified_date": str(last_modified_date).strip() or "N/A",
+            "questions": parsed_questions,
+            "answers": parsed_answers,
+        }
+
+    def parse_learning_files(self) -> list[dict]:
+        if not self.learning_path:
+            return []
+        learning_dir = Path(self.learning_path)
+        if not learning_dir.exists():
+            return []
+        rows: list[dict] = []
+        for file_path in sorted(learning_dir.rglob("*.md"), key=lambda item: str(item).casefold()):
+            try:
+                rows.append(self.parse_learning_file(file_path))
+            except Exception:
+                logger.warning("Skipping malformed learning file=%s", file_path)
+        return rows
+
+    def sync_learning_to_db(self) -> list[dict]:
+        rows = self.parse_learning_files()
+        database = db()
+        kept_paths: list[str] = []
+        for row in rows:
+            database.upsert_learning(row)
+            kept_paths.append(str(row.get("path_to_learning", "")).strip())
+        database.delete_learnings_not_in_paths(kept_paths)
+        return rows
+
     def parse_ai_feedback_files(self) -> list[dict]:
         try:
             if not self.ai_feedback_path:
@@ -771,9 +1030,292 @@ class DocsParser:
             logger.error("Failed to parse todos markdown\n%s", traceback.format_exc())
             adieu(1)
 
+    def find_note_path(self, note_name: str) -> Path:
+        try:
+            normalized = str(note_name or "").strip()
+            if not normalized:
+                raise ValueError("note_name is required.")
+            sanitized = re.sub(r"[^A-Za-z0-9._ -]+", "_", normalized).strip(" ._")
+            if not sanitized:
+                raise ValueError("note_name contains only invalid characters.")
+            if "/" in sanitized or "\\" in sanitized:
+                raise ValueError("note_name must not contain path separators.")
+
+            file_name = sanitized if sanitized.lower().endswith(".md") else f"{sanitized}.md"
+            docs_root = Path(self.docs_path).resolve()
+            target = (docs_root / file_name).resolve()
+            if docs_root not in target.parents:
+                raise ValueError("Invalid note_name path.")
+            if not target.exists() or not target.is_file():
+                raise FileNotFoundError(f"Note not found: {file_name}")
+            return target
+        except Exception:
+            logger.error("Failed to resolve note path for '%s'\n%s", note_name, traceback.format_exc())
+            raise
+
     def _parse_deadline_status(self, raw_progress: str) -> str:
         normalized = str(raw_progress or "").strip()
         return self.PROGRESS_ICON_TO_STATE.get(normalized, "Not Started")
+
+    def _resolve_projects_root(self) -> Path:
+        projects_root = Path(self.projects_root_path or "/the-knowledge/01_PROJ").resolve()
+        if not projects_root.exists() or not projects_root.is_dir():
+            raise FileNotFoundError(f"Projects root not found: {projects_root}")
+        return projects_root
+
+    def normalize_project_name(self, raw_value: str) -> str:
+        cleaned = str(raw_value or "").strip()
+        if not cleaned:
+            raise ValueError("Project name is required.")
+        if len(cleaned) > 120:
+            raise ValueError("Project name is too long.")
+        if not re.fullmatch(r"[A-Za-z0-9 _.-]+", cleaned):
+            raise ValueError("Project name contains invalid characters.")
+        if cleaned in {".", ".."}:
+            raise ValueError("Project name is invalid.")
+        return cleaned
+
+    def resolve_project_path(self, project_name: str) -> Path:
+        normalized_name = self.normalize_project_name(project_name)
+        projects_root = self._resolve_projects_root()
+        project_path = (projects_root / normalized_name).resolve()
+        if projects_root != project_path and projects_root not in project_path.parents:
+            raise ValueError("Project path traversal detected.")
+        if not project_path.exists() or not project_path.is_dir():
+            raise FileNotFoundError(f"Project not found: {normalized_name}")
+        return project_path
+
+    def _extract_markdown_table(self, markdown_content: str, title: str) -> list[dict[str, str]]:
+        section_pattern = re.compile(rf"(?ims)^#\s+{re.escape(title)}\s*$\n(.*?)(?=^#\s+|\Z)")
+        section_match = section_pattern.search(str(markdown_content or ""))
+        if not section_match:
+            return []
+
+        lines = [line.strip() for line in section_match.group(1).splitlines() if line.strip().startswith("|")]
+        if len(lines) < 2:
+            return []
+
+        headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        rows: list[dict[str, str]] = []
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            rows.append({headers[index]: cells[index] for index in range(len(headers))})
+        return rows
+
+    def _normalize_markdown_table_cell(self, value: str) -> str:
+        return str(value or "").replace("<br>", "\n").replace("\\|", "|").strip()
+
+    def parse_resources(self, project_path: str | Path) -> dict:
+        project_dir = Path(project_path).resolve()
+        resources_file = (project_dir / "Ressourcen.md").resolve()
+        if project_dir != resources_file.parent:
+            raise ValueError("Invalid resources file path.")
+        if not resources_file.exists() or not resources_file.is_file():
+            return {
+                "project_name": project_dir.name,
+                "description": "",
+                "resources": [],
+                "links": [],
+                "tag": f"#PROJECT_{project_dir.name}",
+                "settings_description": "",
+                "warnings": ["Ressourcen.md not found."],
+            }
+
+        content = resources_file.read_text(encoding="utf-8")
+        resource_rows = self._extract_markdown_table(content, "Ressourcen")
+        settings_rows = self._extract_markdown_table(content, "Settings")
+
+        links: list[dict[str, str]] = []
+        for index, row in enumerate(resource_rows, start=1):
+            description = self._normalize_markdown_table_cell(row.get("Beschreibung", ""))
+            link = self._normalize_markdown_table_cell(row.get("Link", ""))
+            note = self._normalize_markdown_table_cell(row.get("Note", ""))
+            if description or link or note:
+                links.append({"id": index, "description": description, "link": link, "note": note})
+
+        settings_map: dict[str, str] = {}
+        for row in settings_rows:
+            key = str(row.get("Key", "")).strip()
+            value = self._normalize_markdown_table_cell(row.get("Value", ""))
+            if key:
+                settings_map[key.casefold()] = value
+
+        project_description = settings_map.get("description", "")
+        project_tag = settings_map.get("tag", f"#PROJECT_{project_dir.name}") or f"#PROJECT_{project_dir.name}"
+
+        return {
+            "project_name": project_dir.name,
+            "description": project_description,
+            "resources": links,
+            "links": [item for item in links if str(item.get("link", "")).strip()],
+            "notes": [item for item in links if str(item.get("note", "")).strip() and not str(item.get("link", "")).strip()],
+            "tag": project_tag,
+            "settings_description": project_description,
+            "warnings": [],
+        }
+
+    def parse_kanban(self, project_path: str | Path) -> dict:
+        project_dir = Path(project_path).resolve()
+        kanban_file = (project_dir / "Kanban.md").resolve()
+        if project_dir != kanban_file.parent:
+            raise ValueError("Invalid Kanban file path.")
+        if not kanban_file.exists() or not kanban_file.is_file():
+            return {"project_name": project_dir.name, "items": [], "columns": {"Not Started": [], "In Progress": [], "Done": []}, "warnings": ["Kanban.md not found."]}
+
+        content = kanban_file.read_text(encoding="utf-8")
+        rows = self._extract_markdown_table(content, "Kanban")
+        parsed_items: list[dict] = []
+        for index, row in enumerate(rows, start=1):
+            deliverable = self._normalize_markdown_table_cell(row.get("Deliverable", ""))
+            raw_status = self._normalize_markdown_table_cell(row.get("Status", ""))
+            due = self._normalize_markdown_table_cell(row.get("Due", ""))
+            normalized_status = self.KANBAN_STATUS_VALUES.get(raw_status.casefold(), "Not Started")
+            if not deliverable and not raw_status and not due:
+                continue
+            parsed_items.append(
+                {
+                    "id": index,
+                    "deliverable": deliverable,
+                    "status": raw_status if raw_status in self.KANBAN_STATUS_VALUES.values() else normalized_status,
+                    "status_normalized": normalized_status,
+                    "due": due,
+                }
+            )
+
+        columns = {"Not Started": [], "In Progress": [], "Done": []}
+        for item in parsed_items:
+            columns[item["status_normalized"]].append(item)
+
+        return {"project_name": project_dir.name, "items": parsed_items, "columns": columns, "warnings": []}
+
+    def validate_canvas(self, data: dict) -> dict:
+        warnings: list[str] = []
+        if not isinstance(data, dict):
+            raise ValueError("Canvas payload must be an object.")
+
+        nodes = data.get("nodes")
+        edges = data.get("edges")
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            raise ValueError("Canvas must include nodes and edges arrays.")
+
+        valid_nodes: list[dict] = []
+        valid_node_ids: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                warnings.append("Skipped non-object node.")
+                continue
+            required = ("id", "x", "y", "width", "height")
+            if any(key not in node for key in required):
+                warnings.append(f"Skipped node missing required keys: {node}.")
+                continue
+            try:
+                normalized_node = {
+                    "id": str(node.get("id")),
+                    "x": float(node.get("x", 0)),
+                    "y": float(node.get("y", 0)),
+                    "width": float(node.get("width", 0)),
+                    "height": float(node.get("height", 0)),
+                    "text": str(node.get("text", "")),
+                    "type": str(node.get("type", "")).strip(),
+                    "raw": node,
+                }
+            except (TypeError, ValueError):
+                warnings.append(f"Skipped malformed node: {node}.")
+                continue
+            valid_nodes.append(normalized_node)
+            valid_node_ids.add(normalized_node["id"])
+
+        valid_sides = {"top", "right", "bottom", "left"}
+        valid_edges: list[dict] = []
+        for edge in edges:
+            if not isinstance(edge, dict):
+                warnings.append("Skipped non-object edge.")
+                continue
+            from_node = str(edge.get("fromNode", "")).strip()
+            to_node = str(edge.get("toNode", "")).strip()
+            if not from_node or not to_node:
+                warnings.append(f"Skipped edge without fromNode/toNode: {edge}.")
+                continue
+            if from_node not in valid_node_ids or to_node not in valid_node_ids:
+                warnings.append(f"Skipped edge with unknown node references: {edge}.")
+                continue
+            from_side = str(edge.get("fromSide", "right")).strip().lower() or "right"
+            to_side = str(edge.get("toSide", "left")).strip().lower() or "left"
+            if from_side not in valid_sides or to_side not in valid_sides:
+                warnings.append(f"Skipped edge with invalid side value: {edge}.")
+                continue
+            valid_edges.append(
+                {
+                    "fromNode": from_node,
+                    "toNode": to_node,
+                    "fromSide": from_side,
+                    "toSide": to_side,
+                    "label": str(edge.get("label", "")),
+                    "raw": edge,
+                }
+            )
+        return {"nodes": valid_nodes, "edges": valid_edges, "warnings": warnings}
+
+    def compute_canvas_bounds(self, nodes: list[dict]) -> dict:
+        if not nodes:
+            return {"min_x": 0, "min_y": 0, "max_x": 1000, "max_y": 800, "width": 1000, "height": 800}
+        min_x = min(node["x"] for node in nodes)
+        min_y = min(node["y"] for node in nodes)
+        max_x = max(node["x"] + node["width"] for node in nodes)
+        max_y = max(node["y"] + node["height"] for node in nodes)
+        return {
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_x": max_x,
+            "max_y": max_y,
+            "width": max(1, max_x - min_x),
+            "height": max(1, max_y - min_y),
+        }
+
+    def load_canvas(self, project_path: str | Path, canvas_file_name: str | None = None) -> dict:
+        project_dir = Path(project_path).resolve()
+        canvas_dir = (project_dir / "Canvas").resolve()
+        if project_dir != canvas_dir.parent:
+            raise ValueError("Invalid canvas directory path.")
+
+        requested_file_name = str(canvas_file_name or "").strip()
+        if requested_file_name:
+            canvas_path = (canvas_dir / requested_file_name).resolve()
+            if canvas_dir != canvas_path.parent:
+                raise ValueError("Invalid canvas file path.")
+        else:
+            canvas_files = sorted(
+                [entry for entry in canvas_dir.glob("*.canvas") if entry.is_file()],
+                key=lambda item: item.name.casefold(),
+            )
+            if not canvas_files:
+                return {
+                    "canvas_file_name": "",
+                    "nodes": [],
+                    "edges": [],
+                    "bounds": self.compute_canvas_bounds([]),
+                    "warnings": ["No canvas files found."],
+                }
+            canvas_path = canvas_files[0]
+
+        if canvas_dir != canvas_path.parent:
+            raise ValueError("Invalid canvas file path.")
+        if not canvas_path.exists() or not canvas_path.is_file():
+            return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": [f"{canvas_path.name} not found."]}
+        try:
+            data = json.loads(canvas_path.read_text(encoding="utf-8") or "{}")
+        except json.JSONDecodeError:
+            return {"nodes": [], "edges": [], "bounds": self.compute_canvas_bounds([]), "warnings": ["Canvas JSON is malformed."]}
+        validated = self.validate_canvas(data)
+        return {
+            "canvas_file_name": canvas_path.name,
+            "nodes": validated["nodes"],
+            "edges": validated["edges"],
+            "bounds": self.compute_canvas_bounds(validated["nodes"]),
+            "warnings": validated["warnings"],
+        }
 
     def parse_deadlines_from_markdown(self, include_description: bool = False) -> list[dict]:
         try:

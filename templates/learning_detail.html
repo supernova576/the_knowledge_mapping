@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Learning Detail</title>
+    {% include '_theme_init.html' %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+</head>
+<body>
+<div id="learning-generate-waiting" class="km-waiting-overlay d-none">
+    <div class="card shadow-lg border-primary-subtle">
+        <div class="card-body text-center p-4">
+            <div class="spinner-border text-primary mb-3" role="status" aria-hidden="true"></div>
+            <h2 class="h5">Waiting for learning questions...</h2>
+            <p class="text-muted mb-0">The selected markdown file is being processed. This page will update automatically when the request finishes.</p>
+        </div>
+    </div>
+</div>
+<div class="container py-4">
+    {% set active_page = 'learning' %}
+    {% include '_navbar.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <h1 class="h3 mb-0">{{ learning.file_name }}</h1>
+        <a class="btn btn-outline-secondary" href="{{ url_for('learning_overview') }}">Exit</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}{% for category, message in messages %}<div class="alert alert-{{ category }} mb-2">{{ message }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                <div class="d-flex gap-2 flex-wrap">
+                    <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#learningFormatHelpModal">Help</button>
+                    {% if doc_preview_url %}
+                    <a class="btn btn-outline-secondary" href="{{ doc_preview_url }}">View Documentation</a>
+                    {% endif %}
+                    <a class="btn btn-primary" href="{{ url_for('learning_mode', learning_id=learning.id) }}">Start Learning</a>
+                </div>
+                <form id="learning-generate-form" method="post" action="{{ url_for('learning_generate_questions', learning_id=learning.id) }}" class="d-inline">
+                    <button id="learning-generate-submit" class="btn btn-outline-primary" type="submit">Generate Questions</button>
+                </form>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Edit questions in table form. One line per option/correct answer. Free-text questions are shown in learning mode but do not affect score.</p>
+        </div>
+    </div>
+
+    <form method="post" action="{{ url_for('learning_save', learning_id=learning.id) }}" id="learningEditorForm">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                <h2 class="h5 mb-0">Question editor</h2>
+                <button id="addQuestionRowBtn" type="button" class="btn btn-outline-secondary btn-sm">Add question</button>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 fw-semibold border-bottom pb-2 mb-3 d-none d-lg-flex">
+                    <div class="col-lg-2">ID</div>
+                    <div class="col-lg-2">Type</div>
+                    <div class="col-lg-3">Question</div>
+                    <div class="col-lg-2">Options</div>
+                    <div class="col-lg-2">Correct answers</div>
+                    <div class="col-lg-1">Action</div>
+                </div>
+
+                <div id="questionRowsContainer" class="d-flex flex-column gap-3">
+                    {% for row in editor_rows %}
+                    <div class="border rounded p-3 question-row">
+                        <div class="row g-2 align-items-start">
+                            <div class="col-lg-2">
+                                <label class="form-label d-lg-none small text-muted">ID</label>
+                                <input class="form-control" type="text" name="question_id[]" maxlength="40" value="{{ row.id }}" placeholder="Q001" />
+                            </div>
+                            <div class="col-lg-2">
+                                <label class="form-label d-lg-none small text-muted">Type</label>
+                                <select class="form-select question-type" name="question_type[]">
+                                    {% set type_value = row.type|upper %}
+                                    <option value="SINGLE_CHOICE" {% if type_value == 'SINGLE_CHOICE' %}selected{% endif %}>Single choice</option>
+                                    <option value="MULTIPLE_CHOICE" {% if type_value == 'MULTIPLE_CHOICE' %}selected{% endif %}>Multiple choice</option>
+                                    <option value="FREETEXT" {% if type_value == 'FREETEXT' %}selected{% endif %}>Free text</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-3">
+                                <label class="form-label d-lg-none small text-muted">Question</label>
+                                <textarea class="form-control" name="question_text[]" rows="4" maxlength="1200" placeholder="Write the question text">{{ row.text }}</textarea>
+                            </div>
+                            <div class="col-lg-2">
+                                <label class="form-label d-lg-none small text-muted">Options</label>
+                                <textarea class="form-control question-options" name="question_options[]" rows="4" maxlength="1200" placeholder="One option per line">{{ row.options_text }}</textarea>
+                            </div>
+                            <div class="col-lg-2">
+                                <label class="form-label d-lg-none small text-muted">Correct answers</label>
+                                <textarea class="form-control" name="question_correct_answers[]" rows="4" maxlength="1200" placeholder="One answer per line">{{ row.correct_answers_text }}</textarea>
+                            </div>
+                            <div class="col-lg-1 d-flex align-items-start justify-content-end">
+                                <button type="button" class="btn btn-outline-danger btn-sm remove-question-row">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="border rounded p-3 question-row">
+                        <div class="row g-2 align-items-start">
+                            <div class="col-lg-2"><input class="form-control" type="text" name="question_id[]" maxlength="40" placeholder="Q001" /></div>
+                            <div class="col-lg-2">
+                                <select class="form-select question-type" name="question_type[]">
+                                    <option value="SINGLE_CHOICE">Single choice</option>
+                                    <option value="MULTIPLE_CHOICE">Multiple choice</option>
+                                    <option value="FREETEXT">Free text</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-3"><textarea class="form-control" name="question_text[]" rows="4" maxlength="1200" placeholder="Write the question text"></textarea></div>
+                            <div class="col-lg-2"><textarea class="form-control question-options" name="question_options[]" rows="4" maxlength="1200" placeholder="One option per line"></textarea></div>
+                            <div class="col-lg-2"><textarea class="form-control" name="question_correct_answers[]" rows="4" maxlength="1200" placeholder="One answer per line"></textarea></div>
+                            <div class="col-lg-1 d-flex align-items-start justify-content-end"><button type="button" class="btn btn-outline-danger btn-sm remove-question-row">Remove</button></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="d-flex justify-content-end mt-3 gap-2">
+                    <a href="{{ url_for('learning_overview') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <button class="btn btn-success" type="submit">Save</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div class="card shadow-sm mb-3"><div class="card-body">
+        <h2 class="h5">Previously completed attempts</h2>
+        <div class="list-group">
+            {% for attempt in attempts %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('learning_attempt_review', learning_id=learning.id, attempt_id=attempt.id) }}">
+                <span>Attempt #{{ attempt.id }} — {{ attempt.created_at }}</span>
+                <span class="badge text-bg-primary rounded-pill">{{ attempt.score }}/{{ attempt.total_questions }}</span>
+            </a>
+            {% else %}
+            <div class="text-muted">No attempts yet.</div>
+            {% endfor %}
+        </div>
+    </div></div>
+
+    {% include '_footer.html' %}
+</div>
+
+<div class="modal fade" id="learningFormatHelpModal" tabindex="-1" aria-labelledby="learningFormatHelpModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title fs-5" id="learningFormatHelpModalLabel">Learning Question Format Help</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <ul class="mb-0">
+                    <li>Use one row per question.</li>
+                    <li>For choice questions, enter one option per line.</li>
+                    <li>For single choice, only the first correct answer line is kept.</li>
+                    <li>For free-text, options are ignored.</li>
+                    <li>If ID is empty, it is auto-generated during save.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<template id="questionRowTemplate">
+    <div class="border rounded p-3 question-row">
+        <div class="row g-2 align-items-start">
+            <div class="col-lg-2"><input class="form-control" type="text" name="question_id[]" maxlength="40" placeholder="Q001" /></div>
+            <div class="col-lg-2">
+                <select class="form-select question-type" name="question_type[]">
+                    <option value="SINGLE_CHOICE">Single choice</option>
+                    <option value="MULTIPLE_CHOICE">Multiple choice</option>
+                    <option value="FREETEXT">Free text</option>
+                </select>
+            </div>
+            <div class="col-lg-3"><textarea class="form-control" name="question_text[]" rows="4" maxlength="1200" placeholder="Write the question text"></textarea></div>
+            <div class="col-lg-2"><textarea class="form-control question-options" name="question_options[]" rows="4" maxlength="1200" placeholder="One option per line"></textarea></div>
+            <div class="col-lg-2"><textarea class="form-control" name="question_correct_answers[]" rows="4" maxlength="1200" placeholder="One answer per line"></textarea></div>
+            <div class="col-lg-1 d-flex align-items-start justify-content-end"><button type="button" class="btn btn-outline-danger btn-sm remove-question-row">Remove</button></div>
+        </div>
+    </div>
+</template>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+{% include '_theme_toggle_script.html' %}
+<script>
+(function () {
+    const waitingOverlay = document.getElementById("learning-generate-waiting");
+    const generateForm = document.getElementById("learning-generate-form");
+    const generateSubmit = document.getElementById("learning-generate-submit");
+    const rowsContainer = document.getElementById("questionRowsContainer");
+    const addRowBtn = document.getElementById("addQuestionRowBtn");
+    const rowTemplate = document.getElementById("questionRowTemplate");
+
+    function showWaitingOverlay(button, label) {
+        if (waitingOverlay) {
+            waitingOverlay.classList.remove("d-none");
+        }
+        if (button) {
+            button.disabled = true;
+            button.textContent = label;
+        }
+    }
+
+    function applyTypeRulesForRow(row) {
+        const typeSelect = row.querySelector('.question-type');
+        const optionsField = row.querySelector('.question-options');
+        if (!typeSelect || !optionsField) {
+            return;
+        }
+        const isFreeText = typeSelect.value === 'FREETEXT';
+        optionsField.readOnly = isFreeText;
+        optionsField.classList.toggle('bg-body-tertiary', isFreeText);
+        optionsField.setAttribute('aria-readonly', isFreeText ? 'true' : 'false');
+        if (isFreeText) {
+            optionsField.value = '';
+            optionsField.placeholder = 'Not used for free-text';
+        } else {
+            optionsField.placeholder = 'One option per line';
+        }
+    }
+
+    function bindRow(row) {
+        const removeBtn = row.querySelector('.remove-question-row');
+        const typeSelect = row.querySelector('.question-type');
+
+        if (removeBtn) {
+            removeBtn.addEventListener('click', function () {
+                row.remove();
+            });
+        }
+
+        if (typeSelect) {
+            typeSelect.addEventListener('change', function () {
+                applyTypeRulesForRow(row);
+            });
+        }
+
+        applyTypeRulesForRow(row);
+    }
+
+    rowsContainer.querySelectorAll('.question-row').forEach(bindRow);
+
+    addRowBtn.addEventListener('click', function () {
+        const node = rowTemplate.content.firstElementChild.cloneNode(true);
+        rowsContainer.appendChild(node);
+        bindRow(node);
+    });
+
+    if (generateForm) {
+        generateForm.addEventListener("submit", function () {
+            showWaitingOverlay(generateSubmit, "Waiting...");
+        });
+    }
+})();
+</script>
+</body>
+</html>
