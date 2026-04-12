@@ -733,6 +733,15 @@ def _normalize_project_doc_title(value: str) -> str:
     return Path(normalized).stem.strip()
 
 
+def _normalize_project_tag(value: str, *, default: str) -> str:
+    normalized = _normalize_tag_value(_normalize_project_text(value, field_name="Project tag", max_length=255))
+    if not normalized:
+        return default
+    if not re.match(r"^#[-\w]+$", normalized):
+        raise ValueError("Project tag may only contain letters, numbers, underscores, and dashes.")
+    return normalized
+
+
 def _normalize_kanban_status(value: str) -> str:
     normalized = str(value or "").strip()
     if normalized not in DEADLINE_STATUS_OPTIONS:
@@ -3227,16 +3236,18 @@ def update_project_resources_settings(project_name: str):
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
         updated_description = _normalize_project_multiline_text(request.form.get("description", ""), field_name="Project description")
+        default_tag = f"#PROJECT_{project_path.name}"
+        updated_tag = _normalize_project_tag(request.form.get("tag", ""), default=default_tag)
 
         writer = DocsWriter()
         writer.write_project_resources_file(
             _project_resources_file(project_path),
             resources.get("resources", []),
-            f"#PROJECT_{project_path.name}",
+            updated_tag,
             updated_description,
         )
         _set_rw_permissions_for_all_users(_project_resources_file(project_path))
-        flash("Project description updated.", "success")
+        flash("Project settings updated.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
     return redirect(url_for("project_resources", project_name=project_name))
