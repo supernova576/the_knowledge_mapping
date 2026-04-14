@@ -10,6 +10,12 @@
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
     <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
+    <style>
+        .km-export-layout { display: grid; gap: 1rem; }
+        @media (min-width: 992px) { .km-export-layout { grid-template-columns: 1fr 1fr; } }
+        .km-export-card { border-radius: 1rem; }
+        .km-export-scroll { max-height: 320px; overflow-y: auto; }
+    </style>
 </head>
 
 <body>
@@ -18,7 +24,10 @@
         {% include '_navbar.html' %}
 
         <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
-            <h1 class="h3 mb-0">Export</h1>
+            <div>
+                <h1 class="h3 mb-1">Export Center</h1>
+                <p class="text-body-secondary mb-0">Export docs as PDF and learnings as a local, offline-ready HTML package.</p>
+            </div>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -31,62 +40,134 @@
         {% endif %}
         {% endwith %}
 
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <form method="post" action="{{ url_for('export_docs_pdf') }}" class="row g-3" id="exportForm">
-                    <div class="col-md-8">
-                        <label class="form-label" for="title">Export title</label>
-                        <input class="form-control" id="title" name="title" maxlength="150" required />
+        <div class="km-export-layout">
+            <section class="card shadow-sm km-export-card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h2 class="h5 mb-0">Documentation PDF Export</h2>
+                        <span class="badge text-bg-secondary">{{ docs|length }} docs</span>
                     </div>
-                    <div class="col-12">
-                        <label class="form-label" for="description">User description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3" maxlength="500"
-                            placeholder="Optional context shown on the title page"></textarea>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label" for="export_mode">Export by</label>
-                        <select class="form-select" id="export_mode" name="export_mode" required>
-                            <option value="name" selected>File names</option>
-                            <option value="tag">Tags</option>
-                        </select>
-                    </div>
-
-                    <div class="col-12" id="nameSelection">
-                        <label class="form-label">Available docs</label>
-                        <div class="border rounded p-3" style="max-height: 320px; overflow-y: auto;">
-                            {% for doc in docs %}
-                            <div class="form-check">
-                                <input class="form-check-input export-doc-checkbox" type="checkbox" name="selected_docs" value="{{ doc.title }}"
-                                    id="doc_{{ doc.id }}">
-                                <label class="form-check-label" for="doc_{{ doc.id }}">{{ doc.title }}</label>
-                            </div>
-                            {% else %}
-                            <span class="text-muted">No docs available.</span>
-                            {% endfor %}
+                    <form method="post" action="{{ url_for('export_docs_pdf') }}" class="row g-3" id="docsExportForm">
+                        <div class="col-12">
+                            <label class="form-label" for="docs_title">Export title</label>
+                            <input class="form-control" id="docs_title" name="title" maxlength="150" required />
                         </div>
-                    </div>
-
-                    <div class="col-12 d-none" id="tagSelection">
-                        <label class="form-label">Available tags</label>
-                        <input type="text" class="form-control mb-2" id="tagFilter" placeholder="Filter tags" />
-                        <div class="d-flex flex-wrap gap-2 border rounded p-3" id="tagInventory">
-                            {% for tag in tags %}
-                            <div class="form-check form-check-inline me-0">
-                                <input class="btn-check export-tag-checkbox" type="checkbox" name="selected_tags" value="{{ tag }}"
-                                    id="tag_{{ loop.index }}" autocomplete="off">
-                                <label class="btn btn-outline-secondary btn-sm" for="tag_{{ loop.index }}" data-tag-label="{{ tag }}">{{ tag }}</label>
-                            </div>
-                            {% else %}
-                            <span class="text-muted">No tags available.</span>
-                            {% endfor %}
+                        <div class="col-12">
+                            <label class="form-label" for="docs_description">Description</label>
+                            <textarea class="form-control" id="docs_description" name="description" rows="2" maxlength="500"
+                                placeholder="Optional context shown on the title page"></textarea>
                         </div>
-                    </div>
+                        <div class="col-md-5">
+                            <label class="form-label" for="export_mode">Export by</label>
+                            <select class="form-select" id="export_mode" name="export_mode" required>
+                                <option value="name" selected>File names</option>
+                                <option value="tag">Tags</option>
+                            </select>
+                        </div>
 
-                    <div class="col-12 d-flex justify-content-end">
-                        <button class="btn btn-primary" type="submit">EXPORT</button>
+                        <div class="col-12" id="nameSelection">
+                            <label class="form-label">Available docs</label>
+                            <div class="border rounded p-3 km-export-scroll">
+                                {% for doc in docs %}
+                                <div class="form-check">
+                                    <input class="form-check-input export-doc-checkbox" type="checkbox" name="selected_docs" value="{{ doc.title }}"
+                                        id="doc_{{ doc.id }}">
+                                    <label class="form-check-label" for="doc_{{ doc.id }}">{{ doc.title }}</label>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">No docs available.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="col-12 d-none" id="tagSelection">
+                            <label class="form-label">Available tags</label>
+                            <input type="text" class="form-control mb-2" id="tagFilter" placeholder="Filter tags" />
+                            <div class="d-flex flex-wrap gap-2 border rounded p-3 km-export-scroll" id="tagInventory">
+                                {% for tag in tags %}
+                                <div class="form-check form-check-inline me-0">
+                                    <input class="btn-check export-tag-checkbox" type="checkbox" name="selected_tags" value="{{ tag }}"
+                                        id="tag_{{ loop.index }}" autocomplete="off">
+                                    <label class="btn btn-outline-secondary btn-sm" for="tag_{{ loop.index }}" data-tag-label="{{ tag }}">{{ tag }}</label>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">No tags available.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="col-12 d-flex justify-content-end">
+                            <button class="btn btn-primary" type="submit">Export PDF</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <section class="card shadow-sm border-primary-subtle km-export-card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h2 class="h5 mb-0">Learning HTML Export (Offline)</h2>
+                        <span class="badge text-bg-primary">{{ learning_rows|length }} learnings</span>
                     </div>
-                </form>
-            </div>
+                    <p class="small text-body-secondary">Exports selected learnings into one interactive HTML file with local persistence for completion and score.</p>
+                    <form method="post" action="{{ url_for('export_learnings_html') }}" class="row g-3" id="learningExportForm">
+                        <div class="col-12">
+                            <label class="form-label" for="learning_title">Export title</label>
+                            <input class="form-control" id="learning_title" name="title" maxlength="150" required />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="learning_description">Metadata description</label>
+                            <textarea class="form-control" id="learning_description" name="description" rows="2" maxlength="500"
+                                placeholder="Optional metadata visible in exported file"></textarea>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label" for="learning_export_mode">Export by</label>
+                            <select class="form-select" id="learning_export_mode" name="learning_export_mode" required>
+                                <option value="ids" selected>Selected learnings</option>
+                                <option value="tags">Tags</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="learningFilter">Filter learnings</label>
+                            <input type="search" class="form-control" id="learningFilter" placeholder="Search by title" />
+                        </div>
+                        <div class="col-12" id="learningIdSelection">
+                            <label class="form-label">Select learnings</label>
+                            <div class="border rounded p-3 km-export-scroll" id="learningInventory">
+                                {% for row in learning_rows %}
+                                <div class="form-check" data-learning-label="{{ row.file_name|lower }}">
+                                    <input class="form-check-input export-learning-checkbox" type="checkbox" name="selected_learning_ids" value="{{ row.id }}"
+                                        id="learning_{{ row.id }}">
+                                    <label class="form-check-label" for="learning_{{ row.id }}">{{ row.file_name }} <span class="text-body-secondary small">({{ row.question_count }} questions)</span></label>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">No learning entries available.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-12 d-none" id="learningTagSelection">
+                            <label class="form-label">Select tags</label>
+                            <input type="search" class="form-control mb-2" id="learningTagFilter" placeholder="Filter tags" />
+                            <div class="d-flex flex-wrap gap-2 border rounded p-3 km-export-scroll" id="learningTagInventory">
+                                {% for tag in tags %}
+                                <div class="form-check form-check-inline me-0">
+                                    <input class="btn-check export-learning-tag-checkbox" type="checkbox" name="selected_tags" value="{{ tag }}"
+                                        id="learning_tag_{{ loop.index }}" autocomplete="off">
+                                    <label class="btn btn-outline-secondary btn-sm" for="learning_tag_{{ loop.index }}" data-learning-tag-label="{{ tag }}">{{ tag }}</label>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">No tags available.</span>
+                                {% endfor %}
+                            </div>
+                            <div class="form-text">Exports every learning linked to a note that has at least one selected tag.</div>
+                        </div>
+                        <div class="col-12 d-flex justify-content-between align-items-center">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" id="toggleLearningSelection">Select all</button>
+                            <button class="btn btn-primary" type="submit">Export HTML</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
         </div>
 
         {% include '_footer.html' %}
@@ -105,6 +186,17 @@
             const tagCheckboxes = Array.from(document.querySelectorAll(".export-tag-checkbox"));
             const tagFilter = document.getElementById("tagFilter");
             const tagLabels = Array.from(document.querySelectorAll("[data-tag-label]"));
+
+            const learningExportMode = document.getElementById("learning_export_mode");
+            const learningFilter = document.getElementById("learningFilter");
+            const learningIdSection = document.getElementById("learningIdSelection");
+            const learningTagSection = document.getElementById("learningTagSelection");
+            const learningRows = Array.from(document.querySelectorAll("#learningInventory [data-learning-label]"));
+            const learningCheckboxes = Array.from(document.querySelectorAll(".export-learning-checkbox"));
+            const learningTagCheckboxes = Array.from(document.querySelectorAll(".export-learning-tag-checkbox"));
+            const learningTagFilter = document.getElementById("learningTagFilter");
+            const learningTagLabels = Array.from(document.querySelectorAll("[data-learning-tag-label]"));
+            const toggleLearningSelection = document.getElementById("toggleLearningSelection");
 
             function syncSelectionMode() {
                 const mode = modeSelect.value;
@@ -126,6 +218,26 @@
             modeSelect.addEventListener("change", syncSelectionMode);
             syncSelectionMode();
 
+            function syncLearningExportMode() {
+                const byIds = learningExportMode.value === "ids";
+                learningIdSection.classList.toggle("d-none", !byIds);
+                learningTagSection.classList.toggle("d-none", byIds);
+                toggleLearningSelection.classList.toggle("d-none", !byIds);
+
+                learningCheckboxes.forEach((checkbox) => {
+                    checkbox.disabled = !byIds;
+                    if (!byIds) checkbox.checked = false;
+                });
+
+                learningTagCheckboxes.forEach((checkbox) => {
+                    checkbox.disabled = byIds;
+                    if (byIds) checkbox.checked = false;
+                });
+            }
+
+            learningExportMode.addEventListener("change", syncLearningExportMode);
+            syncLearningExportMode();
+
             if (tagFilter) {
                 tagFilter.addEventListener("input", function () {
                     const query = tagFilter.value.trim().toLowerCase();
@@ -134,6 +246,37 @@
                         const visible = label.dataset.tagLabel.toLowerCase().includes(query);
                         wrapper.classList.toggle("d-none", !visible);
                     });
+                });
+            }
+
+            if (learningFilter) {
+                learningFilter.addEventListener("input", function () {
+                    const query = learningFilter.value.trim().toLowerCase();
+                    learningRows.forEach((row) => {
+                        const visible = row.dataset.learningLabel.includes(query);
+                        row.classList.toggle("d-none", !visible);
+                    });
+                });
+            }
+
+            if (learningTagFilter) {
+                learningTagFilter.addEventListener("input", function () {
+                    const query = learningTagFilter.value.trim().toLowerCase();
+                    learningTagLabels.forEach((label) => {
+                        const wrapper = label.closest(".form-check");
+                        const visible = label.dataset.learningTagLabel.toLowerCase().includes(query);
+                        wrapper.classList.toggle("d-none", !visible);
+                    });
+                });
+            }
+
+            if (toggleLearningSelection) {
+                toggleLearningSelection.addEventListener("click", function () {
+                    const allSelected = learningCheckboxes.length > 0 && learningCheckboxes.every((checkbox) => checkbox.checked);
+                    learningCheckboxes.forEach((checkbox) => {
+                        checkbox.checked = !allSelected;
+                    });
+                    toggleLearningSelection.textContent = allSelected ? "Select all" : "Clear all";
                 });
             }
         })();

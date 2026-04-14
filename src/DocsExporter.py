@@ -1,4 +1,5 @@
 import json
+import html
 import re
 import traceback
 from datetime import datetime
@@ -63,6 +64,537 @@ class DocsExporter:
     def _safe_pdf_name(self, title: str) -> str:
         normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(title or "export").strip()).strip("_")
         return f"{normalized or 'export'}.pdf"
+
+    def _safe_html_name(self, title: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(title or "learning_export").strip()).strip("_")
+        return f"{normalized or 'learning_export'}.html"
+
+    def _normalize_learning_question(self, question: dict) -> dict:
+        question_id = str(question.get("id", "")).strip()
+        question_type = str(question.get("type", "FREETEXT")).strip().upper()
+        question_text = str(question.get("text", "")).strip()
+        raw_options = question.get("options", [])
+        if not isinstance(raw_options, list):
+            raw_options = [str(raw_options)]
+        options = [str(option).strip() for option in raw_options if str(option).strip()]
+        return {
+            "id": question_id,
+            "type": question_type,
+            "text": question_text,
+            "options": options,
+        }
+
+    def _build_learning_export_payload(self, learning_payloads: list[dict], metadata: dict | None = None) -> list[dict]:
+        normalized_payload: list[dict] = []
+        for learning in learning_payloads:
+            learning_id = int(learning.get("id", 0))
+            if learning_id <= 0:
+                continue
+
+            raw_questions = learning.get("questions", [])
+            if not isinstance(raw_questions, list):
+                raw_questions = []
+            raw_answers = learning.get("answers", [])
+            if not isinstance(raw_answers, list):
+                raw_answers = []
+
+            answer_map: dict[str, list[str]] = {}
+            for answer in raw_answers:
+                if not isinstance(answer, dict):
+                    continue
+                question_id = str(answer.get("question_id", "")).strip()
+                if not question_id:
+                    continue
+                raw_correct_answers = answer.get("correct_answers", [])
+                if not isinstance(raw_correct_answers, list):
+                    raw_correct_answers = [str(raw_correct_answers)]
+                answer_map[question_id] = [str(item).strip() for item in raw_correct_answers if str(item).strip()]
+
+            questions = [self._normalize_learning_question(question) for question in raw_questions if isinstance(question, dict)]
+            normalized_payload.append(
+                {
+                    "id": learning_id,
+                    "file_name": str(learning.get("file_name", "")).strip(),
+                    "source_note_name": str(learning.get("source_note_name", "")).strip(),
+                    "creation_date": str(learning.get("creation_date", "N/A")).strip() or "N/A",
+                    "last_modified_date": str(learning.get("last_modified_date", "N/A")).strip() or "N/A",
+                    "question_count": len(questions),
+                    "questions": questions,
+                    "answers_map": answer_map,
+                }
+            )
+
+        return sorted(normalized_payload, key=lambda item: str(item.get("file_name", "")).casefold())
+
+    def export_learnings_to_html(self, export_title: str, learning_payloads: list[dict], metadata: dict | None = None) -> Path:
+        serialized_payload = self._build_learning_export_payload(learning_payloads, metadata=metadata)
+        if not serialized_payload:
+            raise ValueError("No valid learnings available for HTML export.")
+
+        output_path = self.export_dir / self._safe_html_name(export_title)
+        export_metadata = {
+            "export_title": str(export_title or "Learning Export").strip() or "Learning Export",
+            "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "learning_count": len(serialized_payload),
+            "question_count": sum(int(item.get("question_count", 0)) for item in serialized_payload),
+        }
+        if metadata and isinstance(metadata, dict):
+            export_metadata.update({str(key): str(value) for key, value in metadata.items() if str(key).strip()})
+
+        payload_json = json.dumps(serialized_payload, ensure_ascii=False)
+        metadata_json = json.dumps(export_metadata, ensure_ascii=False)
+        safe_title = html.escape(export_metadata["export_title"])
+
+        html_document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{safe_title}</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #212529;
+      --surface: #1b1f24;
+      --surface-muted: #2b3035;
+      --surface-soft: rgba(255, 255, 255, 0.03);
+      --text: #dee2e6;
+      --muted: #adb5bd;
+      --border: rgba(255, 255, 255, 0.12);
+      --primary: #0d6efd;
+      --primary-soft: rgba(13, 110, 253, 0.2);
+      --success: #66deaa;
+      --warning: #ffd166;
+      --shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.22);
+      --radius: 1rem;
+    }}
+    * {{ box-sizing: border-box; }}
+    html, body {{ min-height: 100%; }}
+    body {{
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(13, 110, 253, 0.14), transparent 28%),
+        linear-gradient(180deg, #212529 0%, #1c1f23 100%);
+      color: var(--text);
+    }}
+    button, input {{
+      font: inherit;
+    }}
+    .shell {{
+      width: min(1120px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 1rem 0 2rem;
+    }}
+    .navbar {{
+      position: sticky;
+      top: 0.75rem;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      background: rgba(25, 29, 36, 0.94);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow);
+    }}
+    .btn, .search-input, .answer-input {{
+      min-height: 2.8rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 0.85rem;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+    }}
+    .btn {{
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    }}
+    .btn:hover {{
+      transform: translateY(-1px);
+      border-color: rgba(13, 110, 253, 0.45);
+    }}
+    .btn-primary {{
+      background: linear-gradient(180deg, #2a7bff 0%, #0d6efd 100%);
+      border-color: rgba(84, 148, 255, 0.7);
+      color: #fff;
+    }}
+    .btn-secondary {{
+      background: rgba(255, 255, 255, 0.04);
+    }}
+    .btn-secondary.active {{
+      background: var(--primary-soft);
+      border-color: rgba(84, 148, 255, 0.6);
+    }}
+    .search-input {{ width: 100%; }}
+    .meta-panel, .header-card, .card, .result-box {{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }}
+    .meta-panel {{
+      padding: 1rem;
+      margin-bottom: 1rem;
+      display: none;
+      background: var(--surface-muted);
+    }}
+    .meta-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .85rem; }}
+    .meta-item {{ color: var(--muted); line-height: 1.45; }}
+    .meta-item strong {{ display: block; margin-bottom: .2rem; color: var(--text); font-size: .92rem; }}
+    .view {{ display: none; }}
+    .view.active {{ display: block; }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .75rem; }}
+    .header-card {{
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+    }}
+    .header-card h1 {{ margin: 0 0 .2rem; font-size: 1.25rem; }}
+    .card {{
+      padding: 1rem;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+    }}
+    .card h2 {{ margin: 0 0 .4rem; font-size: 1.02rem; }}
+    .meta-row {{ display: flex; justify-content: space-between; gap: .5rem; color: var(--muted); font-size: .95rem; margin-top: .5rem; }}
+    .score {{ color: var(--success); font-weight: 700; }}
+    .hidden {{ display: none !important; }}
+    .question-card {{ margin-bottom: .9rem; padding: 1rem 1rem 1.1rem; }}
+    .question-eyebrow {{ margin: 0 0 .5rem; color: var(--muted); font-size: .95rem; }}
+    .question-title {{ margin: 0 0 .75rem; font-weight: 700; font-size: 1.15rem; }}
+    .muted {{ color: var(--muted); }}
+    .options {{ display: grid; gap: .55rem; }}
+    .option-row {{
+      display: flex;
+      align-items: flex-start;
+      gap: .65rem;
+      padding: .7rem .8rem;
+      border: 1px solid var(--border);
+      border-radius: .9rem;
+      background: var(--surface-soft);
+    }}
+    .option-row input {{ margin-top: .2rem; }}
+    .answer-input {{ width: min(100%, 360px); }}
+    .answer-key {{
+      display: none;
+      margin-top: .8rem;
+      padding: .8rem .9rem;
+      border-radius: .9rem;
+      border: 1px solid rgba(255, 209, 102, 0.35);
+      background: rgba(255, 209, 102, 0.08);
+      color: #f7e7b1;
+    }}
+    .answer-key.visible {{ display: block; }}
+    .result-box {{
+      margin-bottom: 1rem;
+      padding: .9rem 1rem;
+      background: rgba(25, 135, 84, 0.12);
+      border-color: rgba(102, 222, 170, 0.35);
+    }}
+    .toolbar {{ display: flex; justify-content: space-between; gap: .75rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }}
+    .toolbar-actions {{ display: flex; gap: .75rem; flex-wrap: wrap; }}
+    @media (max-width: 720px) {{
+      .shell {{ width: min(100% - 1rem, 1120px); }}
+      .navbar {{ grid-template-columns: 1fr; }}
+      .header-card, .toolbar {{ flex-direction: column; align-items: stretch; }}
+      .toolbar-actions {{ width: 100%; }}
+      .toolbar-actions .btn {{ flex: 1 1 100%; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="navbar">
+      <button id="homeBtn" class="btn btn-primary" type="button">Home</button>
+      <input id="searchInput" class="search-input" type="search" placeholder="Search learnings, questions, or options..." />
+      <button id="metadataBtn" class="btn btn-secondary" type="button">Metadata</button>
+    </nav>
+
+    <section id="metadataPanel" class="meta-panel" aria-live="polite">
+      <div class="meta-grid" id="metadataGrid"></div>
+    </section>
+
+    <section id="listView" class="view active">
+      <div class="header-card">
+        <div>
+          <h1>{safe_title}</h1>
+          <p class="muted" style="margin:0;">Offline learning export with local progress persistence.</p>
+        </div>
+        <div class="muted" id="summaryText"></div>
+      </div>
+      <div class="cards" id="learningCards"></div>
+      <p class="muted hidden" id="emptyState">No learning matches the current search.</p>
+    </section>
+
+    <section id="learningView" class="view">
+      <div class="toolbar">
+        <div id="activeLearningTitle" class="muted"></div>
+        <div class="toolbar-actions">
+          <button id="answerKeyBtn" class="btn btn-secondary" type="button">Show Answer Key</button>
+          <button id="submitBtn" class="btn btn-primary" type="button">Finished</button>
+        </div>
+      </div>
+      <div class="result-box hidden" id="resultBox"></div>
+      <div id="learningQuestions"></div>
+    </section>
+  </div>
+
+  <script>
+    (function () {{
+      const STORAGE_PREFIX = "tkm_export_";
+      const LEARNINGS = {payload_json};
+      const EXPORT_METADATA = {metadata_json};
+      const state = {{
+        activeLearningId: null,
+        progress: {{}},
+        answerKeyVisible: false,
+      }};
+
+      const homeBtn = document.getElementById("homeBtn");
+      const metadataBtn = document.getElementById("metadataBtn");
+      const metadataPanel = document.getElementById("metadataPanel");
+      const metadataGrid = document.getElementById("metadataGrid");
+      const summaryText = document.getElementById("summaryText");
+      const searchInput = document.getElementById("searchInput");
+      const listView = document.getElementById("listView");
+      const learningView = document.getElementById("learningView");
+      const cardsContainer = document.getElementById("learningCards");
+      const emptyState = document.getElementById("emptyState");
+      const questionsContainer = document.getElementById("learningQuestions");
+      const resultBox = document.getElementById("resultBox");
+      const submitBtn = document.getElementById("submitBtn");
+      const answerKeyBtn = document.getElementById("answerKeyBtn");
+      const activeLearningTitle = document.getElementById("activeLearningTitle");
+
+      function sanitizeLabel(value) {{
+        return String(value || "").replace(/[<>]/g, "");
+      }}
+
+      function humanizeMetadataKey(key) {{
+        const normalized = String(key || "").trim().replace(/_/g, " ");
+        return normalized.replace(/\\b\\w/g, function (char) {{ return char.toUpperCase(); }});
+      }}
+
+      function storageKey(learningId) {{
+        return STORAGE_PREFIX + "learning_" + learningId;
+      }}
+
+      function readProgress(learningId) {{
+        try {{
+          const parsed = JSON.parse(localStorage.getItem(storageKey(learningId)) || "{{}}");
+          if (!parsed || typeof parsed !== "object") return {{ completed: false, last_score: null }};
+          const completed = Boolean(parsed.completed);
+          const lastScore = typeof parsed.last_score === "string" && parsed.last_score.trim()
+            ? parsed.last_score.trim()
+            : null;
+          return {{ completed: completed, last_score: lastScore }};
+        }} catch (error) {{
+          return {{ completed: false, last_score: null }};
+        }}
+      }}
+
+      function writeProgress(learningId, score) {{
+        const payload = {{
+          completed: true,
+          last_score: String(score || "").trim() || null,
+          updated_at: new Date().toISOString()
+        }};
+        localStorage.setItem(storageKey(learningId), JSON.stringify(payload));
+        state.progress[String(learningId)] = payload;
+      }}
+
+      function normalizeAnswer(question, values) {{
+        const cleaned = values.map((item) => String(item || "").trim()).filter(Boolean);
+        if (question.type === "MULTIPLE_CHOICE") return cleaned.sort();
+        return cleaned.slice(0, 1);
+      }}
+
+      function renderMetadata() {{
+        metadataGrid.innerHTML = "";
+        Object.entries(EXPORT_METADATA).forEach(([key, value]) => {{
+          const item = document.createElement("div");
+          item.className = "meta-item";
+          item.innerHTML = "<strong>" + sanitizeLabel(humanizeMetadataKey(key)) + "</strong><span>" + sanitizeLabel(value) + "</span>";
+          metadataGrid.appendChild(item);
+        }});
+      }}
+
+      function filteredLearnings(query) {{
+        const normalized = String(query || "").trim().toLowerCase();
+        if (!normalized) return LEARNINGS;
+        return LEARNINGS.filter((learning) => {{
+          if (learning.file_name.toLowerCase().includes(normalized)) return true;
+          if (learning.source_note_name.toLowerCase().includes(normalized)) return true;
+          return (learning.questions || []).some((question) => {{
+            if (String(question.text || "").toLowerCase().includes(normalized)) return true;
+            return (question.options || []).some((option) => String(option).toLowerCase().includes(normalized));
+          }});
+        }});
+      }}
+
+      function renderCards() {{
+        cardsContainer.innerHTML = "";
+        const rows = filteredLearnings(searchInput.value);
+        emptyState.classList.toggle("hidden", rows.length > 0);
+
+        rows.forEach((learning) => {{
+          const progress = state.progress[String(learning.id)] || {{ completed: false, last_score: null }};
+          const card = document.createElement("article");
+          card.className = "card";
+          card.innerHTML = `
+            <h2>${{sanitizeLabel(learning.file_name)}}</h2>
+            <div class="meta-row"><span>Questions</span><span>${{learning.question_count}}</span></div>
+            <div class="meta-row"><span>Completion</span><span>${{progress.completed ? "Completed" : "Not completed"}}</span></div>
+            <div class="meta-row"><span>Last score</span><span class="score">${{progress.completed && progress.last_score ? sanitizeLabel(progress.last_score) : "N/A"}}</span></div>
+            <button type="button" class="btn btn-primary" data-learning-id="${{learning.id}}" style="margin-top:0.85rem;width:100%;">Start learning</button>
+          `;
+          card.querySelector("button").addEventListener("click", function () {{
+            openLearning(learning.id);
+          }});
+          cardsContainer.appendChild(card);
+        }});
+      }}
+
+      function answerKeyMarkup(question, answersMap) {{
+        const answers = Array.isArray(answersMap[question.id]) ? answersMap[question.id].map((item) => sanitizeLabel(item)).filter(Boolean) : [];
+        const label = question.type === "FREETEXT" ? "Expected answer" : "Correct answer";
+        return `<div class="answer-key${{state.answerKeyVisible ? " visible" : ""}}"><strong>${{label}}:</strong> ${{answers.length ? answers.join(", ") : "-"}}</div>`;
+      }}
+
+      function renderQuestion(question, index, answersMap) {{
+        const wrapper = document.createElement("article");
+        wrapper.className = "card question-card";
+        wrapper.dataset.questionId = question.id;
+        wrapper.innerHTML = `
+          <p class="question-eyebrow">Question ${{index + 1}} · ${{sanitizeLabel(question.type)}}</p>
+          <p class="question-title">${{sanitizeLabel(question.text)}}</p>
+          <div class="options"></div>
+          ${{answerKeyMarkup(question, answersMap)}}
+        `;
+        const optionsContainer = wrapper.querySelector(".options");
+        if (question.type === "FREETEXT") {{
+          const input = document.createElement("input");
+          input.type = "text";
+          input.placeholder = "Type your answer";
+          input.className = "answer-input";
+          input.dataset.questionId = question.id;
+          optionsContainer.appendChild(input);
+          return wrapper;
+        }}
+
+        (question.options || []).forEach((option, optIndex) => {{
+          const optionId = "q_" + question.id + "_" + optIndex;
+          const label = document.createElement("label");
+          label.className = "option-row";
+          label.setAttribute("for", optionId);
+          label.innerHTML = `
+            <input
+              name="answer_${{question.id}}"
+              type="${{question.type === "MULTIPLE_CHOICE" ? "checkbox" : "radio"}}"
+              value="${{sanitizeLabel(option)}}"
+              id="${{optionId}}"
+            />
+            <span>${{sanitizeLabel(option)}}</span>
+          `;
+          optionsContainer.appendChild(label);
+        }});
+        return wrapper;
+      }}
+
+      function applyAnswerKeyVisibility() {{
+        Array.from(document.querySelectorAll(".answer-key")).forEach((element) => {{
+          element.classList.toggle("visible", state.answerKeyVisible);
+        }});
+        answerKeyBtn.textContent = state.answerKeyVisible ? "Hide Answer Key" : "Show Answer Key";
+        answerKeyBtn.classList.toggle("active", state.answerKeyVisible);
+      }}
+
+      function openLearning(learningId) {{
+        const learning = LEARNINGS.find((item) => Number(item.id) === Number(learningId));
+        if (!learning) return;
+        state.activeLearningId = learning.id;
+        state.answerKeyVisible = false;
+        activeLearningTitle.textContent = sanitizeLabel(learning.file_name) + " · " + String(learning.question_count) + " questions";
+        listView.classList.remove("active");
+        learningView.classList.add("active");
+        resultBox.classList.add("hidden");
+        questionsContainer.innerHTML = "";
+        learning.questions.forEach((question, index) => questionsContainer.appendChild(renderQuestion(question, index, learning.answers_map || {{}})));
+        applyAnswerKeyVisibility();
+      }}
+
+      function collectAnswers(question) {{
+        if (question.type === "FREETEXT") {{
+          const input = questionsContainer.querySelector(`input[data-question-id="${{question.id}}"]`);
+          return input && input.value ? [input.value] : [];
+        }}
+        const selected = Array.from(
+          questionsContainer.querySelectorAll(`input[name="answer_${{question.id}}"]:checked`)
+        ).map((element) => element.value);
+        return selected;
+      }}
+
+      function submitLearning() {{
+        const learning = LEARNINGS.find((item) => Number(item.id) === Number(state.activeLearningId));
+        if (!learning) return;
+        let scored = 0;
+        let correct = 0;
+        (learning.questions || []).forEach((question) => {{
+          if (question.type === "FREETEXT") return;
+          const expected = normalizeAnswer(question, (learning.answers_map || {{}})[question.id] || []);
+          const actual = normalizeAnswer(question, collectAnswers(question));
+          scored += 1;
+          if (JSON.stringify(expected) === JSON.stringify(actual)) correct += 1;
+        }});
+        const scoreLabel = scored > 0 ? (correct + "/" + scored) : "0/0";
+        writeProgress(learning.id, scoreLabel);
+        resultBox.textContent = "Completed. Last score: " + scoreLabel + ". Free-text answers are shown in the answer key and do not affect the score.";
+        resultBox.classList.remove("hidden");
+        renderCards();
+      }}
+
+      homeBtn.addEventListener("click", function () {{
+        state.activeLearningId = null;
+        state.answerKeyVisible = false;
+        learningView.classList.remove("active");
+        listView.classList.add("active");
+        resultBox.classList.add("hidden");
+      }});
+
+      metadataBtn.addEventListener("click", function () {{
+        const shouldShow = metadataPanel.style.display === "none" || !metadataPanel.style.display;
+        metadataPanel.style.display = shouldShow ? "block" : "none";
+        metadataBtn.classList.toggle("active", shouldShow);
+      }});
+
+      answerKeyBtn.addEventListener("click", function () {{
+        state.answerKeyVisible = !state.answerKeyVisible;
+        applyAnswerKeyVisibility();
+      }});
+
+      searchInput.addEventListener("input", renderCards);
+      submitBtn.addEventListener("click", submitLearning);
+
+      LEARNINGS.forEach((learning) => {{
+        state.progress[String(learning.id)] = readProgress(learning.id);
+      }});
+      summaryText.textContent = String(EXPORT_METADATA.learning_count || LEARNINGS.length) + " learnings · " + String(EXPORT_METADATA.question_count || 0) + " questions";
+      renderMetadata();
+      renderCards();
+    }})();
+  </script>
+</body>
+</html>
+"""
+        output_path.write_text(html_document, encoding="utf-8")
+        return output_path
 
     def _parse_db_link_map(self, value: str) -> dict[str, str]:
         raw = str(value or "").strip()

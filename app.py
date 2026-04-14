@@ -974,6 +974,42 @@ def _normalize_export_description(raw_description: str) -> str:
     cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_description or "")).strip()
     return cleaned[:500]
 
+
+def _parse_learning_ids(values: list[str]) -> list[int]:
+    parsed_ids: list[int] = []
+    for value in values:
+        cleaned = str(value).strip()
+        if not cleaned.isdigit():
+            continue
+        normalized = int(cleaned)
+        if normalized > 0:
+            parsed_ids.append(normalized)
+    return sorted(set(parsed_ids))
+
+
+def _get_learning_rows_for_export(database: db, selected_learning_ids: list[int], selected_tags: list[str]) -> list[dict]:
+    selected_rows_by_id: dict[int, dict] = {}
+
+    for learning_id in selected_learning_ids:
+        learning_row = database.get_learning_by_id(learning_id)
+        if learning_row:
+            selected_rows_by_id[int(learning_row.get("id", 0))] = learning_row
+
+    if selected_tags:
+        doc_learning_rows = database.get_learning_docs_by_tags(selected_tags)
+        for row in doc_learning_rows:
+            learning_id = row.get("learning_id")
+            if learning_id is None:
+                continue
+            normalized_id = int(learning_id)
+            if normalized_id in selected_rows_by_id:
+                continue
+            learning_row = database.get_learning_by_id(normalized_id)
+            if learning_row:
+                selected_rows_by_id[normalized_id] = learning_row
+
+    return sorted(selected_rows_by_id.values(), key=lambda item: str(item.get("file_name", "")).casefold())
+
 def _load_template_options() -> dict[str, Path]:
     template_dir = Path("/the-knowledge/03_TEMPLATES")
     if not template_dir.exists():
@@ -2821,7 +2857,21 @@ def export_page():
     database = db()
     docs = sorted(database.get_all_docs().values(), key=lambda row: str(row.get("title", "")).casefold())
     tags = database.get_all_tags()
-    return render_template("export.html", docs=docs, tags=tags)
+    learning_rows = database.get_all_learnings()
+    parser = DocsParser()
+    prepared_learning_rows: list[dict] = []
+    for row in learning_rows:
+        prepared = dict(row)
+        question_count = 0
+        try:
+            parsed_learning = parser.parse_learning_file(prepared.get("path_to_learning", ""))
+            questions = parsed_learning.get("questions", [])
+            question_count = len(questions) if isinstance(questions, list) else 0
+        except Exception:
+            logger.warning("Failed to parse learning for export page id=%s", prepared.get("id"))
+        prepared["question_count"] = question_count
+        prepared_learning_rows.append(prepared)
+    return render_template("export.html", docs=docs, tags=tags, learning_rows=prepared_learning_rows)
 
 
 @app.route("/export", methods=["POST"])
@@ -2889,6 +2939,90 @@ def export_docs_pdf():
         return redirect(url_for("export_page"))
 
     return send_file(output_pdf, as_attachment=True, download_name=output_pdf.name, mimetype="application/pdf")
+
+
+@app.route("/export/learnings/html", methods=["POST"])
+def export_learnings_html():
+    export_title = _normalize_export_title(request.form.get("title", ""))
+    export_mode = str(request.form.get("learning_export_mode", "ids")).strip().lower()
+    selected_learning_ids = _parse_learning_ids(request.form.getlist("selected_learning_ids"))
+    selected_tags = sorted(
+        {
+            tag
+            for tag in (_normalize_tag_value(value) for value in request.form.getlist("selected_tags"))
+            if tag
+        },
+        key=lambda value: value.casefold(),
+    )
+
+    if not export_title:
+        flash("A title is required for learning export.", "danger")
+        return redirect(url_for("export_page"))
+    if export_mode not in {"ids", "tags"}:
+        flash("Learning export mode must be either 'ids' or 'tags'.", "danger")
+        return redirect(url_for("export_page"))
+
+    database = db()
+    if export_mode == "ids":
+        if not selected_learning_ids:
+            flash("Please select at least one learning.", "warning")
+            return redirect(url_for("export_page"))
+
+        selected_rows = _get_learning_rows_for_export(database, selected_learning_ids, [])
+        if not selected_rows or len(selected_rows) != len(selected_learning_ids):
+            flash("One or more selected learnings are invalid.", "danger")
+            return redirect(url_for("export_page"))
+    else:
+        if not selected_tags:
+            flash("Please select at least one tag.", "warning")
+            return redirect(url_for("export_page"))
+
+        allowed_tags = set(database.get_all_tags())
+        if any(tag not in allowed_tags for tag in selected_tags):
+            flash("One or more selected tags are invalid.", "danger")
+            return redirect(url_for("export_page"))
+
+        selected_rows = _get_learning_rows_for_export(database, [], selected_tags)
+        if not selected_rows:
+            flash("No learning entries found for the selected tags.", "warning")
+            return redirect(url_for("export_page"))
+
+    parser = DocsParser()
+    learning_payloads: list[dict] = []
+    for row in selected_rows:
+        parsed_learning = parser.parse_learning_file(row.get("path_to_learning", ""))
+        learning_payloads.append(
+            {
+                "id": int(row.get("id", 0)),
+                "file_name": str(row.get("file_name", "")).strip(),
+                "source_note_name": str(row.get("source_note_name", "")).strip(),
+                "creation_date": str(row.get("creation_date", "N/A")).strip() or "N/A",
+                "last_modified_date": str(row.get("last_modified_date", "N/A")).strip() or "N/A",
+                "questions": parsed_learning.get("questions", []),
+                "answers": parsed_learning.get("answers", []),
+            }
+        )
+
+    if not learning_payloads:
+        flash("No learning content found for export.", "warning")
+        return redirect(url_for("export_page"))
+
+    try:
+        exporter = DocsExporter()
+        output_html = exporter.export_learnings_to_html(
+            export_title=export_title,
+            learning_payloads=learning_payloads,
+            metadata={
+                "description": _normalize_export_description(request.form.get("description", "")) or "N/A",
+                "tags": ", ".join(selected_tags) if selected_tags else "N/A",
+            },
+        )
+    except Exception as exc:
+        logger.error("Failed to create learning HTML export\n%s", traceback.format_exc())
+        flash(f"Learning export failed: {exc}", "danger")
+        return redirect(url_for("export_page"))
+
+    return send_file(output_html, as_attachment=True, download_name=output_html.name, mimetype="text/html")
 
 
 @app.route("/settings", methods=["GET"])

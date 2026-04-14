@@ -18,9 +18,12 @@
             <h1 class="h3 mb-1">Learning</h1>
             <p class="text-body-secondary mb-0">Manage learnings, launch exams, and keep source mappings up to date.</p>
         </div>
-        <form method="post" action="{{ url_for('learning_sync') }}">
-            <button class="btn btn-primary">Sync Learnings</button>
-        </form>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-primary" href="{{ url_for('export_page') }}">Open Export Center</a>
+            <form method="post" action="{{ url_for('learning_sync') }}">
+                <button class="btn btn-primary">Sync Learnings</button>
+            </form>
+        </div>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
