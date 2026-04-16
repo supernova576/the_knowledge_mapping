@@ -46,6 +46,7 @@ INDEX_PROGRESS_WEIGHTS = {
 }
 UNFINISHED_SW_STATUSES = {"", "Not Started", "In Progress"}
 FINISHED_SW_STATUSES = {"Done", "Not Needed"}
+HSLU_DONE_STATUSES = {"Done", "Not Needed"}
 
 
 def _normalize_sw_status(value: str | None) -> str:
@@ -1386,6 +1387,10 @@ def _load_deadlines(parser: DocsParser, include_description: bool = False) -> li
     return sorted(processed_rows, key=_deadline_sort_key)
 
 
+def _filter_open_deadlines(deadlines: list[dict]) -> list[dict]:
+    return [deadline for deadline in deadlines if str(deadline.get("status", "")).strip() != "Done"]
+
+
 def _count_open_todos(todos: list[dict]) -> int:
     return len([todo for todo in todos if str(todo.get("progress", "")).strip() != "Done"])
 
@@ -1442,30 +1447,56 @@ def _calculate_latest_ai_feedback_average(database: db) -> float | None:
     return sum(scores) / len(scores) if scores else None
 
 
+def _hslu_standard_semester_overview_ratio(parser: DocsParser, standard_semester: str) -> float:
+    normalized_semester = str(standard_semester or "").strip()
+    if not normalized_semester:
+        return 0.0
+
+    all_rows = parser.parse_hslu_sw_overview()
+    semester_rows = [row for row in all_rows if str(row.get("semester", "")).strip() == normalized_semester]
+    total = len(semester_rows)
+    if total <= 0:
+        return 0.0
+
+    remaining = 0
+    for row in semester_rows:
+        downloaded_status = str(row.get("downloaded", "")).strip()
+        documented_status = str(row.get("documented", "")).strip()
+        if downloaded_status not in HSLU_DONE_STATUSES or documented_status not in HSLU_DONE_STATUSES:
+            remaining += 1
+    return _normalize_ratio(remaining, total)
+
+
+def _hslu_standard_semester_checklist_ratio(parser: DocsParser, standard_semester: str) -> float:
+    normalized_semester = str(standard_semester or "").strip()
+    if not normalized_semester:
+        return 0.0
+
+    all_rows = parser.parse_hslu_semester_checklist()
+    semester_rows = [row for row in all_rows if str(row.get("semester", "")).strip() == normalized_semester]
+    total = len(semester_rows)
+    if total <= 0:
+        return 0.0
+
+    remaining = len([row for row in semester_rows if str(row.get("status", "")).strip() not in HSLU_DONE_STATUSES])
+    return _normalize_ratio(remaining, total)
+
+
 def _calculate_index_progress(
     *,
-    total_docs: int,
-    under_construction_count: int,
-    incompliant_docs: int,
-    open_todos_count: int,
-    total_deadlines_count: int,
-    average_ai_score: float | None,
+    deadlines: list[dict],
+    parser: DocsParser,
+    standard_semester: str,
 ) -> dict:
-    safe_average_ai_score = 100.0 if average_ai_score is None else max(0.0, min(100.0, average_ai_score))
-    under_construction_norm = _normalize_ratio(under_construction_count, total_docs)
-    incompliant_norm = _normalize_ratio(incompliant_docs, total_docs)
-    todos_norm = _normalize_count(open_todos_count)
-    deadlines_norm = _normalize_count(total_deadlines_count)
-    ai_gap_norm = (100.0 - safe_average_ai_score) / 100.0
+    total_deadlines_count = len(deadlines)
+    open_deadlines_count = len(_filter_open_deadlines(deadlines))
+    deadlines_ratio = _normalize_ratio(open_deadlines_count, total_deadlines_count)
 
-    weighted_penalty = (
-        INDEX_PROGRESS_WEIGHTS["under_construction"] * under_construction_norm
-        + INDEX_PROGRESS_WEIGHTS["incompliant"] * incompliant_norm
-        + INDEX_PROGRESS_WEIGHTS["todos"] * todos_norm
-        + INDEX_PROGRESS_WEIGHTS["deadlines"] * deadlines_norm
-        + INDEX_PROGRESS_WEIGHTS["ai_gap"] * ai_gap_norm
-    )
-    progress_value = round(max(0.0, min(100.0, 100.0 * (1.0 - weighted_penalty))))
+    overview_ratio = _hslu_standard_semester_overview_ratio(parser, standard_semester)
+    checklist_ratio = _hslu_standard_semester_checklist_ratio(parser, standard_semester)
+
+    open_work_ratio = (deadlines_ratio + overview_ratio + checklist_ratio) / 3.0
+    progress_value = round(max(0.0, min(100.0, (1.0 - open_work_ratio) * 100.0)))
 
     if progress_value >= 80:
         progress_color = "bg-success"
@@ -1480,7 +1511,6 @@ def _calculate_index_progress(
         "value": progress_value,
         "color_class": progress_color,
         "color": _progress_bar_color(progress_value),
-        "average_ai_score": safe_average_ai_score,
     }
 
 
@@ -2705,17 +2735,13 @@ def index():
     open_todos_count = _count_open_todos(_load_todos(parser, query=""))
     deadlines = _load_deadlines(parser, include_description=False)
     upcoming_deadlines_count = _count_upcoming_deadlines(deadlines)
-    total_deadlines_count = _count_all_deadlines(deadlines)
 
     under_construction_count = len(under_construction_docs)
-    average_ai_score = _calculate_latest_ai_feedback_average(database)
+    standard_semester = database.get_hslu_standard_semester()
     index_progress = _calculate_index_progress(
-        total_docs=total_docs,
-        under_construction_count=under_construction_count,
-        incompliant_docs=incompliant_docs,
-        open_todos_count=open_todos_count,
-        total_deadlines_count=total_deadlines_count,
-        average_ai_score=average_ai_score,
+        deadlines=deadlines,
+        parser=parser,
+        standard_semester=standard_semester,
     )
     selectable_docs = sorted(
         [{"id": str(item.get("id", "")).strip(), "title": str(item.get("title", "")).strip()} for item in database.get_all_docs().values()],
@@ -4012,7 +4038,7 @@ def sync_todos():
 def deadlines_overview():
     parser = DocsParser()
     try:
-        deadlines = _load_deadlines(parser, include_description=False)
+        deadlines = _filter_open_deadlines(_load_deadlines(parser, include_description=False))
     except BaseException as exc:
         if isinstance(exc, SystemExit):
             flash("Deadline parsing failed. Check conf.json deadlines path and parser logs.", "danger")
@@ -4089,6 +4115,105 @@ def delete_deadline():
     except BaseException:
         flash("Failed to delete deadline.", "danger")
 
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/resolve", methods=["POST"])
+def resolve_deadline():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        resolved = False
+        for index, deadline in enumerate(current_deadlines, start=1):
+            if str(index) != deadline_id:
+                continue
+            deadline["status"] = "Done"
+            resolved = True
+            break
+        if not resolved:
+            flash("Deadline not found.", "warning")
+            return redirect(url_for("deadlines_overview"))
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline resolved.", "success")
+    except BaseException:
+        flash("Failed to resolve deadline.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/status", methods=["POST"])
+def update_deadline_status():
+    deadline_id = request.form.get("deadline_id", "").strip()
+    status = request.form.get("status", "").strip()
+
+    if not deadline_id.isdigit():
+        flash("Deadline id is required.", "warning")
+        return redirect(url_for("deadlines_overview"))
+    if status not in DEADLINE_STATUS_OPTIONS:
+        flash("Invalid status selection.", "danger")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        updated = False
+        for index, deadline in enumerate(current_deadlines, start=1):
+            if str(index) != deadline_id:
+                continue
+            deadline["status"] = status
+            updated = True
+            break
+        if not updated:
+            flash("Deadline not found.", "warning")
+            return redirect(url_for("deadlines_overview"))
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(current_deadlines)
+        flash("Deadline status updated.", "success")
+    except BaseException:
+        flash("Failed to update deadline status.", "danger")
+
+    return redirect(url_for("deadlines_overview"))
+
+
+@app.route("/deadlines/delete_all", methods=["POST"])
+def delete_all_deadlines():
+    delete_mode = request.form.get("delete_mode", "").strip()
+    if delete_mode not in {"all", "done"}:
+        flash("Please select a valid bulk delete option.", "warning")
+        return redirect(url_for("deadlines_overview"))
+
+    try:
+        parser = DocsParser()
+        conf = _load_conf()
+        current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+
+        if delete_mode == "done":
+            kept_deadlines = [deadline for deadline in current_deadlines if str(deadline.get("status", "")).strip() != "Done"]
+            deleted_count = len(current_deadlines) - len(kept_deadlines)
+        else:
+            kept_deadlines = []
+            deleted_count = len(current_deadlines)
+
+        writer = DocsWriter(deadlines_file_path=conf.get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+        writer.write_deadlines_table(kept_deadlines)
+
+        if delete_mode == "done":
+            if deleted_count > 0:
+                flash(f"Deleted {deleted_count} done deadline(s).", "success")
+            else:
+                flash("No done deadlines found to delete.", "info")
+        else:
+            flash("All deadlines deleted.", "success")
+    except BaseException:
+        flash("Failed to delete all deadlines.", "danger")
     return redirect(url_for("deadlines_overview"))
 
 

@@ -19,7 +19,16 @@
 
         <div class="d-flex justify-content-between align-items-center mb-4 gap-2 flex-wrap">
             <h1 class="h3 mb-0">Deadlines</h1>
-            <span class="badge km-total-badge">Total: {{ total_deadlines }}</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge km-total-badge">Total: {{ total_deadlines }}</span>
+                <button
+                    type="button"
+                    class="btn btn-outline-danger btn-sm fw-semibold"
+                    data-bs-toggle="modal"
+                    data-bs-target="#bulkDeleteModal">
+                    BULK DELETE
+                </button>
+            </div>
         </div>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -38,24 +47,32 @@
             </form>
         </div></div>
 
-        <div class="card shadow-sm"><div class="card-body"><h2 class="h5">All deadlines</h2><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Name</th><th>Date</th><th>Time</th><th>Status</th><th>Edit</th><th>Delete</th></tr></thead><tbody>
+        <div class="card shadow-sm"><div class="card-body"><h2 class="h5">All deadlines</h2><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Name</th><th>Date</th><th>Time</th><th>Status</th><th>Edit</th><th>Resolve</th></tr></thead><tbody>
             {% for deadline in deadlines %}
             <tr>
                 <td class="km-deadline-name {% if deadline.row_class %}{{ deadline.row_class }}{% endif %}">{{ deadline.name }}</td>
                 <td>{{ deadline.date }}</td>
                 <td>{{ deadline.time }}</td>
                 <td>
-                    <img src="{{ url_for('static', filename='png/' ~ (deadline.status|lower) ~ '.png') }}"
-                         alt="{{ deadline.status }}"
-                         height="24" />
+                    <form method="post" action="{{ url_for('update_deadline_status') }}" class="d-flex gap-2">
+                        <input type="hidden" name="deadline_id" value="{{ deadline.id }}" />
+                        <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+                            {% for status_option in deadline_status_options %}
+                            <option value="{{ status_option }}" {% if deadline.status == status_option %}selected{% endif %}>{{ status_option }}</option>
+                            {% endfor %}
+                        </select>
+                        <img src="{{ url_for('static', filename='png/' ~ (deadline.status|lower) ~ '.png') }}"
+                             alt="{{ deadline.status }}"
+                             height="24" />
+                    </form>
                 </td>
                 <td>
                     <a class="btn btn-outline-primary btn-sm" href="{{ url_for('edit_deadline_page', deadline_id=deadline.id) }}">Edit</a>
                 </td>
                 <td>
-                    <form method="post" action="{{ url_for('delete_deadline') }}">
+                    <form method="post" action="{{ url_for('resolve_deadline') }}">
                         <input type="hidden" name="deadline_id" value="{{ deadline.id }}" />
-                        <button class="btn btn-outline-danger btn-sm">Delete</button>
+                        <button class="btn btn-success btn-sm">Resolve</button>
                     </form>
                 </td>
             </tr>
@@ -64,12 +81,67 @@
             {% endfor %}
         </tbody></table></div></div></div>
 
+        <div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form method="post" action="{{ url_for('delete_all_deadlines') }}">
+                        <div class="modal-header">
+                            <h2 class="modal-title fs-5" id="bulkDeleteModalLabel">Bulk Delete Deadlines</h2>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="mb-3">Choose what should be deleted.</p>
+                            <div class="mb-0">
+                                <label class="form-label" for="bulkDeleteMode">Delete scope</label>
+                                <select class="form-select" id="bulkDeleteMode" name="delete_mode" required>
+                                    <option value="all" selected>Everything</option>
+                                    <option value="done">Only Done items</option>
+                                </select>
+                            </div>
+                            <p class="text-muted small mb-0 mt-3" id="bulk-delete-help">
+                                Caution: This will permanently delete ALL deadlines.
+                            </p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-danger" id="bulkDeleteSubmit">Delete</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         {% include '_footer.html' %}
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
+    <script>
+        (function () {
+            const bulkDeleteMode = document.getElementById("bulkDeleteMode");
+            const bulkDeleteHelp = document.getElementById("bulk-delete-help");
+            const bulkDeleteSubmit = document.getElementById("bulkDeleteSubmit");
+
+            if (!bulkDeleteMode || !bulkDeleteHelp || !bulkDeleteSubmit) {
+                return;
+            }
+
+            function updateBulkDeleteCopy() {
+                if (bulkDeleteMode.value === "done") {
+                    bulkDeleteHelp.textContent = "Caution: This will permanently delete only deadlines with status 'Done'.";
+                    bulkDeleteSubmit.textContent = "Delete Done";
+                    return;
+                }
+
+                bulkDeleteHelp.textContent = "Caution: This will permanently delete ALL deadlines.";
+                bulkDeleteSubmit.textContent = "Delete All";
+            }
+
+            bulkDeleteMode.addEventListener("change", updateBulkDeleteCopy);
+            updateBulkDeleteCopy();
+        })();
+    </script>
     {% include '_theme_toggle_script.html' %}
 </body>
 
