@@ -1877,6 +1877,90 @@ def _append_deadline(name: str, date_label: str, time_label: str, status: str) -
     writer.write_deadlines_table(current_deadlines)
 
 
+def _append_hslu_deadlines(deadline_entries: list[dict]) -> None:
+    if not deadline_entries:
+        return
+    parser = DocsParser()
+    current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+    for entry in deadline_entries:
+        current_deadlines.append(
+            {
+                "name": str(entry.get("name", "")).strip(),
+                "description": "Created by HSLU Semester Overview",
+                "date": str(entry.get("date", "")).strip(),
+                "time": str(entry.get("time", "-")).strip() or "-",
+                "status": str(entry.get("status", "Not Started")).strip() if str(entry.get("status", "Not Started")).strip() in DEADLINE_STATUS_OPTIONS else "Not Started",
+            }
+        )
+    writer = DocsWriter(deadlines_file_path=_load_conf().get("deadlines", {}).get("full_path_to_deadlines_file", ""))
+    writer.write_deadlines_table(current_deadlines)
+
+
+def _extract_year_from_semester(semester: str) -> int | None:
+    normalized = str(semester or "").strip()
+    four_digit_match = re.search(r"(20\d{2})", normalized)
+    if four_digit_match:
+        return int(four_digit_match.group(1))
+    two_digit_matches = re.findall(r"(\d{2})", normalized)
+    if not two_digit_matches:
+        return now_in_zurich().year
+    return 2000 + int(two_digit_matches[-1])
+
+
+def _infer_hslu_kw_year(semester: str, kw: int) -> int:
+    if kw < 1 or kw > 53:
+        raise ValueError("KW must be between 1 and 53.")
+
+    normalized = str(semester or "").strip()
+    base_year = _extract_year_from_semester(normalized)
+
+    lowered = normalized.casefold()
+    candidate_years: list[int]
+
+    # HSLU semesters can span calendar years. Prefer the semester's start year
+    # for autumn weeks and the next year for the early-year continuation.
+    if "hs" in lowered or "herbst" in lowered:
+        candidate_years = [base_year if kw >= 30 else base_year + 1, base_year + 1, base_year]
+    elif "fs" in lowered or "frueh" in lowered or "früh" in lowered or "spring" in lowered:
+        candidate_years = [base_year, base_year - 1, base_year + 1]
+    else:
+        candidate_years = [base_year, base_year - 1, base_year + 1]
+
+    seen_years: set[int] = set()
+    for candidate_year in candidate_years:
+        if candidate_year in seen_years:
+            continue
+        seen_years.add(candidate_year)
+        try:
+            date.fromisocalendar(candidate_year, kw, 1)
+            return candidate_year
+        except ValueError:
+            continue
+
+    raise ValueError(f"Could not resolve a valid calendar year for semester '{semester}' and KW {kw}.")
+
+
+def _build_hslu_deadline_entry(semester: str, module: str, kw: str, thema: str, days_in_advance: int) -> dict:
+    if not str(kw or "").strip().isdigit():
+        raise ValueError("KW must be numeric.")
+    if days_in_advance < 0:
+        raise ValueError("Days in advance must be zero or greater.")
+    kw_value = int(str(kw).strip())
+    target_year = _infer_hslu_kw_year(semester, kw_value)
+    first_day_of_week = date.fromisocalendar(target_year, kw_value, 1)
+    due_date = first_day_of_week + timedelta(days=days_in_advance)
+    return {
+        "name": f"{str(module or '').strip()} - {str(thema or '').strip()}",
+        "date": due_date.strftime("%d.%m.%Y"),
+        "time": "-",
+        "status": "Not Started",
+    }
+
+
+def _is_hslu_deadline_created(deadline_marker: str) -> bool:
+    return str(deadline_marker or "").strip().casefold() == "created"
+
+
 def _perform_full_scan() -> None:
     logger.info("UI requested full scan")
     parser = DocsParser()
@@ -5391,6 +5475,158 @@ def hslu_semester_overview_update_status():
         flash("Failed to update markdown status. Check logs and file mapping.", "danger")
 
     return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+
+
+@app.route("/hslu/semester_overview/deadline/create", methods=["POST"])
+def hslu_semester_overview_create_deadline():
+    semester = request.form.get("semester", "").strip()
+    module = request.form.get("module", "").strip()
+    kw = request.form.get("kw", "").strip()
+    sw = request.form.get("sw", "").strip()
+    thema = request.form.get("thema", "").strip()
+    days_in_advance_raw = request.form.get("days_in_advance", "").strip()
+    sw_filter = request.form.get("sw_filter", "").strip()
+    module_filter = request.form.get("module_filter", "").strip()
+
+    if not semester or not module or not kw or not sw or not thema:
+        flash("Missing row identifiers for deadline creation.", "warning")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+
+    if not re.fullmatch(r"\d{1,3}", days_in_advance_raw):
+        flash("Days in advance must be a non-negative integer.", "warning")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+    days_in_advance = int(days_in_advance_raw)
+
+    parser = DocsParser()
+    rows = parser.parse_hslu_sw_overview()
+    target_row = next(
+        (
+            row
+            for row in rows
+            if str(row.get("semester", "")).strip() == semester
+            and str(row.get("module", "")).strip() == module
+            and str(row.get("KW", "")).strip() == kw
+            and str(row.get("SW", "")).strip() == sw
+        ),
+        None,
+    )
+    if target_row is None:
+        flash("Could not find the selected row in markdown.", "danger")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+    if _is_hslu_deadline_created(target_row.get("deadlines", "")):
+        flash(f"Deadline for KW {kw} / SW {sw} is already created.", "info")
+        return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+
+    try:
+        deadline_entry = _build_hslu_deadline_entry(semester, module, kw, thema, days_in_advance)
+        _append_hslu_deadlines([deadline_entry])
+        parser.update_hslu_sw_deadline_marker(semester, module, kw, sw, "CREATED")
+        flash(f"Created deadline '{deadline_entry['name']}' for {deadline_entry['date']}.", "success")
+    except ValueError as exc:
+        logger.warning(
+            "Failed to create HSLU deadline for semester=%s module=%s KW=%s SW=%s: %s",
+            semester,
+            module,
+            kw,
+            sw,
+            exc,
+        )
+        flash("Failed to create HSLU deadline. Validate semester/KW and markdown format.", "danger")
+    except SystemExit:
+        logger.warning(
+            "Failed to create HSLU deadline due to markdown/deadline write issue for semester=%s module=%s KW=%s SW=%s",
+            semester,
+            module,
+            kw,
+            sw,
+        )
+        flash("Failed to create HSLU deadline. Validate semester/KW and markdown format.", "danger")
+    except Exception:
+        logger.error("Failed to create single HSLU semester overview deadline\n%s", traceback.format_exc())
+        flash("Failed to create HSLU deadline unexpectedly.", "danger")
+
+    return redirect(url_for("hslu_semester_overview", semester=semester, module=module_filter, sw=sw_filter))
+
+
+@app.route("/hslu/semester_overview/deadline/create_bulk", methods=["POST"])
+def hslu_semester_overview_create_deadlines_bulk():
+    semester = request.form.get("semester", "").strip()
+    days_in_advance_raw = request.form.get("days_in_advance", "").strip()
+    confirmed = request.form.get("confirmed", "").strip().casefold() == "yes"
+
+    if not semester:
+        flash("Please select a semester first.", "warning")
+        return redirect(url_for("hslu_semester_overview"))
+    if not confirmed:
+        flash("Bulk creation cancelled.", "info")
+        return redirect(url_for("hslu_semester_overview", semester=semester))
+    if not re.fullmatch(r"\d{1,3}", days_in_advance_raw):
+        flash("Days in advance must be a non-negative integer.", "warning")
+        return redirect(url_for("hslu_semester_overview", semester=semester))
+    days_in_advance = int(days_in_advance_raw)
+
+    parser = DocsParser()
+    rows = parser.parse_hslu_sw_overview()
+    semester_rows = [row for row in rows if str(row.get("semester", "")).strip() == semester]
+    if not semester_rows:
+        flash("No overview rows found for selected semester.", "warning")
+        return redirect(url_for("hslu_semester_overview", semester=semester))
+
+    deadline_entries: list[dict] = []
+    rows_to_mark_created: list[tuple[str, str, str, str]] = []
+    skipped_rows = 0
+    for row in semester_rows:
+        if _is_hslu_deadline_created(row.get("deadlines", "")):
+            continue
+        try:
+            deadline_entries.append(
+                _build_hslu_deadline_entry(
+                    semester=semester,
+                    module=str(row.get("module", "")).strip(),
+                    kw=str(row.get("KW", "")).strip(),
+                    thema=str(row.get("thema", "")).strip(),
+                    days_in_advance=days_in_advance,
+                )
+            )
+            rows_to_mark_created.append(
+                (
+                    semester,
+                    str(row.get("module", "")).strip(),
+                    str(row.get("KW", "")).strip(),
+                    str(row.get("SW", "")).strip(),
+                )
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Skipping invalid HSLU bulk deadline row semester=%s module=%s KW=%s SW=%s: %s",
+                semester,
+                str(row.get("module", "")).strip(),
+                str(row.get("KW", "")).strip(),
+                str(row.get("SW", "")).strip(),
+                exc,
+            )
+            skipped_rows += 1
+
+    if not deadline_entries:
+        flash("All deadlines are already created or no valid rows were found.", "info")
+        return redirect(url_for("hslu_semester_overview", semester=semester))
+
+    try:
+        _append_hslu_deadlines(deadline_entries)
+        for sem, mod, kw, sw in rows_to_mark_created:
+            parser.update_hslu_sw_deadline_marker(sem, mod, kw, sw, "CREATED")
+        flash(
+            f"Created {len(deadline_entries)} deadline(s) for semester '{semester}'"
+            + (f"; skipped {skipped_rows} invalid row(s)." if skipped_rows else "."),
+            "success",
+        )
+    except SystemExit:
+        flash("Failed to bulk-create HSLU deadlines. Check logs and markdown format.", "danger")
+    except Exception:
+        logger.error("Failed to bulk-create HSLU semester overview deadlines\n%s", traceback.format_exc())
+        flash("Bulk creation failed unexpectedly.", "danger")
+
+    return redirect(url_for("hslu_semester_overview", semester=semester))
 
 
 @app.route("/hslu/semester_overview/sync", methods=["POST"])

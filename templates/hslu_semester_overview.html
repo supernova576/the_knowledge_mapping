@@ -71,7 +71,15 @@
 
         <div class="card shadow-sm">
             <div class="card-body">
-                <h2 class="h5">Semester overview table</h2>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <h2 class="h5 mb-0">Semester overview table</h2>
+                    <form method="post" action="{{ url_for('hslu_semester_overview_create_deadlines_bulk') }}" class="d-flex gap-2 align-items-center js-hslu-bulk-create-form">
+                        <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                        <input type="hidden" name="days_in_advance" value="" />
+                        <input type="hidden" name="confirmed" value="no" />
+                        <button class="btn btn-outline-primary btn-sm" {% if not selected_semester %}disabled{% endif %}>Create missing deadlines (semester)</button>
+                    </form>
+                </div>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
@@ -82,7 +90,7 @@
                                 <th>Thema</th>
                                 <th>Heruntergeladen</th>
                                 <th>Notes Dokumentiert</th>
-                                <th>Deadlines</th>
+                                <th>Deadline</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -130,7 +138,23 @@
                                         {% endif %}
                                     </form>
                                 </td>
-                                <td>{{ row.deadlines|render_hslu_inline_markdown }}</td>
+                                <td>
+                                    {% if row.deadlines == "CREATED" %}
+                                    <span class="badge text-bg-success">created</span>
+                                    {% else %}
+                                    <form method="post" action="{{ url_for('hslu_semester_overview_create_deadline') }}" class="js-hslu-create-deadline-form">
+                                        <input type="hidden" name="semester" value="{{ row.semester }}" />
+                                        <input type="hidden" name="module" value="{{ row.module }}" />
+                                        <input type="hidden" name="kw" value="{{ row.KW }}" />
+                                        <input type="hidden" name="sw" value="{{ row.SW }}" />
+                                        <input type="hidden" name="thema" value="{{ row.thema }}" />
+                                        <input type="hidden" name="days_in_advance" value="" />
+                                        <input type="hidden" name="sw_filter" value="{{ selected_sw }}" />
+                                        <input type="hidden" name="module_filter" value="{{ selected_module }}" />
+                                        <button type="submit" class="btn btn-outline-primary btn-sm">Create</button>
+                                    </form>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% else %}
                             <tr>
@@ -143,12 +167,170 @@
             </div>
         </div>
 
+        <div class="modal fade" id="hsluDaysInAdvanceModal" tabindex="-1" aria-labelledby="hsluDaysInAdvanceModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form id="hsluDaysInAdvanceForm" novalidate>
+                        <div class="modal-header">
+                            <h2 class="modal-title fs-5" id="hsluDaysInAdvanceModalLabel">Create deadlines</h2>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label for="hsluDaysInAdvanceInput" class="form-label">Days in advance</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    inputmode="numeric"
+                                    class="form-control"
+                                    id="hsluDaysInAdvanceInput"
+                                    value="0"
+                                    required
+                                />
+                                <div class="form-text">Enter a non-negative integer.</div>
+                                <div class="invalid-feedback" id="hsluDaysInAdvanceError">Please enter a valid non-negative integer.</div>
+                            </div>
+                            <p class="mb-0 d-none" id="hsluBulkConfirmText">
+                                Confirm bulk-create for all missing deadlines in this semester.
+                            </p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-primary" id="hsluDaysInAdvanceSubmitButton">Continue</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         {% include '_footer.html' %}
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
+    <script>
+        const hsluDaysModalElement = document.getElementById("hsluDaysInAdvanceModal");
+        const hsluDaysModal = new bootstrap.Modal(hsluDaysModalElement);
+        const hsluDaysForm = document.getElementById("hsluDaysInAdvanceForm");
+        const hsluDaysInput = document.getElementById("hsluDaysInAdvanceInput");
+        const hsluDaysError = document.getElementById("hsluDaysInAdvanceError");
+        const hsluBulkConfirmText = document.getElementById("hsluBulkConfirmText");
+        const hsluDaysSubmitButton = document.getElementById("hsluDaysInAdvanceSubmitButton");
+
+        function validateDaysInAdvance(rawValue) {
+            const trimmed = String(rawValue ?? "").trim();
+            if (!/^\d+$/.test(trimmed)) {
+                return null;
+            }
+            return trimmed;
+        }
+
+        function setDaysInputValidity(isValid, message = "Please enter a valid non-negative integer.") {
+            hsluDaysInput.classList.toggle("is-invalid", !isValid);
+            hsluDaysError.textContent = message;
+        }
+
+        function promptDaysInAdvanceWithHtml(options = {}) {
+            const {
+                title = "Create deadline",
+                submitLabel = "Create",
+                showBulkConfirmation = false,
+            } = options;
+
+            document.getElementById("hsluDaysInAdvanceModalLabel").textContent = title;
+            hsluDaysSubmitButton.textContent = submitLabel;
+            hsluBulkConfirmText.classList.toggle("d-none", !showBulkConfirmation);
+            hsluDaysInput.value = "0";
+            setDaysInputValidity(true);
+
+            return new Promise((resolve) => {
+                let resolved = false;
+
+                const cleanup = () => {
+                    hsluDaysForm.removeEventListener("submit", handleSubmit);
+                    hsluDaysModalElement.removeEventListener("hidden.bs.modal", handleHidden);
+                    hsluDaysModalElement.removeEventListener("shown.bs.modal", handleShown);
+                };
+
+                const finalize = (value) => {
+                    if (resolved) {
+                        return;
+                    }
+                    resolved = true;
+                    cleanup();
+                    resolve(value);
+                };
+
+                const handleSubmit = (event) => {
+                    event.preventDefault();
+                    const value = validateDaysInAdvance(hsluDaysInput.value);
+                    if (value === null) {
+                        setDaysInputValidity(false);
+                        hsluDaysInput.focus();
+                        hsluDaysInput.select();
+                        return;
+                    }
+                    setDaysInputValidity(true);
+                    finalize(value);
+                    hsluDaysModal.hide();
+                };
+
+                const handleHidden = () => {
+                    finalize(null);
+                };
+
+                const handleShown = () => {
+                    hsluDaysInput.focus();
+                    hsluDaysInput.select();
+                };
+
+                hsluDaysForm.addEventListener("submit", handleSubmit);
+                hsluDaysModalElement.addEventListener("hidden.bs.modal", handleHidden, { once: true });
+                hsluDaysModalElement.addEventListener("shown.bs.modal", handleShown, { once: true });
+                hsluDaysModal.show();
+            });
+        }
+
+        document.querySelectorAll(".js-hslu-create-deadline-form").forEach((formEl) => {
+            formEl.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const daysValue = await promptDaysInAdvanceWithHtml({
+                    title: "Create deadline",
+                    submitLabel: "Create",
+                });
+                if (daysValue === null) {
+                    return;
+                }
+                formEl.querySelector('input[name="days_in_advance"]').value = daysValue;
+                formEl.submit();
+            });
+        });
+
+        document.querySelectorAll(".js-hslu-bulk-create-form").forEach((formEl) => {
+            formEl.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const daysValue = await promptDaysInAdvanceWithHtml({
+                    title: "Create missing deadlines",
+                    submitLabel: "Confirm",
+                    showBulkConfirmation: true,
+                });
+                if (daysValue === null) {
+                    return;
+                }
+                formEl.querySelector('input[name="days_in_advance"]').value = daysValue;
+                formEl.querySelector('input[name="confirmed"]').value = "yes";
+                formEl.submit();
+            });
+        });
+
+        hsluDaysInput.addEventListener("input", () => {
+            if (validateDaysInAdvance(hsluDaysInput.value) !== null) {
+                setDaysInputValidity(true);
+            }
+        });
+    </script>
     {% include '_theme_toggle_script.html' %}
 </body>
 
