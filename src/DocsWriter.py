@@ -507,6 +507,30 @@ class DocsWriter:
             update_video_links_section=False,
         )
 
+    def remove_tags_from_note(self, doc_path: Path, tags_to_remove: list[str]) -> tuple[bool, list[str]]:
+        normalized_tags: list[str] = []
+        for tag in tags_to_remove or []:
+            raw = str(tag or "").strip()
+            if not raw:
+                continue
+            normalized_tags.append(raw if raw.startswith("#") else f"#{raw}")
+        if not normalized_tags:
+            return True, []
+
+        success, missing_sections = self.update_doc_resources(
+            doc_path=doc_path,
+            tags_to_add=[],
+            tags_to_remove=normalized_tags,
+            links_map={},
+            video_links_map={},
+            create_missing_sections=False,
+            update_links_section=False,
+            update_video_links_section=False,
+        )
+        if not success and missing_sections == ["#### Page Tags"]:
+            return True, []
+        return success, missing_sections
+
     def _insert_history_entry(self, current_content: str, reason: str, should_create_history: bool) -> tuple[str | None, bool]:
         history_header = "#### Page History"
         tags_header = "#### Page Tags"

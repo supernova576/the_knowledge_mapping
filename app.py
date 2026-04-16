@@ -837,6 +837,62 @@ def _project_kanban_file(project_path: Path) -> Path:
     return kanban_path
 
 
+def _resource_internal_doc_title(link: str) -> str:
+    normalized = str(link or "").strip()
+    if not normalized:
+        return ""
+
+    parsed = urlparse(normalized)
+    if parsed.scheme or parsed.netloc:
+        return ""
+
+    path_part = parsed.path.strip()
+    if not path_part or "/" in path_part or "\\" in path_part:
+        return ""
+
+    candidate = Path(path_part)
+    if candidate.suffix.lower() != ".md":
+        return ""
+
+    return candidate.stem.strip()
+
+
+def _sync_project_resource_note_tag(
+    parser: DocsParser,
+    writer: DocsWriter,
+    project_tag: str,
+    *,
+    previous_link: str = "",
+    current_link: str = "",
+) -> bool:
+    previous_doc = _resource_internal_doc_title(previous_link)
+    current_doc = _resource_internal_doc_title(current_link)
+    updated = False
+
+    if previous_doc and previous_doc != current_doc:
+        try:
+            previous_note_path = parser.find_note_path(previous_doc)
+        except FileNotFoundError:
+            previous_note_path = None
+
+        if previous_note_path is not None:
+            success, missing_sections = writer.remove_tags_from_note(previous_note_path, [project_tag])
+            if not success:
+                raise ValueError(f"Missing chapter(s) in '{previous_doc}': {', '.join(missing_sections)}.")
+            _set_rw_permissions_for_all_users(previous_note_path)
+            updated = True
+
+    if current_doc and current_doc != previous_doc:
+        current_note_path = parser.find_note_path(current_doc)
+        success, missing_sections = writer.add_tags_to_note(current_note_path, [project_tag])
+        if not success:
+            raise ValueError(f"Missing chapter(s) in '{current_doc}': {', '.join(missing_sections)}.")
+        _set_rw_permissions_for_all_users(current_note_path)
+        updated = True
+
+    return updated
+
+
 def _sync_project_kanban_deadlines(project_name: str, previous_items: list[dict], current_items: list[dict], conf: dict) -> None:
     parser = DocsParser()
     current_deadlines = parser.parse_deadlines_from_markdown(include_description=True)
@@ -3453,6 +3509,7 @@ def add_project_resource(project_name: str):
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
+        project_tag = _normalize_project_tag(resources.get("tag", ""), default=f"#PROJECT_{project_path.name}")
         description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
         note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
         selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
@@ -3470,10 +3527,13 @@ def add_project_resource(project_name: str):
         writer.write_project_resources_file(
             _project_resources_file(project_path),
             updated_resources,
-            f"#PROJECT_{project_path.name}",
+            project_tag,
             resources.get("description", ""),
         )
+        tags_updated = _sync_project_resource_note_tag(parser, writer, project_tag, current_link=link)
         _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        if tags_updated:
+            parser.parse_and_add_ALL_docs_to_db()
         flash("Resource added.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3487,6 +3547,7 @@ def edit_project_resource(project_name: str, resource_id: int):
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
+        project_tag = _normalize_project_tag(resources.get("tag", ""), default=f"#PROJECT_{project_path.name}")
         description = _normalize_project_text(request.form.get("description", ""), field_name="Resource description")
         note = _normalize_project_multiline_text(request.form.get("note", ""), field_name="Resource note", max_length=4000)
         selected_doc = _normalize_project_doc_title(request.form.get("selected_doc", ""))
@@ -3501,8 +3562,10 @@ def edit_project_resource(project_name: str, resource_id: int):
 
         updated_resources: list[dict] = []
         matched = False
+        previous_link = ""
         for item in resources.get("resources", []):
             if int(item.get("id", 0)) == resource_id:
+                previous_link = str(item.get("link", "")).strip()
                 updated_resources.append({"description": description, "link": link, "note": note})
                 matched = True
             else:
@@ -3516,10 +3579,13 @@ def edit_project_resource(project_name: str, resource_id: int):
         writer.write_project_resources_file(
             _project_resources_file(project_path),
             updated_resources,
-            f"#PROJECT_{project_path.name}",
+            project_tag,
             resources.get("description", ""),
         )
+        tags_updated = _sync_project_resource_note_tag(parser, writer, project_tag, previous_link=previous_link, current_link=link)
         _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        if tags_updated:
+            parser.parse_and_add_ALL_docs_to_db()
         flash("Resource updated.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
@@ -3532,6 +3598,7 @@ def delete_project_resource(project_name: str, resource_id: int):
     try:
         project_path = parser.resolve_project_path(project_name)
         resources = parser.parse_resources(project_path)
+        project_tag = _normalize_project_tag(resources.get("tag", ""), default=f"#PROJECT_{project_path.name}")
         updated_resources = [
             {"description": item.get("description", ""), "link": item.get("link", ""), "note": item.get("note", "")}
             for item in resources.get("resources", [])
@@ -3540,14 +3607,22 @@ def delete_project_resource(project_name: str, resource_id: int):
         if len(updated_resources) == len(resources.get("resources", [])):
             raise ValueError("Resource entry not found.")
 
+        previous_link = next(
+            (str(item.get("link", "")).strip() for item in resources.get("resources", []) if int(item.get("id", 0)) == resource_id),
+            "",
+        )
+
         writer = DocsWriter()
         writer.write_project_resources_file(
             _project_resources_file(project_path),
             updated_resources,
-            f"#PROJECT_{project_path.name}",
+            project_tag,
             resources.get("description", ""),
         )
+        tags_updated = _sync_project_resource_note_tag(parser, writer, project_tag, previous_link=previous_link)
         _set_rw_permissions_for_all_users(_project_resources_file(project_path))
+        if tags_updated:
+            parser.parse_and_add_ALL_docs_to_db()
         flash("Resource removed.", "success")
     except Exception as exc:
         flash(str(exc), "danger")
