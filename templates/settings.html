@@ -33,203 +33,425 @@
 
         <div class="card shadow-sm">
             <div class="card-body">
-                <h2>Openrouter Settings</h2>
                 <form method="post" action="{{ url_for('settings_save') }}" class="row g-3" novalidate>
-                    <div class="col-6">
-                        <div class="col-md-12">
-                            <label class="form-label" for="openrouter_model">Openrouter Model</label>
-                            <input type="text" class="form-control" id="openrouter_model" name="openrouter_model" required
-                                maxlength="200" value="{{ settings.openrouter_model }}">
-                        </div>
-                        <br>
-                        <div class="col-md-12">
-                            <label class="form-label" for="openrouter_provider">Openrouter Provider</label>
-                            <input type="text" class="form-control" id="openrouter_provider" name="openrouter_provider" required
-                                maxlength="500" value="{{ settings.openrouter_provider }}">
-                            <div class="form-text">Use a comma-separated list for multiple providers.</div>
-                        </div>
-                        <br>
-                        <div class="col-md-12">
-                            <label class="form-label" for="openrouter_api_key">Openrouter API Key</label>
-                            <div class="input-group">
-                                <input type="password" class="form-control" id="openrouter_api_key" name="openrouter_api_key"
-                                    required maxlength="500" autocomplete="off" value="{{ settings.openrouter_api_key }}">
-                                <button type="button" class="btn btn-outline-secondary" id="toggleApiKeyVisibility"
-                                    aria-label="Show API key" title="Show API key">
-                                    <span id="apiKeyIcon" aria-hidden="true">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
-                                            class="bi bi-eye" viewBox="0 0 16 16">
-                                            <path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8c-.058.087-.122.183-.195.288-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z" />
-                                            <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0" />
-                                        </svg>
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-6">
-                        <div class="border rounded p-3">
-                            <h3 class="h5 mb-2">Input Modalities</h3>
-                            <p class="text-body-secondary mb-3">Support is detected from the currently configured OpenRouter model.</p>
-                            <ul class="list-group">
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Text</span><span aria-label="Text support">{{ "✅" if media_support.text else "🚫" }}</span>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Image</span><span aria-label="Image support">{{ "✅" if media_support.image else "🚫" }}</span>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>File</span><span aria-label="File support">{{ "✅" if media_support.file else "🚫" }}</span>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Audio</span><span aria-label="Audio support">{{ "✅" if media_support.audio else "🚫" }}</span>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>Video</span><span aria-label="Video support">{{ "✅" if media_support.video else "🚫" }}</span>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-                    <hr class="mt-4 mb-4">
-                    <h2 class="mt-3">Output Paths</h2>
-                    <br>
                     <div class="col-12">
-                        <label class="form-label" for="db_path">DB Path</label>
-                        <input type="text" class="form-control" id="db_path" name="db_path" required maxlength="500"
-                            value="{{ settings.db_path }}">
-                    </div>
-
-                    <div class="col-12">
-                        <label class="form-label" for="log_file_path">Log File Path</label>
-                        <input type="text" class="form-control" id="log_file_path" name="log_file_path" required maxlength="500"
-                            value="{{ settings.log_file_path }}">
-                    </div>
-                    <hr class="mt-4 mb-4">
-                    <h2>Compliance Check</h2>
-                    <div class="col-12">
-                        <div class="alert alert-info mb-0" role="alert">
-                            Configure each compliance rule separately. Every rule has its own <strong>Enable</strong> toggle and related parameters.
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">1) Structure Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_structure_enabled"
-                                        name="compliance_structure_enabled" {% if settings.compliance_structure_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_structure_enabled">Enable</label>
+                        <ul class="nav nav-tabs mb-3" id="settingsCategoryTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="tab-markdown-sources" data-bs-toggle="tab"
+                                    data-bs-target="#panel-markdown-sources" type="button" role="tab"
+                                    aria-controls="panel-markdown-sources" aria-selected="true">Markdown Sources</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="tab-app-settings" data-bs-toggle="tab"
+                                    data-bs-target="#panel-app-settings" type="button" role="tab"
+                                    aria-controls="panel-app-settings" aria-selected="false">APP Settings</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="tab-openrouter-settings" data-bs-toggle="tab"
+                                    data-bs-target="#panel-openrouter-settings" type="button" role="tab"
+                                    aria-controls="panel-openrouter-settings" aria-selected="false">Openrouter Settings</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="tab-compliance-check" data-bs-toggle="tab"
+                                    data-bs-target="#panel-compliance-check" type="button" role="tab"
+                                    aria-controls="panel-compliance-check" aria-selected="false">Compliance Check</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content" id="settingsCategoryTabsContent">
+                            <div class="tab-pane fade show active" id="panel-markdown-sources" role="tabpanel"
+                                aria-labelledby="tab-markdown-sources" tabindex="0">
+                                <div class="col-12">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+                                        <h2 class="mb-0">Markdown Sources</h2>
+                                        <button class="btn btn-primary" type="submit">Save Settings</button>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <div class="alert alert-info mb-0" role="alert">
+                                        Define where the app reads and writes markdown-based knowledge sources. Grouped sections below explain which feature uses each path.
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="mb-2">
+                                            <h3 class="h5 mb-1">1) Core Markdown Sources</h3>
+                                            <p class="text-body-secondary mb-0">These paths point to the main vault locations used for documents, tasks, deadlines, linked projects, git-based version tracking, and image assets.</p>
+                                        </div>
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <label class="form-label" for="docs_full_path_to_docs">Docs Path</label>
+                                                <input type="text" class="form-control" id="docs_full_path_to_docs"
+                                                    name="docs_full_path_to_docs" required maxlength="500"
+                                                    value="{{ settings.docs_full_path_to_docs }}">
+                                                <div class="form-text">Root folder containing the markdown documentation that appears across the app.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="todo_full_path_to_todo_file">Todo File Path</label>
+                                                <input type="text" class="form-control" id="todo_full_path_to_todo_file"
+                                                    name="todo_full_path_to_todo_file" required maxlength="500"
+                                                    value="{{ settings.todo_full_path_to_todo_file }}">
+                                                <div class="form-text">Markdown file that stores the shared todo list shown in the dashboard.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="deadlines_full_path_to_deadlines_file">Deadlines File Path</label>
+                                                <input type="text" class="form-control" id="deadlines_full_path_to_deadlines_file"
+                                                    name="deadlines_full_path_to_deadlines_file" required maxlength="500"
+                                                    value="{{ settings.deadlines_full_path_to_deadlines_file }}">
+                                                <div class="form-text">Markdown file used to collect and parse deadline entries.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="projects_root_path">Projects Root Path</label>
+                                                <input type="text" class="form-control" id="projects_root_path" name="projects_root_path"
+                                                    required maxlength="500" value="{{ settings.projects_root_path }}">
+                                                <div class="form-text">Base directory where project folders are discovered.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="git_full_path_to_git_dir">Git Directory Path</label>
+                                                <input type="text" class="form-control" id="git_full_path_to_git_dir"
+                                                    name="git_full_path_to_git_dir" required maxlength="500"
+                                                    value="{{ settings.git_full_path_to_git_dir }}">
+                                                <div class="form-text">Repository location used for version checks and history-aware features.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="pictures_full_path_to_pictures">Pictures Path</label>
+                                                <input type="text" class="form-control" id="pictures_full_path_to_pictures"
+                                                    name="pictures_full_path_to_pictures" required maxlength="500"
+                                                    value="{{ settings.pictures_full_path_to_pictures }}">
+                                                <div class="form-text">Folder containing image assets referenced by your knowledge base.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="mb-2">
+                                            <h3 class="h5 mb-1">2) AI Feedback Files</h3>
+                                            <p class="text-body-secondary mb-0">These files and folders power the AI feedback workflow, including source material, prompt templates, generated feedback, and error reporting.</p>
+                                        </div>
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <label class="form-label" for="ai_feedback_the_knowledge_path">The Knowledge Path</label>
+                                                <input type="text" class="form-control" id="ai_feedback_the_knowledge_path"
+                                                    name="ai_feedback_the_knowledge_path" required maxlength="500"
+                                                    value="{{ settings.ai_feedback_the_knowledge_path }}">
+                                                <div class="form-text">Main knowledge source location passed into the AI feedback process.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="ai_feedback_output_path">Output Path</label>
+                                                <input type="text" class="form-control" id="ai_feedback_output_path"
+                                                    name="ai_feedback_output_path" required maxlength="500"
+                                                    value="{{ settings.ai_feedback_output_path }}">
+                                                <div class="form-text">Destination folder where generated AI feedback files are written.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="ai_feedback_prompt_template_path">Prompt Template Path</label>
+                                                <input type="text" class="form-control" id="ai_feedback_prompt_template_path"
+                                                    name="ai_feedback_prompt_template_path" required maxlength="500"
+                                                    value="{{ settings.ai_feedback_prompt_template_path }}">
+                                                <div class="form-text">Template file used to build prompts sent to the model.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="ai_feedback_feedback_template_path">Feedback Template Path</label>
+                                                <input type="text" class="form-control" id="ai_feedback_feedback_template_path"
+                                                    name="ai_feedback_feedback_template_path" required maxlength="500"
+                                                    value="{{ settings.ai_feedback_feedback_template_path }}">
+                                                <div class="form-text">Template used to format the generated feedback output.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="ai_feedback_error_output_path">Error Output Path</label>
+                                                <input type="text" class="form-control" id="ai_feedback_error_output_path"
+                                                    name="ai_feedback_error_output_path" required maxlength="500"
+                                                    value="{{ settings.ai_feedback_error_output_path }}">
+                                                <div class="form-text">Location where failed feedback runs or error details are stored.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="mb-2">
+                                            <h3 class="h5 mb-1">3) Learning and Playbooks</h3>
+                                            <p class="text-body-secondary mb-0">These paths support learning flows and automation playbooks, including prompt files, templates, and stored playbook definitions.</p>
+                                        </div>
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <label class="form-label" for="learning_learning_path">Learning Path</label>
+                                                <input type="text" class="form-control" id="learning_learning_path" name="learning_learning_path"
+                                                    required maxlength="500" value="{{ settings.learning_learning_path }}">
+                                                <div class="form-text">Primary location for learning-related content.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="learning_learning_ai_prompt_path">Learning AI Prompt Path</label>
+                                                <input type="text" class="form-control" id="learning_learning_ai_prompt_path"
+                                                    name="learning_learning_ai_prompt_path" required maxlength="500"
+                                                    value="{{ settings.learning_learning_ai_prompt_path }}">
+                                                <div class="form-text">Prompt template used when AI-assisted learning content is generated.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="learning_learning_template_path">Learning Template Path</label>
+                                                <input type="text" class="form-control" id="learning_learning_template_path"
+                                                    name="learning_learning_template_path" required maxlength="500"
+                                                    value="{{ settings.learning_learning_template_path }}">
+                                                <div class="form-text">Template file used when creating new learning entries.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="playbooks_path">Playbooks Path</label>
+                                                <input type="text" class="form-control" id="playbooks_path" name="playbooks_path"
+                                                    required maxlength="500" value="{{ settings.playbooks_path }}">
+                                                <div class="form-text">Folder containing saved automation playbook definitions.</div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <p class="text-body-secondary mb-2">All listed strings must exist in the document.</p>
-                            <label class="form-label" for="compliance_structure_strings_to_check">Required strings (one per line)</label>
-                            <textarea class="form-control" id="compliance_structure_strings_to_check" name="compliance_structure_strings_to_check"
-                                rows="5" maxlength="5000" required>{{ settings.compliance_structure_strings_to_check }}</textarea>
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">2) Created Date Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_created_enabled"
-                                        name="compliance_created_enabled" {% if settings.compliance_created_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_created_enabled">Enable</label>
+                            <div class="tab-pane fade" id="panel-app-settings" role="tabpanel" aria-labelledby="tab-app-settings"
+                                tabindex="0">
+                                <div class="col-12">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+                                        <h2 class="mb-0 mt-3">APP Settings</h2>
+                                        <button class="btn btn-primary" type="submit">Save Settings</button>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <div class="alert alert-info mb-0" role="alert">
+                                        Configure where the app stores its own runtime data. These settings affect internal persistence and diagnostics rather than markdown content sources.
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="mb-2">
+                                            <h3 class="h5 mb-1">1) Output Paths</h3>
+                                            <p class="text-body-secondary mb-0">These paths define where the application writes its database and log output.</p>
+                                        </div>
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <label class="form-label" for="db_path">DB Path</label>
+                                                <input type="text" class="form-control" id="db_path" name="db_path" required maxlength="500"
+                                                    value="{{ settings.db_path }}">
+                                                <div class="form-text">SQLite database file used by the application to persist structured data.</div>
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label" for="log_file_path">Log File Path</label>
+                                                <input type="text" class="form-control" id="log_file_path" name="log_file_path" required maxlength="500"
+                                                    value="{{ settings.log_file_path }}">
+                                                <div class="form-text">Application log file used for debugging, diagnostics, and runtime traceability.</div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <p class="text-body-secondary mb-0">Requires a valid "Erstellt" date in the document metadata.</p>
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">3) Beschreibung Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_beschreibung_enabled"
-                                        name="compliance_beschreibung_enabled" {% if settings.compliance_beschreibung_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_beschreibung_enabled">Enable</label>
+                            <div class="tab-pane fade" id="panel-openrouter-settings" role="tabpanel"
+                                aria-labelledby="tab-openrouter-settings" tabindex="0">
+                                <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+                                    <h2 class="mb-0">Openrouter Settings</h2>
+                                    <button class="btn btn-primary" type="submit">Save Settings</button>
+                                </div>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <div class="col-md-12">
+                                            <label class="form-label" for="openrouter_model">Openrouter Model</label>
+                                            <input type="text" class="form-control" id="openrouter_model" name="openrouter_model" required
+                                                maxlength="200" value="{{ settings.openrouter_model }}">
+                                        </div>
+                                        <br>
+                                        <div class="col-md-12">
+                                            <label class="form-label" for="openrouter_provider">Openrouter Provider</label>
+                                            <input type="text" class="form-control" id="openrouter_provider" name="openrouter_provider"
+                                                required maxlength="500" value="{{ settings.openrouter_provider }}">
+                                            <div class="form-text">Use a comma-separated list for multiple providers.</div>
+                                        </div>
+                                        <br>
+                                        <div class="col-md-12">
+                                            <label class="form-label" for="openrouter_api_key">Openrouter API Key</label>
+                                            <div class="input-group">
+                                                <input type="password" class="form-control" id="openrouter_api_key" name="openrouter_api_key"
+                                                    required maxlength="500" autocomplete="off" value="{{ settings.openrouter_api_key }}">
+                                                <button type="button" class="btn btn-outline-secondary" id="toggleApiKeyVisibility"
+                                                    aria-label="Show API key" title="Show API key">
+                                                    <span id="apiKeyIcon" aria-hidden="true">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
+                                                            class="bi bi-eye" viewBox="0 0 16 16">
+                                                            <path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8c-.058.087-.122.183-.195.288-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z" />
+                                                            <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0" />
+                                                        </svg>
+                                                    </span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <br>
+                                        <div class="col-md-12">
+                                            <label class="form-label" for="ai_feedback_timeout_seconds">AI Feedback Timeout (seconds)</label>
+                                            <input type="number" class="form-control" id="ai_feedback_timeout_seconds"
+                                                name="ai_feedback_timeout_seconds" min="1" step="1" required
+                                                value="{{ settings.ai_feedback_timeout_seconds }}">
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="border rounded p-3">
+                                            <h3 class="h5 mb-2">Input Modalities</h3>
+                                            <p class="text-body-secondary mb-3">Support is detected from the currently configured OpenRouter model.</p>
+                                            <ul class="list-group">
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <span>Text</span><span aria-label="Text support">{{ "✅" if media_support.text else "🚫" }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <span>Image</span><span aria-label="Image support">{{ "✅" if media_support.image else "🚫" }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <span>File</span><span aria-label="File support">{{ "✅" if media_support.file else "🚫" }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <span>Audio</span><span aria-label="Audio support">{{ "✅" if media_support.audio else "🚫" }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <span>Video</span><span aria-label="Video support">{{ "✅" if media_support.video else "🚫" }}</span>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <p class="text-body-secondary mb-2">The description section must not exceed the configured sentence limit.</p>
-                            <label class="form-label" for="compliance_beschreibung_max">Maximum sentence count</label>
-                            <input type="number" class="form-control" id="compliance_beschreibung_max" name="compliance_beschreibung_max"
-                                min="1" step="1" required value="{{ settings.compliance_beschreibung_max }}">
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">4) External Links Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_external_links_enabled"
-                                        name="compliance_external_links_enabled" {% if settings.compliance_external_links_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_external_links_enabled">Enable</label>
+                            <div class="tab-pane fade" id="panel-compliance-check" role="tabpanel"
+                                aria-labelledby="tab-compliance-check" tabindex="0">
+                                <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+                                    <h2 class="mb-0">Compliance Check</h2>
+                                    <button class="btn btn-primary" type="submit">Save Settings</button>
+                                </div>
+                                <div class="col-12">
+                                    <div class="alert alert-info mb-0" role="alert">
+                                        Configure each compliance rule separately. Every rule has its own <strong>Enable</strong> toggle and related parameters.
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">1) Structure Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_structure_enabled"
+                                                    name="compliance_structure_enabled" {% if settings.compliance_structure_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_structure_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">All listed strings must exist in the document.</p>
+                                        <label class="form-label" for="compliance_structure_strings_to_check">Required strings (one per line)</label>
+                                        <textarea class="form-control" id="compliance_structure_strings_to_check"
+                                            name="compliance_structure_strings_to_check" rows="5" maxlength="5000"
+                                            required>{{ settings.compliance_structure_strings_to_check }}</textarea>
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">2) Created Date Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_created_enabled"
+                                                    name="compliance_created_enabled" {% if settings.compliance_created_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_created_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-0">Requires a valid "Erstellt" date in the document metadata.</p>
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">3) Beschreibung Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_beschreibung_enabled"
+                                                    name="compliance_beschreibung_enabled" {% if settings.compliance_beschreibung_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_beschreibung_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">The description section must not exceed the configured sentence limit.</p>
+                                        <label class="form-label" for="compliance_beschreibung_max">Maximum sentence count</label>
+                                        <input type="number" class="form-control" id="compliance_beschreibung_max"
+                                            name="compliance_beschreibung_max" min="1" step="1" required
+                                            value="{{ settings.compliance_beschreibung_max }}">
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">4) External Links Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_external_links_enabled"
+                                                    name="compliance_external_links_enabled" {% if settings.compliance_external_links_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_external_links_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">Requires at least this number of external links.</p>
+                                        <label class="form-label" for="compliance_external_links_min">Minimum external links</label>
+                                        <input type="number" class="form-control" id="compliance_external_links_min"
+                                            name="compliance_external_links_min" min="0" step="1" required
+                                            value="{{ settings.compliance_external_links_min }}">
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">5) Tags Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_tags_enabled"
+                                                    name="compliance_tags_enabled" {% if settings.compliance_tags_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_tags_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">Requires at least this number of tags in "Page Tags".</p>
+                                        <label class="form-label" for="compliance_tags_min">Minimum tags</label>
+                                        <input type="number" class="form-control" id="compliance_tags_min" name="compliance_tags_min"
+                                            min="0" step="1" required value="{{ settings.compliance_tags_min }}">
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">6) Video Links Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_video_links_enabled"
+                                                    name="compliance_video_links_enabled" {% if settings.compliance_video_links_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_video_links_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">
+                                            If document length is above this threshold, at least one video link is required.
+                                        </p>
+                                        <label class="form-label" for="compliance_video_links_char">Character threshold</label>
+                                        <input type="number" class="form-control" id="compliance_video_links_char"
+                                            name="compliance_video_links_char" min="1" step="1" required
+                                            value="{{ settings.compliance_video_links_char }}">
+                                    </div>
+                                </div>
+                                <br>
+                                <div class="col-12">
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h3 class="h5 mb-0">7) AI Feedback Score Rule</h3>
+                                            <div class="form-check m-0">
+                                                <input class="form-check-input" type="checkbox" value="true" id="compliance_ai_feedback_enabled"
+                                                    name="compliance_ai_feedback_enabled" {% if settings.compliance_ai_feedback_enabled %}checked{% endif %}>
+                                                <label class="form-check-label" for="compliance_ai_feedback_enabled">Enable</label>
+                                            </div>
+                                        </div>
+                                        <p class="text-body-secondary mb-2">
+                                            Uses the latest AI feedback score of the note. If the score is below the threshold, the note is marked incompliant.
+                                        </p>
+                                        <label class="form-label" for="compliance_ai_feedback_min">Minimum score</label>
+                                        <input type="number" class="form-control" id="compliance_ai_feedback_min"
+                                            name="compliance_ai_feedback_min" min="0" step="1" required
+                                            value="{{ settings.compliance_ai_feedback_min }}">
+                                    </div>
                                 </div>
                             </div>
-                            <p class="text-body-secondary mb-2">Requires at least this number of external links.</p>
-                            <label class="form-label" for="compliance_external_links_min">Minimum external links</label>
-                            <input type="number" class="form-control" id="compliance_external_links_min" name="compliance_external_links_min"
-                                min="0" step="1" required value="{{ settings.compliance_external_links_min }}">
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">5) Tags Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_tags_enabled"
-                                        name="compliance_tags_enabled" {% if settings.compliance_tags_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_tags_enabled">Enable</label>
-                                </div>
-                            </div>
-                            <p class="text-body-secondary mb-2">Requires at least this number of tags in "Page Tags".</p>
-                            <label class="form-label" for="compliance_tags_min">Minimum tags</label>
-                            <input type="number" class="form-control" id="compliance_tags_min" name="compliance_tags_min"
-                                min="0" step="1" required value="{{ settings.compliance_tags_min }}">
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">6) Video Links Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_video_links_enabled"
-                                        name="compliance_video_links_enabled" {% if settings.compliance_video_links_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_video_links_enabled">Enable</label>
-                                </div>
-                            </div>
-                            <p class="text-body-secondary mb-2">
-                                If document length is above this threshold, at least one video link is required.
-                            </p>
-                            <label class="form-label" for="compliance_video_links_char">Character threshold</label>
-                            <input type="number" class="form-control" id="compliance_video_links_char" name="compliance_video_links_char"
-                                min="1" step="1" required value="{{ settings.compliance_video_links_char }}">
-                        </div>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="border rounded p-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h3 class="h5 mb-0">7) AI Feedback Score Rule</h3>
-                                <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" value="true" id="compliance_ai_feedback_enabled"
-                                        name="compliance_ai_feedback_enabled" {% if settings.compliance_ai_feedback_enabled %}checked{% endif %}>
-                                    <label class="form-check-label" for="compliance_ai_feedback_enabled">Enable</label>
-                                </div>
-                            </div>
-                            <p class="text-body-secondary mb-2">
-                                Uses the latest AI feedback score of the note. If the score is below the threshold, the note is marked incompliant.
-                            </p>
-                            <label class="form-label" for="compliance_ai_feedback_min">Minimum score</label>
-                            <input type="number" class="form-control" id="compliance_ai_feedback_min" name="compliance_ai_feedback_min"
-                                min="0" step="1" required value="{{ settings.compliance_ai_feedback_min }}">
                         </div>
                     </div>
 

@@ -3288,6 +3288,14 @@ def settings_page():
     ai_conf = conf.get("ai_feedback", {}) if isinstance(conf.get("ai_feedback", {}), dict) else {}
     db_conf = conf.get("db", {}) if isinstance(conf.get("db", {}), dict) else {}
     log_conf = conf.get("log", {}) if isinstance(conf.get("log", {}), dict) else {}
+    docs_conf = conf.get("docs", {}) if isinstance(conf.get("docs", {}), dict) else {}
+    todo_conf = conf.get("todo", {}) if isinstance(conf.get("todo", {}), dict) else {}
+    deadlines_conf = conf.get("deadlines", {}) if isinstance(conf.get("deadlines", {}), dict) else {}
+    projects_conf = conf.get("projects", {}) if isinstance(conf.get("projects", {}), dict) else {}
+    git_conf = conf.get("git", {}) if isinstance(conf.get("git", {}), dict) else {}
+    pictures_conf = conf.get("pictures", {}) if isinstance(conf.get("pictures", {}), dict) else {}
+    learning_conf = conf.get("learning", {}) if isinstance(conf.get("learning", {}), dict) else {}
+    playbooks_conf = conf.get("playbooks", {}) if isinstance(conf.get("playbooks", {}), dict) else {}
     compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
     compliance_defaults = DocsParser.DEFAULT_COMPLIANCE_CHECK
     structure_conf = compliance_conf.get("structure", {}) if isinstance(compliance_conf.get("structure", {}), dict) else {}
@@ -3307,8 +3315,24 @@ def settings_page():
         "openrouter_model": str(ai_conf.get("model", "")).strip(),
         "openrouter_provider": provider_value,
         "openrouter_api_key": str(ai_conf.get("api_key", "")).strip(),
+        "ai_feedback_timeout_seconds": str(ai_conf.get("timeout_seconds", 120)).strip(),
         "db_path": str(db_conf.get("db_path", "")).strip(),
         "log_file_path": str(log_conf.get("log_file_path", "")).strip(),
+        "docs_full_path_to_docs": str(docs_conf.get("full_path_to_docs", "")).strip(),
+        "todo_full_path_to_todo_file": str(todo_conf.get("full_path_to_todo_file", "")).strip(),
+        "deadlines_full_path_to_deadlines_file": str(deadlines_conf.get("full_path_to_deadlines_file", "")).strip(),
+        "projects_root_path": str(projects_conf.get("root_path", "")).strip(),
+        "git_full_path_to_git_dir": str(git_conf.get("full_path_to_git_dir", "")).strip(),
+        "pictures_full_path_to_pictures": str(pictures_conf.get("full_path_to_pictures", "")).strip(),
+        "ai_feedback_the_knowledge_path": str(ai_conf.get("the_knowledge_path", "")).strip(),
+        "ai_feedback_output_path": str(ai_conf.get("output_path", "")).strip(),
+        "ai_feedback_prompt_template_path": str(ai_conf.get("prompt_template_path", "")).strip(),
+        "ai_feedback_feedback_template_path": str(ai_conf.get("feedback_template_path", "")).strip(),
+        "ai_feedback_error_output_path": str(ai_conf.get("error_output_path", "")).strip(),
+        "learning_learning_path": str(learning_conf.get("learning_path", "")).strip(),
+        "learning_learning_ai_prompt_path": str(learning_conf.get("learning_ai_prompt_path", "")).strip(),
+        "learning_learning_template_path": str(learning_conf.get("learning_template_path", "")).strip(),
+        "playbooks_path": str(playbooks_conf.get("path", "")).strip(),
         "compliance_structure_enabled": bool(
             structure_conf.get("enabled", compliance_defaults["structure"]["enabled"])
         ),
@@ -3359,8 +3383,88 @@ def settings_save():
         openrouter_api_key = _sanitize_conf_text(
             request.form.get("openrouter_api_key"), "Openrouter API Key", max_length=500
         )
+        ai_feedback_timeout_seconds = _sanitize_non_negative_int(
+            request.form.get("ai_feedback_timeout_seconds"),
+            "AI Feedback Timeout Seconds",
+            minimum=1,
+        )
         db_path = _sanitize_conf_text(request.form.get("db_path"), "DB Path", max_length=500)
         log_file_path = _sanitize_conf_text(request.form.get("log_file_path"), "Log File Path", max_length=500)
+        docs_full_path_to_docs = _sanitize_conf_text(
+            request.form.get("docs_full_path_to_docs"),
+            "Docs Full Path",
+            max_length=500,
+        )
+        todo_full_path_to_todo_file = _sanitize_conf_text(
+            request.form.get("todo_full_path_to_todo_file"),
+            "Todo File Path",
+            max_length=500,
+        )
+        deadlines_full_path_to_deadlines_file = _sanitize_conf_text(
+            request.form.get("deadlines_full_path_to_deadlines_file"),
+            "Deadlines File Path",
+            max_length=500,
+        )
+        projects_root_path = _sanitize_conf_text(
+            request.form.get("projects_root_path"),
+            "Projects Root Path",
+            max_length=500,
+        )
+        git_full_path_to_git_dir = _sanitize_conf_text(
+            request.form.get("git_full_path_to_git_dir"),
+            "Git Directory Path",
+            max_length=500,
+        )
+        pictures_full_path_to_pictures = _sanitize_conf_text(
+            request.form.get("pictures_full_path_to_pictures"),
+            "Pictures Path",
+            max_length=500,
+        )
+        ai_feedback_the_knowledge_path = _sanitize_conf_text(
+            request.form.get("ai_feedback_the_knowledge_path"),
+            "AI Feedback The Knowledge Path",
+            max_length=500,
+        )
+        ai_feedback_output_path = _sanitize_conf_text(
+            request.form.get("ai_feedback_output_path"),
+            "AI Feedback Output Path",
+            max_length=500,
+        )
+        ai_feedback_prompt_template_path = _sanitize_conf_text(
+            request.form.get("ai_feedback_prompt_template_path"),
+            "AI Feedback Prompt Template Path",
+            max_length=500,
+        )
+        ai_feedback_feedback_template_path = _sanitize_conf_text(
+            request.form.get("ai_feedback_feedback_template_path"),
+            "AI Feedback Template Path",
+            max_length=500,
+        )
+        ai_feedback_error_output_path = _sanitize_conf_text(
+            request.form.get("ai_feedback_error_output_path"),
+            "AI Feedback Error Output Path",
+            max_length=500,
+        )
+        learning_learning_path = _sanitize_conf_text(
+            request.form.get("learning_learning_path"),
+            "Learning Path",
+            max_length=500,
+        )
+        learning_learning_ai_prompt_path = _sanitize_conf_text(
+            request.form.get("learning_learning_ai_prompt_path"),
+            "Learning AI Prompt Path",
+            max_length=500,
+        )
+        learning_learning_template_path = _sanitize_conf_text(
+            request.form.get("learning_learning_template_path"),
+            "Learning Template Path",
+            max_length=500,
+        )
+        playbooks_path = _sanitize_conf_text(
+            request.form.get("playbooks_path"),
+            "Playbooks Path",
+            max_length=500,
+        )
         openrouter_provider = _parse_provider_list(request.form.get("openrouter_provider"))
         compliance_structure_enabled = _parse_checkbox_bool(request.form.get("compliance_structure_enabled"))
         compliance_structure_strings_to_check = _parse_multiline_conf_strings(
@@ -3416,6 +3520,38 @@ def settings_save():
     if not isinstance(log_conf, dict):
         log_conf = {}
         conf["log"] = log_conf
+    docs_conf = conf.setdefault("docs", {})
+    if not isinstance(docs_conf, dict):
+        docs_conf = {}
+        conf["docs"] = docs_conf
+    todo_conf = conf.setdefault("todo", {})
+    if not isinstance(todo_conf, dict):
+        todo_conf = {}
+        conf["todo"] = todo_conf
+    deadlines_conf = conf.setdefault("deadlines", {})
+    if not isinstance(deadlines_conf, dict):
+        deadlines_conf = {}
+        conf["deadlines"] = deadlines_conf
+    projects_conf = conf.setdefault("projects", {})
+    if not isinstance(projects_conf, dict):
+        projects_conf = {}
+        conf["projects"] = projects_conf
+    git_conf = conf.setdefault("git", {})
+    if not isinstance(git_conf, dict):
+        git_conf = {}
+        conf["git"] = git_conf
+    pictures_conf = conf.setdefault("pictures", {})
+    if not isinstance(pictures_conf, dict):
+        pictures_conf = {}
+        conf["pictures"] = pictures_conf
+    learning_conf = conf.setdefault("learning", {})
+    if not isinstance(learning_conf, dict):
+        learning_conf = {}
+        conf["learning"] = learning_conf
+    playbooks_conf = conf.setdefault("playbooks", {})
+    if not isinstance(playbooks_conf, dict):
+        playbooks_conf = {}
+        conf["playbooks"] = playbooks_conf
     compliance_conf = conf.setdefault("compliance_check", {})
     if not isinstance(compliance_conf, dict):
         compliance_conf = {}
@@ -3424,8 +3560,24 @@ def settings_save():
     ai_conf["model"] = openrouter_model
     ai_conf["provider"] = openrouter_provider
     ai_conf["api_key"] = openrouter_api_key
+    ai_conf["timeout_seconds"] = ai_feedback_timeout_seconds
+    ai_conf["the_knowledge_path"] = ai_feedback_the_knowledge_path
+    ai_conf["output_path"] = ai_feedback_output_path
+    ai_conf["prompt_template_path"] = ai_feedback_prompt_template_path
+    ai_conf["feedback_template_path"] = ai_feedback_feedback_template_path
+    ai_conf["error_output_path"] = ai_feedback_error_output_path
     db_conf["db_path"] = db_path
     log_conf["log_file_path"] = log_file_path
+    docs_conf["full_path_to_docs"] = docs_full_path_to_docs
+    todo_conf["full_path_to_todo_file"] = todo_full_path_to_todo_file
+    deadlines_conf["full_path_to_deadlines_file"] = deadlines_full_path_to_deadlines_file
+    projects_conf["root_path"] = projects_root_path
+    git_conf["full_path_to_git_dir"] = git_full_path_to_git_dir
+    pictures_conf["full_path_to_pictures"] = pictures_full_path_to_pictures
+    learning_conf["learning_path"] = learning_learning_path
+    learning_conf["learning_ai_prompt_path"] = learning_learning_ai_prompt_path
+    learning_conf["learning_template_path"] = learning_learning_template_path
+    playbooks_conf["path"] = playbooks_path
     compliance_conf["structure"] = {
         "enabled": compliance_structure_enabled,
         "strings_to_check": compliance_structure_strings_to_check,
