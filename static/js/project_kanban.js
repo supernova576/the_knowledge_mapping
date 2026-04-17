@@ -10,6 +10,9 @@
   const deleteMessage = document.getElementById('kanban-delete-message');
   const deleteConfirm = document.getElementById('kanban-delete-confirm');
   const deleteModal = deleteModalElement ? new bootstrap.Modal(deleteModalElement) : null;
+  const progressContainer = document.getElementById('kanban-progress');
+  const progressFill = document.getElementById('kanban-progress-fill');
+  const progressLabel = document.getElementById('kanban-progress-label');
   let pendingDelete = null;
 
   const escapeHtml = (value) => String(value || '')
@@ -39,11 +42,24 @@
     refreshHandle = window.setTimeout(render, 30000);
   };
 
+  const renderProgress = (progress) => {
+    if (!progressContainer || !progressFill || !progressLabel) {
+      return;
+    }
+    const value = Math.max(0, Math.min(100, Number(progress?.value) || 0));
+    const color = String(progress?.color || '#6c757d');
+    progressContainer.setAttribute('aria-valuenow', String(value));
+    progressFill.style.width = `${value}%`;
+    progressFill.style.backgroundColor = color;
+    progressLabel.textContent = `${value}%`;
+  };
+
   const render = async () => {
     try {
       const payload = await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban`, {
         headers: { Accept: 'application/json' }
       });
+      renderProgress(payload.progress || {});
 
       const groups = payload.columns || {};
       const deadlineMapping = payload.deadline_mapping || {};
@@ -52,8 +68,28 @@
           const deadline = deadlineMapping[item.deliverable] || {};
           return `
             <div class="card mb-3 shadow-sm">
-              <div class="card-body">
-                <form class="km-kanban-item-form" data-item-id="${item.id}">
+              <div class="accordion" id="kanban-item-accordion-${item.id}">
+                <div class="accordion-item">
+                  <h3 class="accordion-header" id="kanban-item-heading-${item.id}">
+                    <button
+                      class="accordion-button collapsed"
+                      type="button"
+                      data-bs-toggle="collapse"
+                      data-bs-target="#kanban-item-collapse-${item.id}"
+                      aria-expanded="false"
+                      aria-controls="kanban-item-collapse-${item.id}"
+                    >
+                      ${escapeHtml(item.deliverable || 'Untitled Deliverable')}
+                    </button>
+                  </h3>
+                  <div
+                    id="kanban-item-collapse-${item.id}"
+                    class="accordion-collapse collapse"
+                    aria-labelledby="kanban-item-heading-${item.id}"
+                    data-bs-parent="#kanban-item-accordion-${item.id}"
+                  >
+                    <div class="accordion-body">
+                      <form class="km-kanban-item-form" data-item-id="${item.id}">
                   <div class="mb-2">
                     <label class="form-label small mb-1">Deliverable</label>
                     <input class="form-control form-control-sm" name="deliverable" maxlength="200" value="${escapeHtml(item.deliverable)}" required />
@@ -71,7 +107,10 @@
                     <button class="btn btn-outline-primary btn-sm" type="submit">Save</button>
                     <button class="btn btn-outline-danger btn-sm" type="button" data-action="delete">Delete</button>
                   </div>
-                </form>
+                      </form>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           `;

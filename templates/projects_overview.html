@@ -32,13 +32,29 @@
             <div class="col-12 col-md-6 col-lg-4">
                 <a class="text-decoration-none" href="{{ url_for('project_detail', project_name=project.name) }}">
                     <div class="card shadow-sm h-100">
-                        <div class="card-body">
+                        <div class="card-body km-project-card-body">
                             <h2 class="h5">{{ project.name }}</h2>
                             {% if project.description_html %}
                             <div class="km-markdown-preview small">{{ project.description_html }}</div>
                             {% else %}
                             <p class="text-body-secondary mb-0">No description found in Ressourcen.md.</p>
                             {% endif %}
+                            <div class="km-project-card-progress">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="small text-body-secondary">Progress</span>
+                                    <span class="small fw-semibold">{{ project.progress.value }}%</span>
+                                </div>
+                                <div
+                                    class="km-battery-progress km-battery-progress-sm"
+                                    role="progressbar"
+                                    aria-label="Project progress"
+                                    aria-valuemin="0"
+                                    aria-valuemax="100"
+                                    aria-valuenow="{{ project.progress.value }}"
+                                >
+                                    <div class="km-battery-progress-fill" style="width: {{ project.progress.value }}%; background-color: {{ project.progress.color }};"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </a>

@@ -28,6 +28,26 @@
     {% endif %}
     {% endwith %}
 
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <h2 class="h6 text-muted mb-0">Project Progress</h2>
+                <span class="fw-semibold" id="kanban-progress-label">{{ kanban_progress.value }}%</span>
+            </div>
+            <div
+                class="km-battery-progress"
+                role="progressbar"
+                aria-label="Project progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="{{ kanban_progress.value }}"
+                id="kanban-progress"
+            >
+                <div class="km-battery-progress-fill" id="kanban-progress-fill" style="width: {{ kanban_progress.value }}%; background-color: {{ kanban_progress.color }};"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="kanban-board" data-project-name="{{ project_name }}" data-status-options='{{ deadline_status_options|tojson }}'></div>
 
     {% include '_footer.html' %}

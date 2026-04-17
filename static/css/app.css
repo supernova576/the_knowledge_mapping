@@ -141,6 +141,31 @@ body {
   transition: width 0.3s ease, background-color 0.3s ease;
 }
 
+.km-battery-progress-sm {
+  height: 1rem;
+}
+
+.km-battery-progress-sm::after {
+  right: -0.35rem;
+  width: 0.24rem;
+  height: 0.6rem;
+}
+
+.km-project-card-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.km-project-card-body .km-markdown-preview > *:last-child {
+  margin-bottom: 0;
+}
+
+.km-project-card-progress {
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
 .km-actions-dropdown-toggle {
   background-color: var(--bs-secondary-bg-subtle);
   border-color: var(--bs-border-color);

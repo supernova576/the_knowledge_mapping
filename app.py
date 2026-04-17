@@ -1498,6 +1498,26 @@ def _calculate_index_progress(
     open_work_ratio = (deadlines_ratio + overview_ratio + checklist_ratio) / 3.0
     progress_value = round(max(0.0, min(100.0, (1.0 - open_work_ratio) * 100.0)))
 
+    component_progress = [
+        {
+            "key": "deadlines",
+            "label": "Deadlines",
+            "value": round(max(0.0, min(100.0, (1.0 - deadlines_ratio) * 100.0))),
+        },
+        {
+            "key": "overview",
+            "label": "Semester Overview",
+            "value": round(max(0.0, min(100.0, (1.0 - overview_ratio) * 100.0))),
+        },
+        {
+            "key": "checklist",
+            "label": "Semester Checklist",
+            "value": round(max(0.0, min(100.0, (1.0 - checklist_ratio) * 100.0))),
+        },
+    ]
+    for component in component_progress:
+        component["color"] = _progress_bar_color(component["value"])
+
     if progress_value >= 80:
         progress_color = "bg-success"
     elif progress_value >= 60:
@@ -1511,6 +1531,7 @@ def _calculate_index_progress(
         "value": progress_value,
         "color_class": progress_color,
         "color": _progress_bar_color(progress_value),
+        "components": component_progress,
     }
 
 
@@ -1708,6 +1729,30 @@ def _progress_bar_color(value: float) -> str:
             return "#{:02X}{:02X}{:02X}".format(*rgb)
 
     return "#{:02X}{:02X}{:02X}".format(*color_stops[-1][1])
+
+
+def _calculate_kanban_progress(items: list[dict]) -> dict:
+    total_items = len(items)
+    if total_items <= 0:
+        progress_value = 100.0
+    else:
+        status_weights = {
+            "Not Started": 1.0,
+            "In Progress": 0.5,
+            "Done": 0.0,
+        }
+        remaining_work = sum(
+            status_weights.get(str(item.get("status_normalized", item.get("status", ""))).strip(), 1.0)
+            for item in items
+        )
+        remaining_work_ratio = max(0.0, min(1.0, remaining_work / total_items))
+        progress_value = (1.0 - remaining_work_ratio) * 100.0
+
+    rounded_progress = round(max(0.0, min(100.0, progress_value)))
+    return {
+        "value": rounded_progress,
+        "color": _progress_bar_color(rounded_progress),
+    }
 
 
 def _feedback_score_color(value) -> str:
@@ -2769,6 +2814,7 @@ def index():
         total_progress=index_progress["value"],
         total_progress_color_class=index_progress["color_class"],
         total_progress_color=index_progress["color"],
+        index_progress_components=index_progress["components"],
         selectable_docs=selectable_docs,
         playbooks=playbooks,
     )
@@ -3418,11 +3464,19 @@ def projects_overview():
                         "name": project_dir.name,
                         "description": description_markdown,
                         "description_html": Markup(description_html),
+                        "progress": _calculate_kanban_progress(parser.parse_kanban(project_dir).get("items", [])),
                     }
                 )
             except Exception:
                 logger.warning("Failed to parse project resources for %s", project_dir)
-                project_cards.append({"name": project_dir.name, "description": "", "description_html": Markup("")})
+                project_cards.append(
+                    {
+                        "name": project_dir.name,
+                        "description": "",
+                        "description_html": Markup(""),
+                        "progress": {"value": 100, "color": _progress_bar_color(100)},
+                    }
+                )
 
     return render_template("projects_overview.html", projects=project_cards, projects_root=str(projects_root))
 
@@ -3752,6 +3806,7 @@ def project_kanban(project_name: str):
         "project_kanban.html",
         project_name=project_path.name,
         kanban=kanban,
+        kanban_progress=_calculate_kanban_progress(kanban.get("items", [])),
         deadline_mapping=deadline_mapping,
         deadline_status_options=DEADLINE_STATUS_OPTIONS,
     )
@@ -3766,7 +3821,7 @@ def api_project_kanban(project_name: str):
         deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 404
-    return jsonify({**kanban, "deadline_mapping": deadline_mapping})
+    return jsonify({**kanban, "deadline_mapping": deadline_mapping, "progress": _calculate_kanban_progress(kanban.get("items", []))})
 
 
 @app.route("/api/projects/<project_name>/kanban", methods=["POST"])

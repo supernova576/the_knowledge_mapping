@@ -82,6 +82,38 @@
                     <div class="km-battery-progress" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ total_progress }}">
                         <div class="km-battery-progress-fill" style="width: {{ total_progress }}%; background-color: {{ total_progress_color }};"></div>
                     </div>
+                    <button
+                        class="btn btn-sm btn-outline-secondary mt-3"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#overall-progress-breakdown"
+                        aria-expanded="false"
+                        aria-controls="overall-progress-breakdown"
+                    >
+                        Show calculation details
+                    </button>
+                    <div class="collapse mt-3" id="overall-progress-breakdown">
+                        <div class="d-grid gap-3">
+                            {% for component in index_progress_components %}
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                    <span class="small text-body-secondary">{{ component.label }}</span>
+                                    <span class="small fw-semibold">{{ component.value }}%</span>
+                                </div>
+                                <div
+                                    class="km-battery-progress km-battery-progress-sm"
+                                    role="progressbar"
+                                    aria-label="{{ component.label }}"
+                                    aria-valuemin="0"
+                                    aria-valuemax="100"
+                                    aria-valuenow="{{ component.value }}"
+                                >
+                                    <div class="km-battery-progress-fill" style="width: {{ component.value }}%; background-color: {{ component.color }};"></div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </div></div>
             </div>
         </div>
