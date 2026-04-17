@@ -13,10 +13,12 @@
 <div class="container py-4">
     {% set active_page = 'projects' %}
     {% include '_navbar.html' %}
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 mb-0">{{ project_name }} · Kanban</h1>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_detail', project_name=project_name) }}">Back to Detail</a>
-    </div>
+    {% set project_header_title = project_name ~ ' · Kanban' %}
+    {% set project_header_subtitle = 'Track deliverables, deadlines, and progress in one place.' %}
+    {% set project_header_back_href = url_for('project_detail', project_name=project_name) %}
+    {% set project_header_back_label = 'Back to Overview' %}
+    {% set active_project_tab = 'kanban' %}
+    {% include '_project_subnav.html' %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}

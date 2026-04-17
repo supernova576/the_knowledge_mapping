@@ -749,6 +749,36 @@ body {
   background-size: 20px 20px;
 }
 
+.km-canvas-panel,
+.km-canvas-file-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)),
+    var(--bs-body-bg);
+  box-shadow: 0 0.65rem 1.75rem rgba(0, 0, 0, 0.18);
+}
+
+.km-canvas-panel .card-body,
+.km-canvas-file-card .card-body {
+  background: transparent;
+}
+
+.km-canvas-file-card {
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.km-canvas-file-card:hover,
+.km-canvas-file-card:focus-within {
+  transform: translateY(-2px);
+  border-color: rgba(var(--bs-primary-rgb), 0.35);
+  box-shadow: 0 0.95rem 2.2rem rgba(0, 0, 0, 0.24);
+}
+
+.km-canvas-file-label {
+  letter-spacing: 0.08em;
+  margin-bottom: 0.45rem;
+}
+
 .km-canvas-host svg,
 .km-canvas-host #canvas-node-layer {
   position: absolute;
@@ -822,4 +852,61 @@ body {
 
 #km-arrowhead path {
   fill: rgba(255, 255, 255, 0.65);
+}
+
+.km-project-nav-card {
+  border: 1px solid var(--bs-border-color);
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+
+.km-project-nav-card:hover,
+.km-project-nav-card:focus {
+  transform: translateY(-1px);
+  border-color: rgba(var(--bs-primary-rgb), 0.55);
+}
+
+.km-project-nav-card-active {
+  border-color: rgba(var(--bs-primary-rgb), 0.65);
+  background-color: rgba(var(--bs-primary-rgb), 0.08);
+}
+
+.km-project-tab-btn {
+  text-align: left;
+}
+
+.km-resource-item-header {
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  padding-right: 0.75rem;
+}
+
+.km-resource-item-header .accordion-button {
+  min-width: 0;
+  border-radius: 0;
+}
+
+.km-resource-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.km-resource-item-actions .btn {
+  position: relative;
+  z-index: 2;
+}
+
+@media (max-width: 767.98px) {
+  .km-resource-item-header {
+    flex-direction: column;
+    gap: 0;
+    padding-right: 0;
+  }
+
+  .km-resource-item-actions {
+    padding: 0 1rem 1rem;
+    flex-wrap: wrap;
+  }
 }

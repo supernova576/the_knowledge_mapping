@@ -10,16 +10,31 @@
     <link rel="shortcut icon" href="{{ url_for('static', filename='ico/obsidian-icon.ico') }}" />
 </head>
 <body>
-<div class="container-fluid py-3">
+<div class="container py-4">
     {% set active_page = 'projects' %}
     {% include '_navbar.html' %}
-    <div class="d-flex justify-content-between align-items-center mb-3 px-2 gap-2 flex-wrap">
-        <div>
-            <h1 class="h4 mb-0">{{ project_name }} · Canvas</h1>
-            <div class="text-body-secondary small">{{ active_canvas_file }}</div>
-        </div>
+    {% set project_header_title = project_name ~ ' · Canvas' %}
+    {% set project_header_subtitle = active_canvas_file %}
+    {% set project_header_back_href = url_for('project_canvas', project_name=project_name) %}
+    {% set project_header_back_label = 'Back to Canvas' %}
+    {% set project_header_outer_class = 'mb-4' %}
+    {% set active_project_tab = 'canvas' %}
+    {% include '_project_subnav.html' %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="mb-3">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} mb-2" role="alert">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h5 mb-0">Viewing Canvas</h2>
         <div class="d-flex gap-2">
-            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_canvas', project_name=project_name) }}">Back to Overview</a>
+            <button class="btn btn-outline-primary btn-sm" id="canvas-reset-view">Reset View</button>
             <button
                 class="btn btn-outline-danger btn-sm"
                 type="button"
@@ -32,26 +47,11 @@
             </button>
         </div>
     </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    <div class="mb-3 px-2">
-        {% for category, message in messages %}
-        <div class="alert alert-{{ category }} mb-2" role="alert">{{ message }}</div>
-        {% endfor %}
-    </div>
-    {% endif %}
-    {% endwith %}
-
-    <div class="d-flex justify-content-between align-items-center mb-2 px-2">
-        <h2 class="h5 mb-0">Viewing Canvas</h2>
-        <button class="btn btn-outline-primary btn-sm" id="canvas-reset-view">Reset View</button>
-    </div>
     <div id="canvas-host" class="km-canvas-host" data-project-name="{{ project_name }}" data-canvas-file-name="{{ active_canvas_file }}">
         <svg class="km-canvas-edges" xmlns="http://www.w3.org/2000/svg"><defs><marker id="km-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" /></marker></defs><g id="canvas-edge-layer"></g></svg>
         <div id="canvas-node-layer"></div>
     </div>
-    <div id="canvas-warning" class="small text-warning px-2 mt-2"></div>
+    <div id="canvas-warning" class="small text-warning mt-2"></div>
 </div>
 
 <div class="modal fade" id="canvasDeleteModal" tabindex="-1" aria-labelledby="canvasDeleteModalLabel" aria-hidden="true">

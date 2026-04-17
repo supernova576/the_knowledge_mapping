@@ -24,21 +24,46 @@
     {% endif %}
     {% endwith %}
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 mb-0">{{ project_name }}</h1>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('projects_overview') }}">Back to Projects</a>
+    {% set project_header_title = project_name %}
+    {% set project_header_subtitle = 'Project hub, settings, and workspaces' %}
+    {% set project_header_back_href = url_for('projects_overview') %}
+    {% set project_header_back_label = 'Back to Projects' %}
+    {% set active_project_tab = 'overview' %}
+    {% include '_project_subnav.html' %}
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <span class="badge text-bg-secondary">Project Overview</span>
+                <span class="badge text-bg-light border">Tag: <code>{{ resources.tag }}</code></span>
+            </div>
+            <div class="km-markdown-preview">{{ description_html }}</div>
+        </div>
     </div>
 
-    <div class="card shadow-sm mb-3"><div class="card-body">
-        <h2 class="h5">Description</h2>
-        <div class="km-markdown-preview">{{ description_html }}</div>
-        <p class="mt-3 mb-0"><strong>Tag:</strong> <code>{{ resources.tag }}</code></p>
-    </div></div>
-
-    <div class="row g-3">
-        <div class="col-12 col-md-4"><a class="card card-body text-decoration-none" href="{{ url_for('project_resources', project_name=project_name) }}"><strong>Resources</strong><span class="text-body-secondary">Links and metadata</span></a></div>
-        <div class="col-12 col-md-4"><a class="card card-body text-decoration-none" href="{{ url_for('project_kanban', project_name=project_name) }}"><strong>Kanban</strong><span class="text-body-secondary">Deliverables and due dates</span></a></div>
-        <div class="col-12 col-md-4"><a class="card card-body text-decoration-none" href="{{ url_for('project_canvas', project_name=project_name) }}"><strong>Canvas</strong><span class="text-body-secondary">Read-only Obsidian canvas view</span></a></div>
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h2 class="h5 mb-1">Project Settings</h2>
+                    <p class="text-body-secondary small mb-0">Edit project description and tag in one clean place.</p>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('update_project_resources_settings', project_name=project_name) }}" class="row g-3">
+                <div class="col-12">
+                    <label class="form-label" for="project-description">Description</label>
+                    <textarea class="form-control" id="project-description" name="description" rows="5" maxlength="2000">{{ resources.description }}</textarea>
+                </div>
+                <div class="col-12 col-lg-8">
+                    <label class="form-label" for="project-tag">Tag</label>
+                    <input class="form-control" id="project-tag" name="tag" value="{{ resources.tag }}" maxlength="255" placeholder="#PROJECT_{{ project_name }}" />
+                    <div class="form-text">Use a single tag that starts with <code>#</code>. Allowed: letters, numbers, underscores, dashes.</div>
+                </div>
+                <div class="col-12">
+                    <button class="btn btn-primary" type="submit">Save Project Settings</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <div class="card border-danger-subtle shadow-sm mt-4">

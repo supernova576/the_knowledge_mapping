@@ -13,10 +13,13 @@
 <div class="container py-4">
     {% set active_page = 'projects' %}
     {% include '_navbar.html' %}
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 mb-0">{{ project_name }} · Resources</h1>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_detail', project_name=project_name) }}">Back to Detail</a>
-    </div>
+
+    {% set project_header_title = project_name ~ ' · Resources' %}
+    {% set project_header_subtitle = 'Keep all project references in one focused workspace.' %}
+    {% set project_header_back_href = url_for('project_detail', project_name=project_name) %}
+    {% set project_header_back_label = 'Back to Overview' %}
+    {% set active_project_tab = 'resources' %}
+    {% include '_project_subnav.html' %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -28,47 +31,12 @@
     {% endif %}
     {% endwith %}
 
-    <div class="card shadow-sm mb-3"><div class="card-body">
-        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-            <h2 class="h5 mb-0">Project Description</h2>
-            <span class="badge text-bg-secondary">Tag: <code>{{ resources.tag }}</code></span>
-        </div>
-        <div class="km-markdown-preview">{{ description_html }}</div>
-    </div></div>
-
-    <div class="card shadow-sm mb-3"><div class="card-body">
-        <div class="accordion" id="projectSettingsAccordion">
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="projectSettingsHeading">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#projectSettingsCollapse" aria-expanded="false" aria-controls="projectSettingsCollapse">
-                        Settings
-                    </button>
-                </h2>
-                <div id="projectSettingsCollapse" class="accordion-collapse collapse" aria-labelledby="projectSettingsHeading" data-bs-parent="#projectSettingsAccordion">
-                    <div class="accordion-body bg-body-tertiary">
-                        <form method="post" action="{{ url_for('update_project_resources_settings', project_name=project_name) }}" class="row g-3">
-                            <div class="col-12">
-                                <label class="form-label" for="project-description">Description</label>
-                                <textarea class="form-control" id="project-description" name="description" rows="5" maxlength="2000">{{ resources.description }}</textarea>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label" for="project-tag">Tag</label>
-                                <input class="form-control" id="project-tag" name="tag" value="{{ resources.tag }}" maxlength="255" placeholder="#PROJECT_{{ project_name }}" />
-                                <div class="form-text">Use a single tag that starts with <code>#</code>. Only letters, numbers, underscores, and dashes are allowed.</div>
-                            </div>
-                            <div class="col-12">
-                                <button class="btn btn-primary" type="submit">Save Settings</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
+    <div class="card shadow-sm mb-4"><div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <h2 class="h5 mb-1">Add Resource</h2>
+                <div class="small text-body-secondary">Choose one simple input mode and save.</div>
             </div>
-        </div>
-    </div></div>
-
-    <div class="card shadow-sm mb-3"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 class="h5 mb-0">Add Resource</h2>
             <span class="badge text-bg-secondary">{{ resource_count }} entries</span>
         </div>
         <div class="accordion" id="addResourceAccordion">
@@ -99,7 +67,7 @@
                                 <label class="form-label" for="resource-note-doc">Note</label>
                                 <textarea class="form-control" id="resource-note-doc" name="note" rows="4" maxlength="4000" placeholder="Optional free-text context for this linked note"></textarea>
                             </div>
-                            <div class="col-12 d-grid">
+                            <div class="col-12 d-grid d-md-flex justify-content-md-end">
                                 <button class="btn btn-primary" type="submit">Add Internal Doc</button>
                             </div>
                         </form>
@@ -128,7 +96,7 @@
                                 <label class="form-label" for="resource-note-link">Note</label>
                                 <textarea class="form-control" id="resource-note-link" name="note" rows="4" maxlength="4000" placeholder="Optional free-text context for this external link"></textarea>
                             </div>
-                            <div class="col-12 d-grid">
+                            <div class="col-12 d-grid d-md-flex justify-content-md-end">
                                 <button class="btn btn-primary" type="submit">Add External Link</button>
                             </div>
                         </form>
@@ -153,7 +121,7 @@
                                 <label class="form-label" for="resource-note">Note</label>
                                 <textarea class="form-control" id="resource-note" name="note" rows="6" maxlength="4000" placeholder="Write any free-text project note here" required></textarea>
                             </div>
-                            <div class="col-12 d-grid">
+                            <div class="col-12 d-grid d-md-flex justify-content-md-end">
                                 <button class="btn btn-primary" type="submit">Add Free-Text Note</button>
                             </div>
                         </form>
@@ -168,82 +136,80 @@
         ('external', 'External Links', 'Websites and third-party references'),
         ('freetext', 'Free-Text Notes', 'Standalone project notes without a link')
     ] %}
+    <div class="row g-3">
     {% for group_key, group_title, group_hint in group_meta %}
     {% set group_items = resource_groups[group_key] %}
-    <div class="card shadow-sm mb-3"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <h2 class="h5 mb-1">{{ group_title }}</h2>
-                <div class="small text-body-secondary">{{ group_hint }}</div>
+    <div class="col-12 col-xl-4">
+        <div class="card shadow-sm h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-3 gap-2">
+                <div>
+                    <h2 class="h5 mb-1">{{ group_title }}</h2>
+                    <div class="small text-body-secondary">{{ group_hint }}</div>
+                </div>
+                <span class="badge text-bg-secondary">{{ group_items|length }}</span>
             </div>
-            <span class="badge text-bg-secondary">{{ group_items|length }}</span>
-        </div>
-        <div class="accordion" id="resourceAccordion-{{ group_key }}">
-            {% for item in group_items %}
-            <div class="accordion-item">
-                <h3 class="accordion-header" id="resourceHeading-{{ group_key }}-{{ item.id }}">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#resourceCollapse-{{ group_key }}-{{ item.id }}" aria-expanded="false" aria-controls="resourceCollapse-{{ group_key }}-{{ item.id }}">
-                        <span class="badge text-bg-light border me-2">{{ item.type_label }}</span>
-                        <span class="text-truncate">{{ item.description or item.link or item.note or 'Untitled resource' }}</span>
-                        <span class="ms-auto small text-body-secondary ps-3">#{{ item.id }}</span>
-                    </button>
-                </h3>
-                <div id="resourceCollapse-{{ group_key }}-{{ item.id }}" class="accordion-collapse collapse" aria-labelledby="resourceHeading-{{ group_key }}-{{ item.id }}" data-bs-parent="#resourceAccordion-{{ group_key }}">
-                    <div class="accordion-body bg-body-tertiary">
-                        <form id="resource-form-{{ item.id }}" method="post" action="{{ url_for('edit_project_resource', project_name=project_name, resource_id=item.id) }}">
-                            <div class="mb-2">
-                                <label class="form-label small text-body-secondary mb-1">Description</label>
-                                <input class="form-control form-control-sm" name="description" value="{{ item.description }}" maxlength="500" />
-                            </div>
-                            {% if group_key == 'internal' %}
-                            <div class="mb-2">
-                                <label class="form-label small text-body-secondary mb-1">Internal doc</label>
-                                <select class="form-select form-select-sm" name="selected_doc">
-                                    <option value="">No internal document</option>
-                                    {% for doc_title in selectable_docs %}
-                                    <option value="{{ doc_title }}" {% if item.link == doc_title ~ '.md' %}selected{% endif %}>{{ doc_title }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            {% elif group_key == 'external' %}
-                            <div class="mb-2">
-                                <label class="form-label small text-body-secondary mb-1">External link</label>
-                                <input class="form-control form-control-sm" name="link" value="{{ item.link }}" maxlength="1000" />
-                            </div>
-                            {% else %}
-                            <input type="hidden" name="link" value="" />
+            <div class="accordion" id="resourceAccordion-{{ group_key }}">
+                {% for item in group_items %}
+                <div class="accordion-item">
+                    <div class="km-resource-item-header">
+                        <h3 class="accordion-header flex-grow-1 mb-0" id="resourceHeading-{{ group_key }}-{{ item.id }}">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#resourceCollapse-{{ group_key }}-{{ item.id }}" aria-expanded="false" aria-controls="resourceCollapse-{{ group_key }}-{{ item.id }}">
+                                <span class="text-truncate">{{ item.description or item.link or item.note or 'Untitled resource' }}</span>
+                            </button>
+                        </h3>
+                        <div class="km-resource-item-actions">
+                            {% if item.is_external %}
+                            <a class="btn btn-outline-secondary btn-sm" href="{{ item.link }}" target="_blank" rel="noopener noreferrer">Visit</a>
+                            {% elif item.internal_url %}
+                            <a class="btn btn-outline-secondary btn-sm" href="{{ item.internal_url }}">View</a>
                             {% endif %}
-                            <div class="mb-3">
-                                <label class="form-label small text-body-secondary mb-1">Note</label>
-                                <textarea class="form-control form-control-sm" name="note" rows="{% if group_key == 'freetext' %}6{% else %}4{% endif %}" maxlength="4000">{{ item.note }}</textarea>
-                            </div>
-                            <div class="d-flex flex-wrap gap-2">
-                                <button class="btn btn-outline-primary btn-sm" type="submit">Save</button>
-                                {% if item.is_external %}
-                                <a class="btn btn-outline-secondary btn-sm" href="{{ item.link }}" target="_blank" rel="noopener noreferrer">Open</a>
-                                {% elif item.internal_url %}
-                                <a class="btn btn-outline-secondary btn-sm" href="{{ item.internal_url }}">Open</a>
+                        </div>
+                    </div>
+                    <div id="resourceCollapse-{{ group_key }}-{{ item.id }}" class="accordion-collapse collapse" aria-labelledby="resourceHeading-{{ group_key }}-{{ item.id }}" data-bs-parent="#resourceAccordion-{{ group_key }}">
+                        <div class="accordion-body bg-body-tertiary">
+                            <form id="resource-form-{{ item.id }}" method="post" action="{{ url_for('edit_project_resource', project_name=project_name, resource_id=item.id) }}">
+                                <div class="mb-2">
+                                    <label class="form-label small text-body-secondary mb-1">Description</label>
+                                    <input class="form-control form-control-sm" name="description" value="{{ item.description }}" maxlength="500" />
+                                </div>
+                                {% if group_key == 'internal' %}
+                                <div class="mb-2">
+                                    <label class="form-label small text-body-secondary mb-1">Internal doc</label>
+                                    <select class="form-select form-select-sm" name="selected_doc">
+                                        <option value="">No internal document</option>
+                                        {% for doc_title in selectable_docs %}
+                                        <option value="{{ doc_title }}" {% if item.link == doc_title ~ '.md' %}selected{% endif %}>{{ doc_title }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                {% elif group_key == 'external' %}
+                                <div class="mb-2">
+                                    <label class="form-label small text-body-secondary mb-1">External link</label>
+                                    <input class="form-control form-control-sm" name="link" value="{{ item.link }}" maxlength="1000" />
+                                </div>
+                                {% else %}
+                                <input type="hidden" name="link" value="" />
                                 {% endif %}
-                                <button
-                                    class="btn btn-outline-danger btn-sm"
-                                    type="button"
-                                    data-delete-resource="true"
-                                    data-delete-action="{{ url_for('delete_project_resource', project_name=project_name, resource_id=item.id) }}"
-                                    data-delete-label="{{ item.description or item.link or item.note }}"
-                                >
-                                    Delete
-                                </button>
-                            </div>
-                        </form>
+                                <div class="mb-3">
+                                    <label class="form-label small text-body-secondary mb-1">Note</label>
+                                    <textarea class="form-control form-control-sm" name="note" rows="{% if group_key == 'freetext' %}6{% else %}4{% endif %}" maxlength="4000">{{ item.note }}</textarea>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button class="btn btn-outline-primary btn-sm" type="submit">Save</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
                 </div>
+                {% else %}
+                <div class="alert alert-secondary mb-0 text-center">No entries in this category yet.</div>
+                {% endfor %}
             </div>
-            {% else %}
-            <div class="alert alert-secondary mb-0 text-center">No entries in this category yet.</div>
-            {% endfor %}
-        </div>
-    </div></div>
+        </div></div>
+    </div>
     {% endfor %}
+    </div>
+
     {% include '_footer.html' %}
 </div>
 <div class="modal fade" id="resourceDeleteModal" tabindex="-1" aria-labelledby="resourceDeleteModalLabel" aria-hidden="true">

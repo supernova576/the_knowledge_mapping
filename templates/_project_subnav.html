@@ -1,0 +1,32 @@
+<div class="{{ project_header_outer_class|default('mb-4') }}">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4 {{ project_header_top_class|default('') }}">
+        <div>
+            <h1 class="{{ project_header_title_class|default('h3') }} mb-1">{{ project_header_title }}</h1>
+            {% if project_header_subtitle %}
+            <p class="text-body-secondary mb-0">{{ project_header_subtitle }}</p>
+            {% endif %}
+        </div>
+        {% if project_header_back_href %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ project_header_back_href }}">{{ project_header_back_label|default('Back') }}</a>
+        {% endif %}
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body py-2">
+            <div class="row g-2">
+                <div class="col-12 col-md-6 col-xl-3">
+                    <a class="btn {{ 'btn-primary' if active_project_tab == 'overview' else 'btn-outline-secondary' }} w-100 km-project-tab-btn" href="{{ url_for('project_detail', project_name=project_name) }}">Overview &amp; Settings</a>
+                </div>
+                <div class="col-12 col-md-6 col-xl-3">
+                    <a class="btn {{ 'btn-primary' if active_project_tab == 'resources' else 'btn-outline-secondary' }} w-100 km-project-tab-btn" href="{{ url_for('project_resources', project_name=project_name) }}">Resources</a>
+                </div>
+                <div class="col-12 col-md-6 col-xl-3">
+                    <a class="btn {{ 'btn-primary' if active_project_tab == 'kanban' else 'btn-outline-secondary' }} w-100 km-project-tab-btn" href="{{ url_for('project_kanban', project_name=project_name) }}">Kanban</a>
+                </div>
+                <div class="col-12 col-md-6 col-xl-3">
+                    <a class="btn {{ 'btn-primary' if active_project_tab == 'canvas' else 'btn-outline-secondary' }} w-100 km-project-tab-btn" href="{{ url_for('project_canvas', project_name=project_name) }}">Canvas</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
