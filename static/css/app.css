@@ -187,6 +187,26 @@ body {
   color: var(--bs-light);
 }
 
+.km-progress-details-toggle {
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.km-progress-details-toggle:hover,
+.km-progress-details-toggle:focus,
+.km-progress-details-toggle:active {
+  color: var(--bs-body-color);
+}
+
+.km-progress-details-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.km-progress-details-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
 .km-markdown-preview {
     line-height: 1.7;
     overflow-wrap: anywhere;

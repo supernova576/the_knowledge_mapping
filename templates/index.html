@@ -77,21 +77,27 @@
                 <div class="card shadow-sm border-secondary-subtle h-100"><div class="card-body">
                     <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                         <h2 class="h6 text-muted mb-0">Overall progress</h2>
-                        <span class="fw-semibold">{{ total_progress }}%</span>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-semibold">{{ total_progress }}%</span>
+                            <button
+                                class="btn btn-sm btn-link km-progress-details-toggle p-0"
+                                type="button"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#overall-progress-breakdown"
+                                aria-expanded="false"
+                                aria-controls="overall-progress-breakdown"
+                                aria-label="Show calculation details"
+                                title="Show calculation details"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-chevron-down" viewBox="0 0 16 16" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="km-battery-progress" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ total_progress }}">
                         <div class="km-battery-progress-fill" style="width: {{ total_progress }}%; background-color: {{ total_progress_color }};"></div>
                     </div>
-                    <button
-                        class="btn btn-sm btn-outline-secondary mt-3"
-                        type="button"
-                        data-bs-toggle="collapse"
-                        data-bs-target="#overall-progress-breakdown"
-                        aria-expanded="false"
-                        aria-controls="overall-progress-breakdown"
-                    >
-                        Show calculation details
-                    </button>
                     <div class="collapse mt-3" id="overall-progress-breakdown">
                         <div class="d-grid gap-3">
                             {% for component in index_progress_components %}
