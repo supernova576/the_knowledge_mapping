@@ -118,36 +118,27 @@
             </div>
         </div>
 
-        <div class="row g-3 mb-4 align-items-stretch">
-            <div class="col-12 d-flex">
-                <div class="card shadow-sm h-100 w-100"><div class="card-body">
-                    <h2 class="h5">Search & filter</h2>
-                    <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end">
-                        <div class="col-md-12"><label class="form-label">View</label><select name="view" class="form-select">
-                            <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
-                            <option value="name" {% if selected_view=='name' %}selected{% endif %}>By name</option>
-                            <option value="description" {% if selected_view=='description' %}selected{% endif %}>By description</option>
-                            <option value="tag" {% if selected_view=='tag' %}selected{% endif %}>By tag</option>
-                            <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
-                            <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
-                            <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
-                        </select></div>
-                        <div class="col-md-12"><label class="form-label">Query</label><input name="q" value="{{ query }}" class="form-control" placeholder="file name, description text, or #tag" /></div>
-                        <input type="hidden" name="sort" value="{{ selected_sort }}" />
-                        <div class="col-md-12 d-grid"><button class="btn btn-outline-primary">Apply</button></div>
-                    </form>
-                </div></div>
-            </div>
-        </div>
-
         <div class="card shadow-sm"><div class="card-body">
-            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+            <div class="mb-3">
                 <h2 class="h5 mb-0">Documents overview</h2>
-                <form method="get" action="{{ url_for('index') }}" class="d-flex align-items-center gap-2">
-                    <input type="hidden" name="view" value="{{ selected_view }}" />
-                    <input type="hidden" name="q" value="{{ query }}" />
-                    <label class="form-label mb-0" for="sort">Sort by</label>
-                    <select id="sort" name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+            </div>
+            <form method="get" action="{{ url_for('index') }}" class="row g-2 align-items-end mb-3" id="index-filter-form">
+                <div class="col-xl-3 col-lg-4 col-md-5">
+                    <label class="form-label" for="docs-filter-view">Type</label>
+                    <select name="view" id="docs-filter-view" class="form-select">
+                        <option value="all" {% if selected_view=='all' %}selected{% endif %}>All docs</option>
+                        <option value="compliant" {% if selected_view=='compliant' %}selected{% endif %}>Compliant only</option>
+                        <option value="incompliant" {% if selected_view=='incompliant' %}selected{% endif %}>Incompliant only</option>
+                        <option value="under_construction" {% if selected_view=='under_construction' %}selected{% endif %}>Under construction only</option>
+                    </select>
+                </div>
+                <div class="col-xl-7 col-lg-6 col-md-7">
+                    <label class="form-label" for="docs-filter-query">Query</label>
+                    <input name="q" id="docs-filter-query" value="{{ query }}" class="form-control" maxlength="200" placeholder="file name, description text, or #tag" autocomplete="off" />
+                </div>
+                <div class="col-xl-2 col-lg-2 col-md-6">
+                    <label class="form-label" for="sort">Sort by</label>
+                    <select id="sort" name="sort" class="form-select">
                         <option value="title_asc" {% if selected_sort=='title_asc' %}selected{% endif %}>Title (A-Z)</option>
                         <option value="title_desc" {% if selected_sort=='title_desc' %}selected{% endif %}>Title (Z-A)</option>
                         <option value="created_newest" {% if selected_sort=='created_newest' %}selected{% endif %}>Created (newest)</option>
@@ -155,11 +146,13 @@
                         <option value="changed_newest" {% if selected_sort=='changed_newest' %}selected{% endif %}>Changed (newest)</option>
                         <option value="changed_oldest" {% if selected_sort=='changed_oldest' %}selected{% endif %}>Changed (oldest)</option>
                     </select>
-                </form>
-            </div>
-            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Addons</th><th>Actions</th></tr></thead><tbody>
-            {% for doc in docs %}<tr><td>{{ doc.display_title }}</td><td>{{ doc.created_at }}</td><td>{% if doc.changed_at_list %}{% for changed_date in doc.changed_at_list %}<span class="d-block">{{ changed_date }}</span>{% endfor %}{% else %}N/A{% endif %}</td><td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td><td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td><td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td><td>{% if doc.has_ai_feedback %}{% if doc.latest_ai_feedback %}<a class="badge text-bg-info text-decoration-none me-1" href="{{ url_for('ai_feedback_detail', feedback_id=doc.latest_ai_feedback.id) }}">AI Feedback</a>{% else %}<span class="badge text-bg-secondary me-1">AI Feedback</span>{% endif %}{% endif %}{% if doc.has_learning %}{% if doc.learning %}<a class="badge text-bg-info text-decoration-none me-1" href="{{ url_for('learning_detail', learning_id=doc.learning.id) }}">Learning</a>{% else %}<span class="badge text-bg-secondary me-1">Learning</span>{% endif %}{% endif %}</td><td><div class="dropdown"><button class="btn btn-secondary btn-sm dropdown-toggle km-actions-dropdown-toggle" type="button" id="dropdownMenuButton-{{ doc.id }}" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Actions</button><ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-{{ doc.id }}"><li><a class="dropdown-item" href="{{ url_for('view_doc', doc_id=doc.id) }}">View</a></li><li><a class="dropdown-item" href="{{ url_for('edit_doc_resources', doc_id=doc.id) }}">Edit</a></li><li><button type="button" class="dropdown-item ai-feedback-trigger" data-file-name="{{ doc.title }}">AI Feedback</button></li><li><form method="post" action="{{ url_for('learning_doc_action') }}"><input type="hidden" name="selected_doc" value="{{ doc.title }}" /><input type="hidden" name="redirect_to" value="{{ request.full_path if request.query_string else request.path }}" /><button type="submit" class="dropdown-item">{% if doc.has_learning %}View Learning{% else %}Add Learning{% endif %}</button></form></li><li><button type="button" class="dropdown-item trigger-playbook-button" data-note-name="{{ doc.title }}">Trigger Playbook</button></li></ul></div></td></tr>
-            {% else %}<tr><td colspan="8" class="text-center text-muted py-4">No documents found for this filter.</td></tr>{% endfor %}
+                </div>
+                <div class="col-xl-2 col-lg-3 col-md-6 d-grid">
+                    <button class="btn btn-outline-primary" id="docs-filter-apply-button">Apply</button>
+                </div>
+            </form>
+            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Addons</th><th>Actions</th></tr></thead><tbody id="docs-overview-tbody">
+            {% include '_index_docs_rows.html' %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}
 </div>
@@ -363,9 +356,18 @@
             const triggerPlaybookOutputPanel = document.getElementById("triggerPlaybookOutputPanel");
             const triggerPlaybookOutputBadge = document.getElementById("triggerPlaybookOutputBadge");
             const triggerPlaybookOutputEntries = document.getElementById("triggerPlaybookOutputEntries");
+            const docsFilterForm = document.getElementById("index-filter-form");
+            const docsFilterQuery = document.getElementById("docs-filter-query");
+            const docsFilterView = document.getElementById("docs-filter-view");
+            const docsFilterApplyButton = document.getElementById("docs-filter-apply-button");
+            const docsSortForm = document.getElementById("docs-sort-form");
+            const docsSortSelect = document.getElementById("sort");
+            const docsTableBody = document.getElementById("docs-overview-tbody");
             const triggerPlaybookPromptModal = triggerPlaybookPromptModalElement ? new bootstrap.Modal(triggerPlaybookPromptModalElement) : null;
             let pendingTriggerPlaybookResume = null;
             let triggerPromptDecisionSubmitted = false;
+            let docsSearchController = null;
+            let docsSearchDebounceTimer = null;
             const playbookActionSchemas = {
                 create_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}],
                 update_note: [{key:"note_name", label:"Note name", type:"text", placeholder:"Project Kickoff", help:"Runtime context key: note_name.", required:true}, {key:"reason", label:"Reason", type:"textarea", placeholder:"Why should this note be updated?", help:"Runtime context key: reason.", required:true}],
@@ -563,6 +565,52 @@
                         + '</div>';
                 }).join("");
             }
+            function showDocsLoadingRow() {
+                if (!docsTableBody) {
+                    return;
+                }
+                docsTableBody.innerHTML = '<tr><td colspan="8" class="text-center py-4"><div class="d-inline-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div><span class="text-muted">Loading documents...</span></div></td></tr>';
+            }
+            async function refreshDocsOverview() {
+                if (!docsTableBody || !docsFilterView || !docsFilterQuery || !docsSortSelect) {
+                    return;
+                }
+                const params = new URLSearchParams({
+                    view: String(docsFilterView.value || "all"),
+                    q: String(docsFilterQuery.value || "").trim().slice(0, 200),
+                    sort: String(docsSortSelect.value || "title_asc"),
+                });
+                if (docsSearchController) {
+                    docsSearchController.abort();
+                }
+                docsSearchController = new AbortController();
+                showDocsLoadingRow();
+                try {
+                    const response = await fetch("/api/index/docs?" + params.toString(), {
+                        method: "GET",
+                        headers: {"Accept": "application/json"},
+                        signal: docsSearchController.signal,
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok || typeof payload.rows_html !== "string") {
+                        throw new Error("Unable to load documents.");
+                    }
+                    docsTableBody.innerHTML = payload.rows_html;
+                } catch (error) {
+                    if (error?.name === "AbortError") {
+                        return;
+                    }
+                    docsTableBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Unable to load documents. Please try again.</td></tr>';
+                }
+            }
+            function queueDocsSearch() {
+                if (docsSearchDebounceTimer) {
+                    window.clearTimeout(docsSearchDebounceTimer);
+                }
+                docsSearchDebounceTimer = window.setTimeout(function () {
+                    refreshDocsOverview();
+                }, 250);
+            }
             if (scanForm && syncLoadingBanner) {
                 scanForm.addEventListener("submit", function () {
                     syncLoadingBanner.classList.remove("d-none");
@@ -573,15 +621,39 @@
                 });
             }
 
+            if (docsFilterForm && docsFilterQuery && docsFilterApplyButton) {
+                docsFilterApplyButton.classList.add("d-none");
+                docsFilterQuery.addEventListener("input", queueDocsSearch);
+                if (docsFilterView) {
+                    docsFilterView.addEventListener("change", refreshDocsOverview);
+                }
+                docsFilterForm.addEventListener("submit", function (event) {
+                    event.preventDefault();
+                    refreshDocsOverview();
+                });
+                if (docsSortForm && docsSortSelect) {
+                    docsSortForm.addEventListener("submit", function (event) {
+                        event.preventDefault();
+                        refreshDocsOverview();
+                    });
+                    docsSortSelect.addEventListener("change", function (event) {
+                        event.preventDefault();
+                        refreshDocsOverview();
+                    });
+                }
+            }
+
             if (aiFeedbackModalElement && aiFeedbackMessage && aiFeedbackSelectedDoc) {
                 const aiFeedbackModal = new bootstrap.Modal(aiFeedbackModalElement);
-                document.querySelectorAll(".ai-feedback-trigger").forEach(function (button) {
-                    button.addEventListener("click", function () {
-                        const fileName = button.getAttribute("data-file-name") || "";
-                        aiFeedbackSelectedDoc.value = fileName;
-                        aiFeedbackMessage.textContent = "Do you really want to request an AI Feedback for the following file: " + fileName + ".";
-                        aiFeedbackModal.show();
-                    });
+                document.addEventListener("click", function (event) {
+                    const button = event.target.closest(".ai-feedback-trigger");
+                    if (!button) {
+                        return;
+                    }
+                    const fileName = button.getAttribute("data-file-name") || "";
+                    aiFeedbackSelectedDoc.value = fileName;
+                    aiFeedbackMessage.textContent = "Do you really want to request an AI Feedback for the following file: " + fileName + ".";
+                    aiFeedbackModal.show();
                 });
             }
 
@@ -637,20 +709,22 @@
 
             if (triggerPlaybookModalElement && triggerPlaybookForm && triggerPlaybookMessage && triggerPlaybookNoteName && triggerPlaybookSelect && triggerPlaybookSubmit) {
                 const triggerPlaybookModal = new bootstrap.Modal(triggerPlaybookModalElement);
-                document.querySelectorAll(".trigger-playbook-button").forEach(function (button) {
-                    button.addEventListener("click", function () {
-                        const noteName = button.dataset.noteName || "";
-                        triggerPlaybookMessage.textContent = "Choose which playbook should run for " + noteName + ".";
-                        triggerPlaybookNoteName.value = noteName;
-                        triggerPlaybookSelect.value = "";
-                        renderTriggerPlaybookRuntimeFields([]);
-                        clearTriggerPlaybookOutput();
-                        pendingTriggerPlaybookResume = null;
-                        triggerPlaybookMessage.classList.remove("text-danger");
-                        triggerPlaybookSubmit.disabled = false;
-                        triggerPlaybookSubmit.textContent = "Trigger Playbook";
-                        triggerPlaybookModal.show();
-                    });
+                document.addEventListener("click", function (event) {
+                    const button = event.target.closest(".trigger-playbook-button");
+                    if (!button) {
+                        return;
+                    }
+                    const noteName = button.dataset.noteName || "";
+                    triggerPlaybookMessage.textContent = "Choose which playbook should run for " + noteName + ".";
+                    triggerPlaybookNoteName.value = noteName;
+                    triggerPlaybookSelect.value = "";
+                    renderTriggerPlaybookRuntimeFields([]);
+                    clearTriggerPlaybookOutput();
+                    pendingTriggerPlaybookResume = null;
+                    triggerPlaybookMessage.classList.remove("text-danger");
+                    triggerPlaybookSubmit.disabled = false;
+                    triggerPlaybookSubmit.textContent = "Trigger Playbook";
+                    triggerPlaybookModal.show();
                 });
 
                 triggerPlaybookSelect.addEventListener("change", async function () {

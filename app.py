@@ -485,36 +485,76 @@ def _compliance_tag_class(doc: dict) -> str:
 
     return "compliance-tag-not-compliant"
 
+
+def _sanitize_doc_query(query: str | None, max_length: int = 200) -> str:
+    sanitized = re.sub(r"\s+", " ", str(query or "")).strip()
+    sanitized = re.sub(r"[\x00-\x1f\x7f]", "", sanitized)
+    return sanitized[:max_length]
+
+
+def _matches_doc_search_query(doc_data: dict, normalized_query: str, description_matches: set[str]) -> bool:
+    title = str(doc_data.get("title", "")).strip().casefold()
+    if normalized_query in title:
+        return True
+
+    raw_tags = _to_display_list(doc_data.get("tags"))
+    normalized_tags = [str(tag).strip().lstrip("#").casefold() for tag in raw_tags if str(tag).strip()]
+    if any(normalized_query in tag for tag in normalized_tags):
+        return True
+
+    return str(doc_data.get("title", "")).strip() in description_matches
+
+
 def _load_docs(database: db, parser: DocsParser, view: str, query: str) -> dict:
-
-    if view == "name" and query:
-        return database.get_docs_by_name(query, exact_match=False)
-
-    if view == "description" and query:
-        matching_titles = parser.get_doc_titles_by_description_query(query)
-        if not matching_titles:
-            return {}
-
-        all_docs = database.get_all_docs()
-        return {
-            doc_id: doc_data
-            for doc_id, doc_data in all_docs.items()
-            if str(doc_data.get("title", "")).strip() in matching_titles
-        }
-
-    if view == "tag" and query:
-        return database.get_docs_by_tag(query)
+    sanitized_query = _sanitize_doc_query(query)
 
     if view == "incompliant":
-        return database.get_non_compliant_docs()
+        docs = database.get_non_compliant_docs()
+    elif view == "compliant":
+        docs = database.get_compliant_docs()
+    elif view == "under_construction":
+        docs = database.get_under_construction_docs()
+    else:
+        docs = database.get_all_docs()
 
-    if view == "compliant":
-        return database.get_compliant_docs()
+    if not sanitized_query:
+        return docs
 
-    if view == "under_construction":
-        return database.get_under_construction_docs()
+    if view in {"all", "name", "description", "tag"}:
+        normalized_query = sanitized_query.lstrip("#").casefold()
+        description_matches = parser.get_doc_titles_by_description_query(sanitized_query)
+        return {
+            doc_id: doc_data
+            for doc_id, doc_data in docs.items()
+            if _matches_doc_search_query(doc_data, normalized_query, description_matches)
+        }
 
-    return database.get_all_docs()
+    return docs
+
+
+def _prepare_docs_for_index(database: db, docs: dict, sort_by: str) -> list[dict]:
+    processed_docs = []
+    for item in docs.values():
+        row = dict(item)
+        row["tags_list"] = _to_display_list(row.get("tags"))
+        row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
+        row["changed_at_list"] = _to_display_list(row.get("changed_at"))
+        row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
+        row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
+        row["has_learning"] = _doc_addon_flag_enabled(row.get("has_learning", "false"))
+        row["has_ai_feedback"] = _doc_addon_flag_enabled(row.get("has_ai_feedback", "false"))
+        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip()) if row["has_learning"] else None
+        row["latest_ai_feedback"] = (
+            _find_latest_ai_feedback_for_doc(database, str(row.get("title", "")).strip()) if row["has_ai_feedback"] else None
+        )
+        if row["is_under_construction"] == "true":
+            row["is_compliant"] = "Not Determined"
+            row["noncompliance_reason_list"] = []
+        row["compliance_tag_class"] = _compliance_tag_class(row)
+        processed_docs.append(row)
+
+    _sort_docs(processed_docs, sort_by)
+    return processed_docs
 
 
 def _load_conf() -> dict:
@@ -2741,7 +2781,7 @@ def _sync_openrouter_credits_only(database: db) -> str | None:
 @app.route("/", methods=["GET"])
 def index():
     view = request.args.get("view", "all")
-    query = request.args.get("q", "").strip()
+    query = _sanitize_doc_query(request.args.get("q", ""))
     parser = DocsParser()
     sort_by = request.args.get("sort", "title_asc").strip()
     if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
@@ -2755,27 +2795,7 @@ def index():
     compliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "true"])
     incompliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "false"])
 
-    processed_docs = []
-    for item in docs.values():
-        row = dict(item)
-        row["tags_list"] = _to_display_list(row.get("tags"))
-        row["noncompliance_reason_list"] = _to_display_list(row.get("noncompliance_reason"))
-        row["changed_at_list"] = _to_display_list(row.get("changed_at"))
-        row["is_under_construction"] = str(row.get("is_under_construction", "false")).lower()
-        row["display_title"] = f"🚧 {row.get('title', '')}" if row["is_under_construction"] == "true" else row.get("title", "")
-        row["has_learning"] = _doc_addon_flag_enabled(row.get("has_learning", "false"))
-        row["has_ai_feedback"] = _doc_addon_flag_enabled(row.get("has_ai_feedback", "false"))
-        row["learning"] = _find_learning_for_doc(database, str(row.get("title", "")).strip()) if row["has_learning"] else None
-        row["latest_ai_feedback"] = (
-            _find_latest_ai_feedback_for_doc(database, str(row.get("title", "")).strip()) if row["has_ai_feedback"] else None
-        )
-        if row["is_under_construction"] == "true":
-            row["is_compliant"] = "Not Determined"
-            row["noncompliance_reason_list"] = []
-        row["compliance_tag_class"] = _compliance_tag_class(row)
-        processed_docs.append(row)
-
-    _sort_docs(processed_docs, sort_by)
+    processed_docs = _prepare_docs_for_index(database, docs, sort_by)
     last_sync_time = database.get_last_sync_time()
     open_todos_count = _count_open_todos(_load_todos(parser, query=""))
     deadlines = _load_deadlines(parser, include_description=False)
@@ -2817,6 +2837,26 @@ def index():
         index_progress_components=index_progress["components"],
         selectable_docs=selectable_docs,
         playbooks=playbooks,
+    )
+
+
+@app.route("/api/index/docs", methods=["GET"])
+def index_docs_api():
+    view = request.args.get("view", "all")
+    query = _sanitize_doc_query(request.args.get("q", ""))
+    sort_by = request.args.get("sort", "title_asc").strip()
+    if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
+        sort_by = "title_asc"
+
+    database = db()
+    parser = DocsParser()
+    docs = _load_docs(database, parser, view, query)
+    processed_docs = _prepare_docs_for_index(database, docs, sort_by)
+    return jsonify(
+        {
+            "ok": True,
+            "rows_html": render_template("_index_docs_rows.html", docs=processed_docs),
+        }
     )
 
 
