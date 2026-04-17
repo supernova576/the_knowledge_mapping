@@ -27,6 +27,7 @@
                     <ul class="dropdown-menu" aria-labelledby="indexActionDropdown">
                         <li><button type="button" class="dropdown-item" id="create-note-trigger">Create Note</button></li>
                         <li><button type="button" class="dropdown-item" id="update-note-trigger">Update Note</button></li>
+                        <li><button type="button" class="dropdown-item" id="run-playbook-trigger">Run Playbook</button></li>
                     </ul>
                 </div>
                 <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
@@ -337,6 +338,7 @@
             const aiFeedbackConfirmSubmit = document.getElementById("ai-feedback-confirm-submit");
             const createNoteTrigger = document.getElementById("create-note-trigger");
             const updateNoteTrigger = document.getElementById("update-note-trigger");
+            const runPlaybookTrigger = document.getElementById("run-playbook-trigger");
             const createNoteModalElement = document.getElementById("createNoteModal");
             const updateNoteModalElement = document.getElementById("updateNoteModal");
             const createNoteFileName = document.getElementById("create-note-file-name");
@@ -714,15 +716,13 @@
             }
 
             if (triggerPlaybookModalElement && triggerPlaybookForm && triggerPlaybookMessage && triggerPlaybookNoteName && triggerPlaybookSelect && triggerPlaybookSubmit) {
-                const triggerPlaybookModal = new bootstrap.Modal(triggerPlaybookModalElement);
-                document.addEventListener("click", function (event) {
-                    const button = event.target.closest(".trigger-playbook-button");
-                    if (!button) {
-                        return;
-                    }
-                    const noteName = button.dataset.noteName || "";
-                    triggerPlaybookMessage.textContent = "Choose which playbook should run for " + noteName + ".";
-                    triggerPlaybookNoteName.value = noteName;
+                const triggerPlaybookModal = bootstrap.Modal.getOrCreateInstance(triggerPlaybookModalElement);
+                function openTriggerPlaybookModal(noteName) {
+                    const trimmedNoteName = String(noteName || "").trim();
+                    triggerPlaybookMessage.textContent = trimmedNoteName
+                        ? "Choose which playbook should run for " + trimmedNoteName + "."
+                        : "Choose which playbook should run.";
+                    triggerPlaybookNoteName.value = trimmedNoteName;
                     triggerPlaybookSelect.value = "";
                     renderTriggerPlaybookRuntimeFields([]);
                     clearTriggerPlaybookOutput();
@@ -731,6 +731,28 @@
                     triggerPlaybookSubmit.disabled = false;
                     triggerPlaybookSubmit.textContent = "Trigger Playbook";
                     triggerPlaybookModal.show();
+                }
+
+                if (runPlaybookTrigger) {
+                    runPlaybookTrigger.addEventListener("click", function (event) {
+                        const parentDropdownElement = event.currentTarget.closest(".dropdown");
+                        const dropdownToggle = parentDropdownElement ? parentDropdownElement.querySelector("[data-bs-toggle='dropdown']") : null;
+                        const dropdownInstance = dropdownToggle ? bootstrap.Dropdown.getInstance(dropdownToggle) : null;
+                        if (dropdownInstance) {
+                            dropdownInstance.hide();
+                        }
+                        window.setTimeout(function () {
+                            openTriggerPlaybookModal("");
+                        }, 0);
+                    });
+                }
+
+                document.addEventListener("click", function (event) {
+                    const button = event.target.closest(".trigger-playbook-button");
+                    if (!button) {
+                        return;
+                    }
+                    openTriggerPlaybookModal(button.dataset.noteName || "");
                 });
 
                 triggerPlaybookSelect.addEventListener("change", async function () {
