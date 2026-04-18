@@ -14,6 +14,9 @@
   const progressFill = document.getElementById('kanban-progress-fill');
   const progressLabel = document.getElementById('kanban-progress-label');
   let pendingDelete = null;
+  let draggedItemId = null;
+  let dragOriginStatus = null;
+  let isMovingItem = false;
 
   const escapeHtml = (value) => String(value || '')
     .replaceAll('&', '&amp;')
@@ -42,6 +45,13 @@
     refreshHandle = window.setTimeout(render, 30000);
   };
 
+  const clearDragState = () => {
+    draggedItemId = null;
+    dragOriginStatus = null;
+    board.querySelectorAll('.km-kanban-card').forEach((card) => card.classList.remove('km-kanban-card-dragging'));
+    board.querySelectorAll('.km-kanban-column').forEach((column) => column.classList.remove('km-kanban-column-over'));
+  };
+
   const renderProgress = (progress) => {
     if (!progressContainer || !progressFill || !progressLabel) {
       return;
@@ -67,7 +77,7 @@
         const cards = (groups[status] || []).map((item) => {
           const deadline = deadlineMapping[item.deliverable] || {};
           return `
-            <div class="card mb-3 shadow-sm">
+            <div class="card mb-3 shadow-sm km-kanban-card" draggable="true" data-item-id="${item.id}" data-status="${escapeHtml(item.status_normalized || item.status || status)}">
               <div class="accordion" id="kanban-item-accordion-${item.id}">
                 <div class="accordion-item">
                   <h3 class="accordion-header" id="kanban-item-heading-${item.id}">
@@ -116,7 +126,14 @@
           `;
         }).join('');
 
-        return `<div class="col-12 col-md-4"><div class="card shadow-sm h-100"><div class="card-header fw-semibold">${escapeHtml(status)}</div><div class="card-body">${cards || '<p class="text-body-secondary mb-0">No items.</p>'}</div></div></div>`;
+        return `
+          <div class="col-12 col-md-4">
+            <div class="card shadow-sm h-100 km-kanban-column" data-status="${escapeHtml(status)}">
+              <div class="card-header fw-semibold">${escapeHtml(status)}</div>
+              <div class="card-body km-kanban-column-body">${cards || '<p class="text-body-secondary mb-0">No items.</p>'}</div>
+            </div>
+          </div>
+        `;
       }).join('');
 
       board.innerHTML = `
@@ -246,6 +263,69 @@
           }
         });
       }
+    });
+
+    board.querySelectorAll('.km-kanban-card').forEach((card) => {
+      card.addEventListener('dragstart', (event) => {
+        if (isMovingItem) {
+          event.preventDefault();
+          return;
+        }
+        draggedItemId = card.dataset.itemId;
+        dragOriginStatus = card.dataset.status;
+        card.classList.add('km-kanban-card-dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', draggedItemId || '');
+        }
+      });
+
+      card.addEventListener('dragend', () => {
+        clearDragState();
+      });
+    });
+
+    board.querySelectorAll('.km-kanban-column').forEach((column) => {
+      column.addEventListener('dragover', (event) => {
+        if (!draggedItemId || isMovingItem) return;
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = 'move';
+        }
+        column.classList.add('km-kanban-column-over');
+      });
+
+      column.addEventListener('dragleave', (event) => {
+        if (!column.contains(event.relatedTarget)) {
+          column.classList.remove('km-kanban-column-over');
+        }
+      });
+
+      column.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        const nextStatus = column.dataset.status;
+        column.classList.remove('km-kanban-column-over');
+        if (!draggedItemId || !nextStatus || nextStatus === dragOriginStatus || isMovingItem) {
+          clearDragState();
+          return;
+        }
+
+        isMovingItem = true;
+        try {
+          await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban/${encodeURIComponent(draggedItemId)}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ status: nextStatus })
+          });
+          setFeedback(`Deliverable moved to ${nextStatus}.`, false);
+          await render();
+        } catch (error) {
+          setFeedback(error.message || 'Failed to move deliverable.', true);
+        } finally {
+          isMovingItem = false;
+          clearDragState();
+        }
+      });
     });
   };
 

@@ -259,6 +259,10 @@ body {
   color: var(--bs-body-color);
 }
 
+.km-kanban-card-dragging {
+  opacity: 0.55;
+}
+
 .km-playbook-toolbar {
   display: grid;
   grid-template-columns: repeat(5, minmax(9rem, 1fr));

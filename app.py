@@ -4096,6 +4096,52 @@ def api_update_project_kanban_item(project_name: str, item_id: int):
     return jsonify(updated_kanban)
 
 
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>/status", methods=["POST"])
+def api_update_project_kanban_item_status(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        status = _normalize_kanban_status(payload.get("status", "Not Started"))
+
+        current_items = []
+        previous_items = [
+            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            for item in kanban.get("items", [])
+        ]
+        matched = False
+        for item in kanban.get("items", []):
+            if int(item.get("id", 0)) == item_id:
+                current_items.append(
+                    {
+                        "deliverable": item.get("deliverable", ""),
+                        "status": status,
+                        "due": item.get("due", ""),
+                    }
+                )
+                matched = True
+            else:
+                current_items.append(
+                    {
+                        "deliverable": item.get("deliverable", ""),
+                        "status": item.get("status", "Not Started"),
+                        "due": item.get("due", ""),
+                    }
+                )
+        if not matched:
+            raise ValueError("Kanban item not found.")
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
 @app.route("/api/projects/<project_name>/kanban/<int:item_id>/delete", methods=["POST"])
 def api_delete_project_kanban_item(project_name: str, item_id: int):
     parser = DocsParser()
