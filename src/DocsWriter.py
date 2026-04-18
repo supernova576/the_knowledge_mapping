@@ -258,17 +258,18 @@ class DocsWriter:
             kanban_lines = [
                 "# Kanban",
                 "",
-                "| Deliverable | Status | Due |",
-                "| ----------- | ------ | --- |",
+                "| Deliverable | Status | Due | Prio |",
+                "| ----------- | ------ | --- | ---- |",
             ]
             if items:
                 for item in items:
                     deliverable = self._escape_markdown_table_cell(item.get("deliverable", ""))
                     status = self._escape_markdown_table_cell(item.get("status", "Not Started"))
                     due = self._escape_markdown_table_cell(item.get("due", ""))
-                    kanban_lines.append(f"| {deliverable} | {status} | {due} |")
+                    priority = self._escape_markdown_table_cell(item.get("priority", ""))
+                    kanban_lines.append(f"| {deliverable} | {status} | {due} | {priority} |")
             else:
-                kanban_lines.append("|  |  |  |")
+                kanban_lines.append("|  |  |  |  |")
             kanban_lines.append("")
 
             lines = self._replace_h1_section(lines, "Kanban", kanban_lines)

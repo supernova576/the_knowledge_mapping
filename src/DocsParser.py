@@ -1235,26 +1235,55 @@ class DocsParser:
         content = kanban_file.read_text(encoding="utf-8")
         rows = self._extract_markdown_table(content, "Kanban")
         parsed_items: list[dict] = []
+        grouped_by_status: dict[str, list[dict]] = {"Not Started": [], "In Progress": [], "Done": []}
+
+        def _parse_priority(raw_priority: str) -> int | None:
+            raw_value = self._normalize_markdown_table_cell(raw_priority)
+            if not raw_value:
+                return None
+            try:
+                parsed = int(raw_value)
+            except ValueError:
+                return None
+            return parsed if parsed > 0 else None
+
         for index, row in enumerate(rows, start=1):
             deliverable = self._normalize_markdown_table_cell(row.get("Deliverable", ""))
             raw_status = self._normalize_markdown_table_cell(row.get("Status", ""))
             due = self._normalize_markdown_table_cell(row.get("Due", ""))
+            priority = _parse_priority(row.get("Prio", ""))
             normalized_status = self.KANBAN_STATUS_VALUES.get(raw_status.casefold(), "Not Started")
-            if not deliverable and not raw_status and not due:
+            if not deliverable and not raw_status and not due and priority is None:
                 continue
-            parsed_items.append(
-                {
-                    "id": index,
-                    "deliverable": deliverable,
-                    "status": raw_status if raw_status in self.KANBAN_STATUS_VALUES.values() else normalized_status,
-                    "status_normalized": normalized_status,
-                    "due": due,
-                }
-            )
+            parsed_item = {
+                "id": index,
+                "deliverable": deliverable,
+                "status": raw_status if raw_status in self.KANBAN_STATUS_VALUES.values() else normalized_status,
+                "status_normalized": normalized_status,
+                "due": due,
+                "priority": priority,
+                "_source_index": index,
+            }
+            grouped_by_status[normalized_status].append(parsed_item)
+            parsed_items.append(parsed_item)
 
         columns = {"Not Started": [], "In Progress": [], "Done": []}
+        for status_name, status_items in grouped_by_status.items():
+            ordered_items = sorted(
+                status_items,
+                key=lambda item: (
+                    item.get("priority") is None,
+                    item.get("priority") or 10**9,
+                    item.get("_source_index", 0),
+                ),
+            )
+            for normalized_priority, item in enumerate(ordered_items, start=1):
+                item["priority"] = normalized_priority
+                item.pop("_source_index", None)
+                columns[status_name].append(item)
+
         for item in parsed_items:
-            columns[item["status_normalized"]].append(item)
+            item.pop("_source_index", None)
 
         return {"project_name": project_dir.name, "items": parsed_items, "columns": columns, "warnings": []}
 

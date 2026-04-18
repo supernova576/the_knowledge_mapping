@@ -864,6 +864,51 @@ def _normalize_kanban_due(value: str) -> str:
     return normalized
 
 
+def _normalize_kanban_priority(value: object, *, default: int | None = None) -> int:
+    if value is None:
+        if default is None:
+            raise ValueError("Invalid kanban priority.")
+        return default
+    try:
+        normalized = int(str(value).strip())
+    except (TypeError, ValueError):
+        if default is None:
+            raise ValueError("Invalid kanban priority.")
+        return default
+    if normalized < 1:
+        if default is None:
+            raise ValueError("Invalid kanban priority.")
+        return default
+    return normalized
+
+
+def _kanban_item_payload(item: dict) -> dict:
+    return {
+        "deliverable": str(item.get("deliverable", "")).strip(),
+        "status": _normalize_kanban_status(item.get("status", "Not Started")),
+        "due": str(item.get("due", "")).strip(),
+        "priority": _normalize_kanban_priority(item.get("priority"), default=1),
+    }
+
+
+def _reindex_kanban_priorities(items: list[dict]) -> list[dict]:
+    grouped: dict[str, list[dict]] = {status: [] for status in DEADLINE_STATUS_OPTIONS}
+    for item in items:
+        normalized = _kanban_item_payload(item)
+        grouped[normalized["status"]].append(normalized)
+
+    normalized_items: list[dict] = []
+    for status in DEADLINE_STATUS_OPTIONS:
+        ordered = sorted(
+            grouped[status],
+            key=lambda entry: _normalize_kanban_priority(entry.get("priority"), default=10**6),
+        )
+        for priority, entry in enumerate(ordered, start=1):
+            entry["priority"] = priority
+            normalized_items.append(entry)
+    return normalized_items
+
+
 def _project_resources_file(project_path: Path) -> Path:
     resources_path = (project_path / "Ressourcen.md").resolve()
     if project_path != resources_path.parent:
@@ -3702,7 +3747,7 @@ def create_project():
         )
         kanban_template = _load_project_template(
             "3 - Kanban",
-            "# Kanban\n\n| Deliverable | Status | Due |\n| ----------- | ------ | --- |\n|             |        |     |\n",
+            "# Kanban\n\n| Deliverable | Status | Due | Prio |\n| ----------- | ------ | --- | ---- |\n|             |        |     |      |\n",
         )
 
         resources_content = resources_template.replace("| Tag |       |", f"| Tag | #PROJECT_{project_name} |")
@@ -4041,11 +4086,21 @@ def api_add_project_kanban_item(project_name: str):
             raise ValueError("A kanban item with this deliverable already exists.")
 
         current_items = [
-            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
             for item in kanban.get("items", [])
         ]
         previous_items = list(current_items)
-        current_items.append({"deliverable": deliverable, "status": status, "due": due})
+        next_priority = 1 + max(
+            (_normalize_kanban_priority(item.get("priority"), default=0) for item in current_items if item.get("status") == status),
+            default=0,
+        )
+        current_items.append({"deliverable": deliverable, "status": status, "due": due, "priority": next_priority})
+        current_items = _reindex_kanban_priorities(current_items)
 
         writer = DocsWriter()
         writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
@@ -4072,17 +4127,26 @@ def api_update_project_kanban_item(project_name: str, item_id: int):
 
         current_items = []
         previous_items = [
-            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
             for item in kanban.get("items", [])
         ]
         matched = False
+        existing_priority = None
+        existing_status = None
         for item in kanban.get("items", []):
             existing_deliverable = str(item.get("deliverable", "")).strip()
             if int(item.get("id", 0)) != item_id and existing_deliverable.casefold() == deliverable.casefold():
                 raise ValueError("A kanban item with this deliverable already exists.")
 
             if int(item.get("id", 0)) == item_id:
-                current_items.append({"deliverable": deliverable, "status": status, "due": due})
+                existing_status = str(item.get("status", "Not Started"))
+                existing_priority = _normalize_kanban_priority(item.get("priority"), default=1)
+                current_items.append({"deliverable": deliverable, "status": status, "due": due, "priority": existing_priority})
                 matched = True
             else:
                 current_items.append(
@@ -4090,10 +4154,25 @@ def api_update_project_kanban_item(project_name: str, item_id: int):
                         "deliverable": item.get("deliverable", ""),
                         "status": item.get("status", "Not Started"),
                         "due": item.get("due", ""),
+                        "priority": item.get("priority", 1),
                     }
                 )
         if not matched:
             raise ValueError("Kanban item not found.")
+        if existing_status != status:
+            next_priority = 1 + max(
+                (
+                    _normalize_kanban_priority(item.get("priority"), default=0)
+                    for item in current_items
+                    if item.get("status") == status and str(item.get("deliverable", "")).strip() != deliverable
+                ),
+                default=0,
+            )
+            for item in current_items:
+                if str(item.get("deliverable", "")).strip() == deliverable:
+                    item["priority"] = next_priority
+                    break
+        current_items = _reindex_kanban_priorities(current_items)
 
         writer = DocsWriter()
         writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
@@ -4116,17 +4195,25 @@ def api_update_project_kanban_item_status(project_name: str, item_id: int):
 
         current_items = []
         previous_items = [
-            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
             for item in kanban.get("items", [])
         ]
         matched = False
+        moved_deliverable = ""
         for item in kanban.get("items", []):
             if int(item.get("id", 0)) == item_id:
+                moved_deliverable = str(item.get("deliverable", "")).strip()
                 current_items.append(
                     {
                         "deliverable": item.get("deliverable", ""),
                         "status": status,
                         "due": item.get("due", ""),
+                        "priority": item.get("priority", 1),
                     }
                 )
                 matched = True
@@ -4136,10 +4223,24 @@ def api_update_project_kanban_item_status(project_name: str, item_id: int):
                         "deliverable": item.get("deliverable", ""),
                         "status": item.get("status", "Not Started"),
                         "due": item.get("due", ""),
+                        "priority": item.get("priority", 1),
                     }
                 )
         if not matched:
             raise ValueError("Kanban item not found.")
+        next_priority = 1 + max(
+            (
+                _normalize_kanban_priority(item.get("priority"), default=0)
+                for item in current_items
+                if item.get("status") == status and str(item.get("deliverable", "")).strip() != moved_deliverable
+            ),
+            default=0,
+        )
+        for item in current_items:
+            if str(item.get("deliverable", "")).strip() == moved_deliverable and item.get("status") == status:
+                item["priority"] = next_priority
+                break
+        current_items = _reindex_kanban_priorities(current_items)
 
         writer = DocsWriter()
         writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
@@ -4158,16 +4259,94 @@ def api_delete_project_kanban_item(project_name: str, item_id: int):
         project_path = parser.resolve_project_path(project_name)
         kanban = parser.parse_kanban(project_path)
         previous_items = [
-            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
             for item in kanban.get("items", [])
         ]
         current_items = [
-            {"deliverable": item.get("deliverable", ""), "status": item.get("status", "Not Started"), "due": item.get("due", "")}
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
             for item in kanban.get("items", [])
             if int(item.get("id", 0)) != item_id
         ]
         if len(current_items) == len(previous_items):
             raise ValueError("Kanban item not found.")
+        current_items = _reindex_kanban_priorities(current_items)
+
+        writer = DocsWriter()
+        writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)
+        _sync_project_kanban_deadlines(project_path.name, previous_items, current_items, conf)
+        updated_kanban = parser.parse_kanban(project_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated_kanban)
+
+
+@app.route("/api/projects/<project_name>/kanban/<int:item_id>/priority", methods=["POST"])
+def api_update_project_kanban_item_priority(project_name: str, item_id: int):
+    parser = DocsParser()
+    conf = _load_conf()
+    payload = request.get_json(silent=True) or {}
+    try:
+        project_path = parser.resolve_project_path(project_name)
+        kanban = parser.parse_kanban(project_path)
+        target_priority = _normalize_kanban_priority(payload.get("priority"))
+
+        previous_items = [
+            {
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
+            for item in kanban.get("items", [])
+        ]
+        working_items = [
+            {
+                "id": item.get("id", 0),
+                "deliverable": item.get("deliverable", ""),
+                "status": item.get("status", "Not Started"),
+                "due": item.get("due", ""),
+                "priority": item.get("priority", 1),
+            }
+            for item in kanban.get("items", [])
+        ]
+
+        moving_item = None
+        for item in working_items:
+            if int(item.get("id", 0)) == item_id:
+                moving_item = item
+                break
+        if moving_item is None:
+            raise ValueError("Kanban item not found.")
+
+        status = _normalize_kanban_status(moving_item.get("status", "Not Started"))
+        status_items = [item for item in working_items if _normalize_kanban_status(item.get("status", "Not Started")) == status]
+        status_items = sorted(status_items, key=lambda entry: _normalize_kanban_priority(entry.get("priority"), default=10**6))
+        if not status_items:
+            raise ValueError("Kanban item not found.")
+
+        old_index = next((idx for idx, entry in enumerate(status_items) if int(entry.get("id", 0)) == item_id), None)
+        if old_index is None:
+            raise ValueError("Kanban item not found.")
+
+        max_index = len(status_items) - 1
+        new_index = max(0, min(max_index, target_priority - 1))
+        item_to_move = status_items.pop(old_index)
+        status_items.insert(new_index, item_to_move)
+
+        for priority, entry in enumerate(status_items, start=1):
+            entry["priority"] = priority
+
+        current_items = _reindex_kanban_priorities(working_items)
 
         writer = DocsWriter()
         writer.write_project_kanban_file(_project_kanban_file(project_path), current_items)

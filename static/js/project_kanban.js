@@ -77,7 +77,7 @@
         const cards = (groups[status] || []).map((item) => {
           const deadline = deadlineMapping[item.deliverable] || {};
           return `
-            <div class="card mb-3 shadow-sm km-kanban-card" draggable="true" data-item-id="${item.id}" data-status="${escapeHtml(item.status_normalized || item.status || status)}">
+            <div class="card mb-3 shadow-sm km-kanban-card" draggable="true" data-item-id="${item.id}" data-status="${escapeHtml(item.status_normalized || item.status || status)}" data-priority="${escapeHtml(item.priority || '')}">
               <div class="accordion" id="kanban-item-accordion-${item.id}">
                 <div class="accordion-item">
                   <h3 class="accordion-header" id="kanban-item-heading-${item.id}">
@@ -89,7 +89,8 @@
                       aria-expanded="false"
                       aria-controls="kanban-item-collapse-${item.id}"
                     >
-                      ${escapeHtml(item.deliverable || 'Untitled Deliverable')}
+                      <span class="me-2 text-body-secondary">#${escapeHtml(item.priority || '')}</span>
+                      <span>${escapeHtml(item.deliverable || 'Untitled Deliverable')}</span>
                     </button>
                   </h3>
                   <div
@@ -283,6 +284,53 @@
       card.addEventListener('dragend', () => {
         clearDragState();
       });
+
+      card.addEventListener('dragover', (event) => {
+        if (!draggedItemId || isMovingItem) return;
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = 'move';
+        }
+      });
+
+      card.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        if (!draggedItemId || isMovingItem) {
+          clearDragState();
+          return;
+        }
+        const targetStatus = card.dataset.status;
+        const targetPriority = Number(card.dataset.priority || 0);
+        if (!targetStatus || !targetPriority || !card.dataset.itemId || card.dataset.itemId === draggedItemId) {
+          clearDragState();
+          return;
+        }
+
+        isMovingItem = true;
+        try {
+          if (targetStatus === dragOriginStatus) {
+            await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban/${encodeURIComponent(draggedItemId)}/priority`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ priority: targetPriority })
+            });
+            setFeedback(`Deliverable reordered in ${targetStatus}.`, false);
+          } else {
+            await fetchJson(`/api/projects/${encodeURIComponent(projectName)}/kanban/${encodeURIComponent(draggedItemId)}/status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ status: targetStatus })
+            });
+            setFeedback(`Deliverable moved to ${targetStatus}.`, false);
+          }
+          await render();
+        } catch (error) {
+          setFeedback(error.message || 'Failed to reorder deliverable.', true);
+        } finally {
+          isMovingItem = false;
+          clearDragState();
+        }
+      });
     });
 
     board.querySelectorAll('.km-kanban-column').forEach((column) => {
@@ -305,7 +353,11 @@
         event.preventDefault();
         const nextStatus = column.dataset.status;
         column.classList.remove('km-kanban-column-over');
-        if (!draggedItemId || !nextStatus || nextStatus === dragOriginStatus || isMovingItem) {
+        if (!draggedItemId || !nextStatus || isMovingItem) {
+          clearDragState();
+          return;
+        }
+        if (nextStatus === dragOriginStatus) {
           clearDragState();
           return;
         }
