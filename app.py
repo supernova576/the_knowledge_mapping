@@ -1616,13 +1616,21 @@ def _load_hslu_overview(parser: DocsParser, database: db, semester: str, module:
 
 
 
-def _load_hslu_checklist(parser: DocsParser, semester: str, sw: str, sections: list[str]) -> tuple[list[str], str, str, list[str], list[str], dict[str, list[dict]]]:
+def _load_hslu_checklist(
+    parser: DocsParser,
+    database: db,
+    semester: str,
+    sw: str,
+    sections: list[str],
+) -> tuple[list[str], str, str, list[str], list[str], dict[str, list[dict]], str]:
     rows = parser.parse_hslu_semester_checklist()
     semesters = sorted(
         {str(row.get("semester", "")).strip() for row in rows if str(row.get("semester", "")).strip()},
         key=str.casefold,
     )
-    selected_semester = semester if semester in semesters else (semesters[0] if semesters else "")
+    standard_semester = database.get_hslu_checklist_standard_semester()
+    default_semester = standard_semester if standard_semester in semesters else (semesters[0] if semesters else "")
+    selected_semester = semester if semester in semesters else default_semester
     selected_sw = sw.zfill(2) if sw.isdigit() else ""
     filtered_rows = [row for row in rows if str(row.get("semester", "")).strip() == selected_semester] if selected_semester else []
     if selected_sw:
@@ -1671,7 +1679,7 @@ def _load_hslu_checklist(parser: DocsParser, semester: str, sw: str, sections: l
         section_name = str(row.get("section") or "").strip()
         rows_by_section.setdefault(section_name, []).append(row)
 
-    return semesters, selected_semester, selected_sw, available_sections, selected_sections, rows_by_section
+    return semesters, selected_semester, selected_sw, available_sections, selected_sections, rows_by_section, standard_semester
 
 def _docs_alpha_sort_key(doc: dict) -> tuple[int, str]:
     title = str(doc.get("title") or "").strip()
@@ -6072,13 +6080,20 @@ def hslu_semester_overview_sync():
 @app.route("/hslu/semester_checklist", methods=["GET"])
 def hslu_semester_checklist():
     parser = DocsParser()
+    database = db()
 
     semester = request.args.get("semester", "").strip()
     sw = request.args.get("sw", "").strip()
     sections = [item.strip() for item in request.args.getlist("section") if item.strip()]
-    semesters, selected_semester, selected_sw, available_sections, selected_sections, checklist_rows_by_section = _load_hslu_checklist(
-        parser, semester, sw, sections
-    )
+    (
+        semesters,
+        selected_semester,
+        selected_sw,
+        available_sections,
+        selected_sections,
+        checklist_rows_by_section,
+        standard_semester,
+    ) = _load_hslu_checklist(parser, database, semester, sw, sections)
 
     return render_template(
         "hslu_semester_checklist.html",
@@ -6088,9 +6103,33 @@ def hslu_semester_checklist():
         available_sections=available_sections,
         selected_sections=selected_sections,
         checklist_rows_by_section=checklist_rows_by_section,
+        standard_semester=standard_semester,
         last_sync_time="Live markdown view",
         sw_status_options=SW_STATUS_OPTIONS,
     )
+
+
+@app.route("/hslu/semester_checklist/standard_semester", methods=["POST"])
+def hslu_semester_checklist_standard_semester():
+    semester = request.form.get("semester", "").strip()
+
+    database = db()
+    semesters = sorted(
+        {
+            str(row.get("semester", "")).strip()
+            for row in DocsParser().parse_hslu_semester_checklist()
+            if str(row.get("semester", "")).strip()
+        },
+        key=str.casefold,
+    )
+
+    if not semester or semester not in semesters:
+        flash("Please select a valid semester before setting it as standard.", "warning")
+        return redirect(url_for("hslu_semester_checklist"))
+
+    database.set_hslu_checklist_standard_semester(semester)
+    flash(f"Standard semester set to '{semester}'.", "success")
+    return redirect(url_for("hslu_semester_checklist", semester=semester))
 
 
 @app.route("/hslu/semester_checklist/status", methods=["POST"])

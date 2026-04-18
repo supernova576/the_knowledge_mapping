@@ -940,6 +940,20 @@ class db:
             logger.error("sqlite_handler/get_hslu_standard_semester failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def set_hslu_checklist_standard_semester(self, semester: str) -> None:
+        try:
+            self.upsert_setting("hslu_semester_checklist", str(semester or "").strip())
+        except Exception:
+            logger.error("sqlite_handler/set_hslu_checklist_standard_semester failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def get_hslu_checklist_standard_semester(self) -> str:
+        try:
+            return str(self.get_setting("hslu_semester_checklist", "") or "").strip()
+        except Exception:
+            logger.error("sqlite_handler/get_hslu_checklist_standard_semester failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def __del__(self) -> None:
         try:
             if getattr(self, "conn", None):
