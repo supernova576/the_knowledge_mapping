@@ -643,6 +643,8 @@ class DocsWriter:
                 kept_tags.append(tag)
 
         replacement = [" ".join(kept_tags).strip()] if kept_tags else [""]
+        if preserved_suffix and replacement[-1].strip() != "":
+            replacement.append("")
         replacement.extend(preserved_suffix)
         lines[section_idx + 1:section_end] = replacement
         return lines
