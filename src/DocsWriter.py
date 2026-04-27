@@ -362,7 +362,7 @@ class DocsWriter:
     def write_learning_file(self, output_dir: Path, note_name: str, rendered_content: str) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         safe_stem = self._safe_learning_stem(note_name)
-        target_path = output_dir / f"{safe_stem} - Learning.md"
+        target_path = output_dir / f"{safe_stem}.md"
         if target_path.exists():
             raise FileExistsError(f"Learning file already exists: {target_path}")
         target_path.write_text(rendered_content.rstrip() + "\n", encoding="utf-8")
