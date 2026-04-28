@@ -47,11 +47,33 @@ INDEX_PROGRESS_WEIGHTS = {
 UNFINISHED_SW_STATUSES = {"", "Not Started", "In Progress"}
 FINISHED_SW_STATUSES = {"Done", "Not Needed"}
 HSLU_DONE_STATUSES = {"Done", "Not Needed"}
+DOC_SORT_OPTIONS = {
+    "title_asc",
+    "title_desc",
+    "created_newest",
+    "created_oldest",
+    "changed_newest",
+    "changed_oldest",
+    "lix_highest",
+    "lix_lowest",
+}
 
 
 def _normalize_sw_status(value: str | None) -> str:
     normalized = str(value or "").strip()
     return normalized if normalized in SW_STATUS_OPTIONS else ""
+
+
+def _lix_classification_and_color(lix_value: float | None) -> tuple[str, str]:
+    if lix_value is None:
+        return "N/A", "text-body-secondary"
+    if lix_value > 70:
+        return "Leicht", "text-success-emphasis"
+    if lix_value >= 50:
+        return "Mittel", "text-warning-emphasis"
+    if lix_value >= 30:
+        return "Schwierig", "text-warning"
+    return "Sehr schwer", "text-danger"
 
 
 def _entry_indicator_for_sw_status(*statuses: str | None) -> str:
@@ -547,6 +569,12 @@ def _prepare_docs_for_index(database: db, docs: dict, sort_by: str) -> list[dict
         row["latest_ai_feedback"] = (
             _find_latest_ai_feedback_for_doc(database, str(row.get("title", "")).strip()) if row["has_ai_feedback"] else None
         )
+        raw_lix = row.get("lix")
+        try:
+            row["lix_value"] = round(float(raw_lix), 2) if raw_lix is not None else None
+        except (TypeError, ValueError):
+            row["lix_value"] = None
+        row["lix_label"], row["lix_color_class"] = _lix_classification_and_color(row["lix_value"])
         if row["is_under_construction"] == "true":
             row["is_compliant"] = "Not Determined"
             row["noncompliance_reason_list"] = []
@@ -1773,6 +1801,26 @@ def _sort_docs(processed_docs: list[dict], sort_by: str) -> None:
         processed_docs.sort(key=lambda doc: (_parse_doc_date(doc.get("changed_at")) is None, _parse_doc_date(doc.get("changed_at")) or datetime.max))
         return
 
+    if sort_by == "lix_highest":
+        processed_docs.sort(
+            key=lambda doc: (
+                doc.get("lix_value") is None,
+                -(float(doc.get("lix_value")) if doc.get("lix_value") is not None else 0.0),
+                _docs_alpha_sort_key(doc),
+            )
+        )
+        return
+
+    if sort_by == "lix_lowest":
+        processed_docs.sort(
+            key=lambda doc: (
+                doc.get("lix_value") is None,
+                float(doc.get("lix_value")) if doc.get("lix_value") is not None else 0.0,
+                _docs_alpha_sort_key(doc),
+            )
+        )
+        return
+
     processed_docs.sort(key=_docs_alpha_sort_key)
 
 
@@ -2134,6 +2182,14 @@ def _perform_full_scan() -> None:
     parser = DocsParser()
     parser.parse_and_add_ALL_docs_to_db()
     logger.info("UI full scan completed")
+
+
+def _perform_lix_sync() -> dict:
+    logger.info("UI requested LIX sync")
+    parser = DocsParser()
+    result = parser.sync_lix_to_db()
+    logger.info("UI LIX sync completed")
+    return result
 
 
 def _playbook_action_handlers() -> dict:
@@ -2837,7 +2893,7 @@ def index():
     query = _sanitize_doc_query(request.args.get("q", ""))
     parser = DocsParser()
     sort_by = request.args.get("sort", "title_asc").strip()
-    if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
+    if sort_by not in DOC_SORT_OPTIONS:
         sort_by = "title_asc"
 
     database = db()
@@ -2847,6 +2903,17 @@ def index():
     total_docs = len(docs)
     compliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "true"])
     incompliant_docs = len([d for d in docs.values() if d.get("is_compliant") == "false"])
+    lix_values: list[float] = []
+    for row in docs.values():
+        try:
+            raw_lix = row.get("lix")
+            if raw_lix is None:
+                continue
+            lix_values.append(float(raw_lix))
+        except (TypeError, ValueError):
+            continue
+    average_lix = round(sum(lix_values) / len(lix_values), 2) if lix_values else None
+    average_lix_label, average_lix_color_class = _lix_classification_and_color(average_lix)
 
     processed_docs = _prepare_docs_for_index(database, docs, sort_by)
     last_sync_time = database.get_last_sync_time()
@@ -2876,6 +2943,9 @@ def index():
         total_docs=total_docs,
         compliant_docs=compliant_docs,
         incompliant_docs=incompliant_docs,
+        average_lix=average_lix,
+        average_lix_label=average_lix_label,
+        average_lix_color_class=average_lix_color_class,
         selected_view=view,
         query=query,
         selected_sort=sort_by,
@@ -2898,7 +2968,7 @@ def index_docs_api():
     view = request.args.get("view", "all")
     query = _sanitize_doc_query(request.args.get("q", ""))
     sort_by = request.args.get("sort", "title_asc").strip()
-    if sort_by not in {"title_asc", "title_desc", "created_newest", "created_oldest", "changed_newest", "changed_oldest"}:
+    if sort_by not in DOC_SORT_OPTIONS:
         sort_by = "title_asc"
 
     database = db()
@@ -3685,6 +3755,35 @@ def scan_docs():
             )
         else:
             logger.error("Scan failed with unhandled exception\n%s", traceback.format_exc())
+            flash(traceback.format_exc(), "danger")
+
+    return redirect(url_for("index"))
+
+
+@app.route("/lix/sync", methods=["POST"])
+def sync_lix():
+    try:
+        result = _perform_lix_sync()
+        calculated = int(result.get("calculated", 0))
+        cleared = int(result.get("cleared", 0))
+        missing = int(result.get("missing", 0))
+        message = f"LIX sync completed successfully. Calculated {calculated} compliant doc(s)."
+        if cleared:
+            message += f" Cleared {cleared} stale LIX value(s)."
+        if missing:
+            message += f" {missing} compliant doc(s) could not be found on disk."
+            flash(message, "warning")
+        else:
+            flash(message, "success")
+    except BaseException as exc:
+        if isinstance(exc, SystemExit):
+            logger.error("LIX sync failed due to parser SystemExit")
+            flash(
+                "LIX sync failed: parser exited early. Check docs path in conf.json and parser/database logs.",
+                "danger",
+            )
+        else:
+            logger.error("LIX sync failed with unhandled exception\n%s", traceback.format_exc())
             flash(traceback.format_exc(), "danger")
 
     return redirect(url_for("index"))

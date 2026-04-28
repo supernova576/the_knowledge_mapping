@@ -1,9 +1,9 @@
 name: Security
 
 on:
-  schedule:
+  #schedule:
     # GitHub Actions cron is UTC; run at 03:00 Europe/Zurich (Swiss time) year-round.
-    - cron: '0 2 * * 6'
+   # - cron: '0 2 * * 6'
   workflow_dispatch:
 
 permissions:

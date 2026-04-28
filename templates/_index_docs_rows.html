@@ -12,6 +12,14 @@
         {% endif %}
     </td>
     <td><span class="badge {{ doc.compliance_tag_class }}">{{ doc.is_compliant }}</span></td>
+    <td>
+        {% if doc.lix_value is not none %}
+            <span class="fw-semibold {{ doc.lix_color_class }}">{{ doc.lix_value }}</span>
+            <small class="text-muted d-block">{{ doc.lix_label }}</small>
+        {% else %}
+            <span class="text-body-secondary">N/A</span>
+        {% endif %}
+    </td>
     <td>{% for reason in doc.noncompliance_reason_list %}<span class="badge text-bg-warning text-dark me-1">{{ reason }}</span>{% endfor %}</td>
     <td>{% for tag in doc.tags_list %}<span class="badge text-bg-secondary me-1">{{ tag }}</span>{% endfor %}</td>
     <td>
@@ -51,6 +59,6 @@
 </tr>
 {% else %}
 <tr>
-    <td colspan="8" class="text-center text-muted py-4">No documents found for this filter.</td>
+    <td colspan="9" class="text-center text-muted py-4">No documents found for this filter.</td>
 </tr>
 {% endfor %}

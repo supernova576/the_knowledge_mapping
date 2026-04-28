@@ -61,6 +61,7 @@ class DocsParser:
     }
     TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
     KANBAN_STATUS_VALUES = {"not started": "Not Started", "in progress": "In Progress", "done": "Done"}
+    LIX_RESOURCE_SECTION_HEADING = "## Zusätzliche Ressourcen"
     def __init__(self) -> None:
         try:
             path = Path(__file__).resolve().parent.parent / "conf.json"
@@ -414,6 +415,79 @@ class DocsParser:
             logger.error("Failed to extract Beschreibung section\n%s", traceback.format_exc())
             adieu(1)
 
+    def __strip_additional_resources_section(self, doc_content: str) -> str:
+        try:
+            match = re.search(
+                rf"(?im)^\s*{re.escape(self.LIX_RESOURCE_SECTION_HEADING)}\s*$",
+                str(doc_content or ""),
+            )
+            if not match:
+                return str(doc_content or "")
+            return str(doc_content or "")[: match.start()]
+        except Exception:
+            logger.error("Failed to strip additional resources section\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __strip_lix_excluded_markdown(self, doc_content: str) -> str:
+        try:
+            doc_content = re.sub(r"(?ms)^```.*?^```\s*", "\n", str(doc_content or ""))
+            cleaned_lines: list[str] = []
+            for line in doc_content.splitlines():
+                stripped = line.strip()
+                pipe_count = stripped.count("|")
+                is_table_line = (
+                    pipe_count >= 2
+                    and (
+                        stripped.startswith("|")
+                        or stripped.endswith("|")
+                        or re.fullmatch(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", stripped) is not None
+                    )
+                )
+                if not is_table_line:
+                    cleaned_lines.append(line)
+
+            cleaned = "\n".join(cleaned_lines)
+            cleaned = re.sub(r"!?\[\[[^\]\n]+\]\]", " ", cleaned)
+            cleaned = re.sub(r"!?\[[^\]\n]*\]\([^\)\n]*\)", " ", cleaned)
+            cleaned = cleaned.replace("#", "")
+            return cleaned
+        except Exception:
+            logger.error("Failed to strip LIX markdown exclusions\n%s", traceback.format_exc())
+            adieu(1)
+
+    def __count_syllables(self, word: str) -> int:
+        cleaned = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", str(word or "").strip().lower())
+        if not cleaned:
+            return 0
+        groups = re.findall(r"[aeiouyäöü]+", cleaned)
+        return max(1, len(groups))
+
+    def __calculate_lix(self, doc_content: str) -> float | None:
+        try:
+            base_content = self.__strip_lix_excluded_markdown(
+                self.__strip_additional_resources_section(doc_content)
+            )
+            words = re.findall(r"\b[\wÄÖÜäöüß]+\b", base_content, flags=re.UNICODE)
+            if not words:
+                return None
+            sentence_count = len(
+                [item for item in re.split(r"(?<=[.!?])\s+", base_content.strip()) if item.strip()]
+            )
+            if sentence_count <= 0:
+                sentence_count = 1
+            total_syllables = sum(self.__count_syllables(word) for word in words)
+            if total_syllables <= 0:
+                return None
+
+            average_sentence_length = len(words) / sentence_count
+            average_syllables_per_word = total_syllables / len(words)
+            score = 180.0 - average_sentence_length - (58.5 * average_syllables_per_word)
+            clamped_score = max(0.0, min(100.0, score))
+            return round(clamped_score, 2)
+        except Exception:
+            logger.error("Failed to calculate LIX\n%s", traceback.format_exc())
+            adieu(1)
+
     def get_doc_titles_by_description_query(self, query: str) -> set[str]:
         try:
             normalized_query = str(query or "").strip().casefold()
@@ -503,6 +577,51 @@ class DocsParser:
         except Exception:
             logger.error("Full docs sync failed\n%s", traceback.format_exc())
             adieu(1)
+
+    def sync_lix_to_db(self) -> dict:
+        try:
+            db_object = db()
+            doc_paths_by_title = {
+                self.__parse_title_from_doc(doc_full_path): doc_full_path
+                for doc_full_path in self.__get_full_document_list()
+            }
+            calculated_count = 0
+            cleared_count = 0
+            missing_count = 0
+
+            for doc_id, doc_row in db_object.get_all_docs().items():
+                is_compliant = str(doc_row.get("is_compliant", "")).strip().casefold() == "true"
+                doc_title = str(doc_row.get("title", "")).strip()
+                doc_path = doc_paths_by_title.get(doc_title)
+                lix = None
+
+                if is_compliant and doc_path:
+                    with open(doc_path, "r", encoding="utf-8") as f:
+                        lix = self.__calculate_lix(f.read())
+                    calculated_count += 1
+                elif is_compliant:
+                    missing_count += 1
+
+                if lix is None and doc_row.get("lix") is not None:
+                    cleared_count += 1
+
+                db_object.update_docs_lix_by_id(int(doc_id), lix)
+
+            logger.info(
+                "LIX sync completed calculated=%s cleared=%s missing=%s",
+                calculated_count,
+                cleared_count,
+                missing_count,
+            )
+            return {
+                "calculated": calculated_count,
+                "cleared": cleared_count,
+                "missing": missing_count,
+            }
+        except Exception:
+            logger.error("LIX sync failed\n%s", traceback.format_exc())
+            adieu(1)
+
     def _clean_note(self, note: str) -> str:
         try:
             return re.sub(r"\s*\(.*?\)", "", note).strip()

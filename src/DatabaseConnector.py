@@ -52,10 +52,12 @@ class db:
                     manual_compliant_override TEXT,
                     is_under_construction TEXT,
                     has_learning TEXT NOT NULL DEFAULT 'false',
-                    has_ai_feedback TEXT NOT NULL DEFAULT 'false'
+                    has_ai_feedback TEXT NOT NULL DEFAULT 'false',
+                    lix REAL
                 )
                 """
             )
+            self.__ensure_docs_lix_column()
 
             self.cursor.execute(
                 """
@@ -155,6 +157,12 @@ class db:
             logger.error("sqlite_handler/init_db failed\n%s", traceback.format_exc())
             adieu(1)
 
+    def __ensure_docs_lix_column(self) -> None:
+        columns = self._fetch_all_dict("PRAGMA table_info(docs)")
+        if any(str(column.get("name", "")).strip().casefold() == "lix" for column in columns):
+            return
+        self._execute("ALTER TABLE docs ADD COLUMN lix REAL")
+
     def _execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         self.cursor.execute(query, params)
         return self.cursor
@@ -173,7 +181,7 @@ class db:
     def create_new_docs_entry(self, ndd: dict) -> None:
         try:
             self._execute(
-                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction, has_learning, has_ai_feedback) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO docs (title, created_at, changed_at, links, tags, is_compliant, video_links, noncompliance_reason, manual_compliant_override, is_under_construction, has_learning, has_ai_feedback, lix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ndd.get("title", "N/A"),
                     ndd.get("created_at", "N/A"),
@@ -187,6 +195,7 @@ class db:
                     ndd.get("is_under_construction", "false"),
                     ndd.get("has_learning", "false"),
                     ndd.get("has_ai_feedback", "false"),
+                    ndd.get("lix"),
                 ),
             )
             self._commit()
@@ -270,29 +279,57 @@ class db:
             if id == "N/A":
                 raise Exception("ID muss einen Wert haben: N/A erhalten")
 
+            fields = [
+                "title = ?",
+                "created_at = ?",
+                "changed_at = ?",
+                "links = ?",
+                "tags = ?",
+                "is_compliant = ?",
+                "video_links = ?",
+                "noncompliance_reason = ?",
+                "manual_compliant_override = ?",
+                "is_under_construction = ?",
+                "has_learning = ?",
+                "has_ai_feedback = ?",
+            ]
+            params = [
+                udd.get("title", "N/A"),
+                udd.get("created_at", "N/A"),
+                udd.get("changed_at", "N/A"),
+                udd.get("links", "N/A"),
+                udd.get("tags", "N/A"),
+                udd.get("is_compliant", "false"),
+                udd.get("video_links", "N/A"),
+                udd.get("noncompliance_reason", "N/A"),
+                udd.get("manual_compliant_override", ""),
+                udd.get("is_under_construction", "false"),
+                udd.get("has_learning", "false"),
+                udd.get("has_ai_feedback", "false"),
+            ]
+            if "lix" in udd:
+                fields.append("lix = ?")
+                params.append(udd.get("lix"))
+            params.append(id)
+
             self._execute(
-                "UPDATE docs SET title = ?, created_at = ?, changed_at = ?, links = ?, tags = ?, is_compliant = ?, video_links = ?, noncompliance_reason = ?, manual_compliant_override = ?, is_under_construction = ?, has_learning = ?, has_ai_feedback = ? WHERE id = ?",
-                (
-                    udd.get("title", "N/A"),
-                    udd.get("created_at", "N/A"),
-                    udd.get("changed_at", "N/A"),
-                    udd.get("links", "N/A"),
-                    udd.get("tags", "N/A"),
-                    udd.get("is_compliant", "false"),
-                    udd.get("video_links", "N/A"),
-                    udd.get("noncompliance_reason", "N/A"),
-                    udd.get("manual_compliant_override", ""),
-                    udd.get("is_under_construction", "false"),
-                    udd.get("has_learning", "false"),
-                    udd.get("has_ai_feedback", "false"),
-                    id,
-                ),
+                f"UPDATE docs SET {', '.join(fields)} WHERE id = ?",
+                tuple(params),
             )
 
             self._commit()
             logger.info("Updated docs entry id=%s title=%s", id, udd.get("title", "N/A"))
         except Exception:
             logger.error("sqlite_handler/update_docs_by_id failed\n%s", traceback.format_exc())
+            adieu(1)
+
+    def update_docs_lix_by_id(self, doc_id: int, lix: float | None) -> None:
+        try:
+            self._execute("UPDATE docs SET lix = ? WHERE id = ?", (lix, doc_id))
+            self._commit()
+            logger.info("Updated docs LIX id=%s lix=%s", doc_id, lix)
+        except Exception:
+            logger.error("sqlite_handler/update_docs_lix_by_id failed\n%s", traceback.format_exc())
             adieu(1)
 
     def upsert_setting(self, key: str, value: str) -> None:

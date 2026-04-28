@@ -31,7 +31,10 @@
                     </ul>
                 </div>
                 <form id="scan-form" method="post" action="{{ url_for('scan_docs') }}">
-                    <button id="scan-submit" class="btn btn-primary">Run full scan</button>
+                    <button id="scan-submit" class="btn btn-primary" data-loading-label="Syncing...">Run full scan</button>
+                </form>
+                <form id="lix-sync-form" method="post" action="{{ url_for('sync_lix') }}">
+                    <button id="lix-sync-submit" class="btn btn-outline-primary" data-loading-label="Syncing LIX...">Sync LIX</button>
                 </form>
             </div>
         </div>
@@ -47,7 +50,7 @@
         {% endwith %}
 
         <div id="sync-loading-banner" class="alert alert-info d-none mb-3" role="alert">
-            Sync in progress. Documents are being scanned, please wait...
+            Sync in progress. Please wait...
         </div>
 
         <div class="alert alert-{{ last_sync_alert }}" role="status">
@@ -55,18 +58,27 @@
         </div>
 
         <div class="row g-3 mb-4">
-            <div class="col-lg col-md-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
-            <div class="col-lg col-md-6"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
-            <div class="col-lg-3 col-md-6">
+            <div class="col-lg-3 col-md-3"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h6 text-muted">Loaded docs</h2><p class="display-6 mb-0">{{ total_docs }}</p></div></div></div>
+            <div class="col-lg-3 col-md-3"><div class="card shadow-sm border-success-subtle h-100"><div class="card-body"><h2 class="h6 text-muted">Compliant</h2><p class="display-6 text-success mb-0">{{ compliant_docs }}</p></div></div></div>
+            <div class="col-lg-2 col-md-2">
                 <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
                     <h2 class="h6 text-muted">ToDos open</h2>
                     <p class="display-6 text-warning-emphasis mb-0">{{ open_todos_count }}</p>
                 </div></div>
             </div>
-            <div class="col-lg-3 col-md-6">
+            <div class="col-lg-2 col-md-2">
                 <div class="card shadow-sm border-warning-subtle h-100"><div class="card-body">
                     <h2 class="h6 text-muted">Next deadlines (&lt;7d)</h2>
                     <p class="display-6 text-warning-emphasis mb-0">{{ upcoming_deadlines_count }}</p>
+                </div></div>
+            </div>
+            <div class="col-lg-2 col-md-2">
+                <div class="card shadow-sm border-secondary-subtle h-100"><div class="card-body">
+                    <h2 class="h6 text-muted">Average LIX</h2>
+                    <p class="display-6 mb-0 {{ average_lix_color_class }}">
+                        {% if average_lix is not none %}{{ average_lix }}{% else %}N/A{% endif %}
+                    </p>
+                    <small class="text-muted">{{ average_lix_label }}</small>
                 </div></div>
             </div>
         </div>
@@ -152,13 +164,15 @@
                         <option value="created_oldest" {% if selected_sort=='created_oldest' %}selected{% endif %}>Created (oldest)</option>
                         <option value="changed_newest" {% if selected_sort=='changed_newest' %}selected{% endif %}>Changed (newest)</option>
                         <option value="changed_oldest" {% if selected_sort=='changed_oldest' %}selected{% endif %}>Changed (oldest)</option>
+                        <option value="lix_highest" {% if selected_sort=='lix_highest' %}selected{% endif %}>LIX (highest)</option>
+                        <option value="lix_lowest" {% if selected_sort=='lix_lowest' %}selected{% endif %}>LIX (lowest)</option>
                     </select>
                 </div>
                 <div class="col-xl-2 col-lg-3 col-md-6 d-grid">
                     <button class="btn btn-outline-primary" id="docs-filter-apply-button">Apply</button>
                 </div>
             </form>
-            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>Noncompliance reasons</th><th>Tags</th><th>Addons</th><th>Actions</th></tr></thead><tbody id="docs-overview-tbody">
+            <div class="table-responsive"><table class="table table-sm align-middle compliance-table"><thead><tr><th>Title</th><th>Created</th><th>Changed</th><th>Compliant</th><th>LIX</th><th>Noncompliance reasons</th><th>Tags</th><th>Addons</th><th>Actions</th></tr></thead><tbody id="docs-overview-tbody">
             {% include '_index_docs_rows.html' %}
         </tbody></table></div></div></div>
             {% include '_footer.html' %}
@@ -330,6 +344,8 @@
         (function () {
             const scanForm = document.getElementById("scan-form");
             const scanSubmit = document.getElementById("scan-submit");
+            const lixSyncForm = document.getElementById("lix-sync-form");
+            const lixSyncSubmit = document.getElementById("lix-sync-submit");
             const syncLoadingBanner = document.getElementById("sync-loading-banner");
             const aiFeedbackModalElement = document.getElementById("aiFeedbackConfirmModal");
             const aiFeedbackMessage = document.getElementById("ai-feedback-confirm-message");
@@ -368,7 +384,6 @@
             const docsFilterQuery = document.getElementById("docs-filter-query");
             const docsFilterView = document.getElementById("docs-filter-view");
             const docsFilterApplyButton = document.getElementById("docs-filter-apply-button");
-            const docsSortForm = document.getElementById("docs-sort-form");
             const docsSortSelect = document.getElementById("sort");
             const docsTableBody = document.getElementById("docs-overview-tbody");
             const triggerPlaybookPromptModal = triggerPlaybookPromptModalElement ? new bootstrap.Modal(triggerPlaybookPromptModalElement) : null;
@@ -577,7 +592,7 @@
                 if (!docsTableBody) {
                     return;
                 }
-                docsTableBody.innerHTML = '<tr><td colspan="8" class="text-center py-4"><div class="d-inline-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div><span class="text-muted">Loading documents...</span></div></td></tr>';
+                docsTableBody.innerHTML = '<tr><td colspan="9" class="text-center py-4"><div class="d-inline-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div><span class="text-muted">Loading documents...</span></div></td></tr>';
             }
             async function refreshDocsOverview() {
                 if (!docsTableBody || !docsFilterView || !docsFilterQuery || !docsSortSelect) {
@@ -608,7 +623,7 @@
                     if (error?.name === "AbortError") {
                         return;
                     }
-                    docsTableBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Unable to load documents. Please try again.</td></tr>';
+                    docsTableBody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4">Unable to load documents. Please try again.</td></tr>';
                 }
             }
             function queueDocsSearch() {
@@ -619,15 +634,20 @@
                     refreshDocsOverview();
                 }, 250);
             }
-            if (scanForm && syncLoadingBanner) {
-                scanForm.addEventListener("submit", function () {
+            function attachSyncLoadingState(form, submitButton) {
+                if (!form || !syncLoadingBanner) {
+                    return;
+                }
+                form.addEventListener("submit", function () {
                     syncLoadingBanner.classList.remove("d-none");
-                    if (scanSubmit) {
-                        scanSubmit.disabled = true;
-                        scanSubmit.textContent = "Syncing...";
+                    if (submitButton) {
+                        submitButton.disabled = true;
+                        submitButton.textContent = submitButton.dataset.loadingLabel || "Syncing...";
                     }
                 });
             }
+            attachSyncLoadingState(scanForm, scanSubmit);
+            attachSyncLoadingState(lixSyncForm, lixSyncSubmit);
 
             if (docsFilterForm && docsFilterQuery && docsFilterApplyButton) {
                 docsFilterApplyButton.classList.add("d-none");
@@ -639,11 +659,7 @@
                     event.preventDefault();
                     refreshDocsOverview();
                 });
-                if (docsSortForm && docsSortSelect) {
-                    docsSortForm.addEventListener("submit", function (event) {
-                        event.preventDefault();
-                        refreshDocsOverview();
-                    });
+                if (docsSortSelect) {
                     docsSortSelect.addEventListener("change", function (event) {
                         event.preventDefault();
                         refreshDocsOverview();
