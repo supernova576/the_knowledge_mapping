@@ -87,8 +87,12 @@
     },
     "remote_sync": {
         "enabled": false,
+        "protocol": "https",
         "host": "tnmt.example.org",
         "port": 443,
+        "base_path": "/app/api.php",
+        "username": "-",
+        "password": "-",
         "api_key": "-",
         "timeout": 60
     }

@@ -19,6 +19,7 @@ class DocsWriter:
     }
     TODO_PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High"}
     TODO_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+    DEADLINE_NAME_COUNTER_SUFFIX_PATTERN = re.compile(r"\s-\s\d+$")
 
     def __init__(self, todo_file_path: str = "", deadlines_file_path: str = "") -> None:
         self.todo_path = Path(todo_file_path) if todo_file_path else None
@@ -205,6 +206,56 @@ class DocsWriter:
         except Exception:
             logger.error("Failed to write deadline markdown file\n%s", traceback.format_exc())
             adieu(1)
+
+    @classmethod
+    def prepare_deadlines_with_counter_suffix(cls, deadlines: list[dict]) -> list[dict]:
+        """
+        Build deterministic rows where only duplicate base names get numeric suffixes:
+        e.g. "Task - 1", "Task - 2". Unique names remain unsuffixed.
+        Existing trailing suffixes are normalized away first for stable duplicate detection.
+        """
+        base_rows: list[dict] = []
+        base_name_counts: dict[str, int] = {}
+        for deadline in deadlines:
+            raw_name = str(deadline.get("name", "")).strip()
+            base_name = cls.DEADLINE_NAME_COUNTER_SUFFIX_PATTERN.sub("", raw_name).strip()
+            if not base_name:
+                continue
+            base_rows.append(
+                {
+                    "base_name": base_name,
+                    "description": str(deadline.get("description", "")).strip(),
+                    "date": str(deadline.get("date", "")).strip(),
+                    "time": str(deadline.get("time", "")).strip() or "-",
+                    "status": str(deadline.get("status", "")).strip(),
+                }
+            )
+            base_name_counts[base_name] = base_name_counts.get(base_name, 0) + 1
+
+        duplicate_counters: dict[str, int] = {}
+        prepared_rows: list[dict] = []
+        for row in base_rows:
+            base_name = str(row.get("base_name", "")).strip()
+            name = base_name
+            if base_name_counts.get(base_name, 0) > 1:
+                counter = duplicate_counters.get(base_name, 0) + 1
+                duplicate_counters[base_name] = counter
+                name = f"{base_name} - {counter}"
+            prepared_rows.append(
+                {
+                    "name": name,
+                    "description": str(row.get("description", "")).strip(),
+                    "date": str(row.get("date", "")).strip(),
+                    "time": str(row.get("time", "")).strip() or "-",
+                    "status": str(row.get("status", "")).strip(),
+                }
+            )
+        return prepared_rows
+
+    def rename_and_write_deadlines_with_counter_suffix(self, deadlines: list[dict]) -> list[dict]:
+        renamed_deadlines = self.prepare_deadlines_with_counter_suffix(deadlines)
+        self.write_deadlines_table(renamed_deadlines)
+        return renamed_deadlines
 
     def write_project_resources_file(
         self,

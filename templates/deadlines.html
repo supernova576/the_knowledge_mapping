@@ -21,6 +21,7 @@
             <h1 class="h3 mb-0">Deadlines</h1>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge km-total-badge">Total: {{ total_deadlines }}</span>
+                <span class="badge bg-light border {{ sync_status.css_class }}">STATUS: {{ sync_status.label }}</span>
                 <button
                     type="button"
                     class="btn btn-outline-danger btn-sm fw-semibold"
@@ -28,6 +29,9 @@
                     data-bs-target="#bulkDeleteModal">
                     BULK DELETE
                 </button>
+                <form method="post" action="{{ url_for('push_deadlines_remote') }}">
+                    <button type="submit" class="btn btn-outline-primary btn-sm fw-semibold">PUSH DEADLINES</button>
+                </form>
             </div>
         </div>
 

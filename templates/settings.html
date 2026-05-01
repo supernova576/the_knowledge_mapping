@@ -52,6 +52,11 @@
                                     aria-controls="panel-openrouter-settings" aria-selected="false">Openrouter Settings</button>
                             </li>
                             <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="tab-remote-sync" data-bs-toggle="tab"
+                                    data-bs-target="#panel-remote-sync" type="button" role="tab"
+                                    aria-controls="panel-remote-sync" aria-selected="false">Remote Sync</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="tab-compliance-check" data-bs-toggle="tab"
                                     data-bs-target="#panel-compliance-check" type="button" role="tab"
                                     aria-controls="panel-compliance-check" aria-selected="false">Compliance Check</button>
@@ -313,6 +318,34 @@
                                             </ul>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="panel-remote-sync" role="tabpanel" aria-labelledby="tab-remote-sync" tabindex="0">
+                                <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+                                    <h2 class="mb-0">Remote Sync</h2>
+                                    <div class="d-flex gap-2">
+                                        <button
+                                            class="btn btn-outline-secondary"
+                                            type="submit"
+                                            formaction="{{ url_for('settings_remote_sync_ping') }}"
+                                            formmethod="post"
+                                        >Ping</button>
+                                        <button class="btn btn-primary" type="submit">Save Settings</button>
+                                    </div>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-12 form-check mt-2 ms-2">
+                                        <input class="form-check-input" type="checkbox" id="remote_sync_enabled" name="remote_sync_enabled" {% if settings.remote_sync_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="remote_sync_enabled">Enable remote deadlines sync</label>
+                                    </div>
+                                    <div class="col-md-3"><label class="form-label" for="remote_sync_protocol">Protocol</label><select class="form-select" id="remote_sync_protocol" name="remote_sync_protocol"><option value="http" {% if settings.remote_sync_protocol == 'http' %}selected{% endif %}>http</option><option value="https" {% if settings.remote_sync_protocol == 'https' %}selected{% endif %}>https</option></select></div>
+                                    <div class="col-md-5"><label class="form-label" for="remote_sync_host">Host</label><input class="form-control" id="remote_sync_host" name="remote_sync_host" maxlength="200" required value="{{ settings.remote_sync_host }}"></div>
+                                    <div class="col-md-2"><label class="form-label" for="remote_sync_port">Port</label><input class="form-control" id="remote_sync_port" name="remote_sync_port" type="number" min="1" required value="{{ settings.remote_sync_port }}"></div>
+                                    <div class="col-md-2"><label class="form-label" for="remote_sync_timeout">Timeout</label><input class="form-control" id="remote_sync_timeout" name="remote_sync_timeout" type="number" min="1" required value="{{ settings.remote_sync_timeout }}"></div>
+                                    <div class="col-12"><label class="form-label" for="remote_sync_base_path">Base Path</label><input class="form-control" id="remote_sync_base_path" name="remote_sync_base_path" maxlength="200" required value="{{ settings.remote_sync_base_path }}"></div>
+                                    <div class="col-md-6"><label class="form-label" for="remote_sync_username">Username</label><input class="form-control" id="remote_sync_username" name="remote_sync_username" maxlength="200" required value="{{ settings.remote_sync_username }}"></div>
+                                    <div class="col-md-6"><label class="form-label" for="remote_sync_password">Password</label><input class="form-control" id="remote_sync_password" name="remote_sync_password" maxlength="500" required value="{{ settings.remote_sync_password }}"></div>
+                                    <div class="col-12"><label class="form-label" for="remote_sync_api_key">API Key</label><input class="form-control" id="remote_sync_api_key" name="remote_sync_api_key" maxlength="500" required value="{{ settings.remote_sync_api_key }}"></div>
                                 </div>
                             </div>
                             <div class="tab-pane fade" id="panel-compliance-check" role="tabpanel"

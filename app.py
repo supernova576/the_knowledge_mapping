@@ -22,6 +22,7 @@ from src.DocsVersionHandler import DocsVersionHandler
 from src.DocsWriter import DocsWriter
 from src.DocsExporter import DocsExporter
 from src.DocsViewer import DocsViewer
+from src.DocsDeadlineSync import DocsDeadlineSync
 from src.logger import get_logger
 from src.timezone_utils import now_in_zurich, now_in_zurich_str
 
@@ -1464,6 +1465,17 @@ def _deadline_sort_key(deadline: dict) -> tuple[int, datetime, datetime.time]:
 
     parsed_time = _parse_deadline_time(deadline.get("time", ""))
     return (1, parsed_date, parsed_time or datetime.max.time())
+
+
+def _sort_deadlines_for_sync_hash(deadlines: list[dict]) -> list[dict]:
+    # Deterministic hash order: date ASC, time DESC, name ASC (raw stored strings).
+    by_time_desc = sorted(
+        deadlines,
+        key=lambda deadline: str(deadline.get("time", "")).strip() or "-",
+        reverse=True,
+    )
+    by_date_asc = sorted(by_time_desc, key=lambda deadline: str(deadline.get("date", "")).strip())
+    return sorted(by_date_asc, key=lambda deadline: str(deadline.get("name", "")).strip())
 
 
 def _deadline_row_class(deadline: dict) -> str:
@@ -3420,6 +3432,7 @@ def settings_page():
     learning_conf = conf.get("learning", {}) if isinstance(conf.get("learning", {}), dict) else {}
     playbooks_conf = conf.get("playbooks", {}) if isinstance(conf.get("playbooks", {}), dict) else {}
     compliance_conf = conf.get("compliance_check", {}) if isinstance(conf.get("compliance_check", {}), dict) else {}
+    remote_sync_conf = conf.get("remote_sync", {}) if isinstance(conf.get("remote_sync", {}), dict) else {}
     compliance_defaults = DocsParser.DEFAULT_COMPLIANCE_CHECK
     structure_conf = compliance_conf.get("structure", {}) if isinstance(compliance_conf.get("structure", {}), dict) else {}
     created_conf = compliance_conf.get("created", {}) if isinstance(compliance_conf.get("created", {}), dict) else {}
@@ -3456,6 +3469,15 @@ def settings_page():
         "learning_learning_ai_prompt_path": str(learning_conf.get("learning_ai_prompt_path", "")).strip(),
         "learning_learning_template_path": str(learning_conf.get("learning_template_path", "")).strip(),
         "playbooks_path": str(playbooks_conf.get("path", "")).strip(),
+        "remote_sync_enabled": bool(remote_sync_conf.get("enabled", False)),
+        "remote_sync_protocol": str(remote_sync_conf.get("protocol", "http")).strip(),
+        "remote_sync_host": str(remote_sync_conf.get("host", "")).strip(),
+        "remote_sync_port": str(remote_sync_conf.get("port", 80)).strip(),
+        "remote_sync_base_path": str(remote_sync_conf.get("base_path", "/app/api.php")).strip(),
+        "remote_sync_username": str(remote_sync_conf.get("username", "")).strip(),
+        "remote_sync_password": str(remote_sync_conf.get("password", "")).strip(),
+        "remote_sync_api_key": str(remote_sync_conf.get("api_key", "")).strip(),
+        "remote_sync_timeout": str(remote_sync_conf.get("timeout", 60)).strip(),
         "compliance_structure_enabled": bool(
             structure_conf.get("enabled", compliance_defaults["structure"]["enabled"])
         ),
@@ -3588,6 +3610,17 @@ def settings_save():
             "Playbooks Path",
             max_length=500,
         )
+        remote_sync_enabled = _parse_checkbox_bool(request.form.get("remote_sync_enabled"))
+        remote_sync_protocol = _sanitize_conf_text(request.form.get("remote_sync_protocol"), "Remote Sync Protocol", max_length=10).lower()
+        if remote_sync_protocol not in {"http", "https"}:
+            raise ValueError("Remote Sync Protocol must be http or https.")
+        remote_sync_host = _sanitize_conf_text(request.form.get("remote_sync_host"), "Remote Sync Host", max_length=200)
+        remote_sync_port = _sanitize_non_negative_int(request.form.get("remote_sync_port"), "Remote Sync Port", minimum=1)
+        remote_sync_base_path = _sanitize_conf_text(request.form.get("remote_sync_base_path"), "Remote Sync Base Path", max_length=200)
+        remote_sync_username = _sanitize_conf_text(request.form.get("remote_sync_username"), "Remote Sync Username", max_length=200)
+        remote_sync_password = _sanitize_conf_text(request.form.get("remote_sync_password"), "Remote Sync Password", max_length=500)
+        remote_sync_api_key = _sanitize_conf_text(request.form.get("remote_sync_api_key"), "Remote Sync API Key", max_length=500)
+        remote_sync_timeout = _sanitize_non_negative_int(request.form.get("remote_sync_timeout"), "Remote Sync Timeout", minimum=1)
         openrouter_provider = _parse_provider_list(request.form.get("openrouter_provider"))
         compliance_structure_enabled = _parse_checkbox_bool(request.form.get("compliance_structure_enabled"))
         compliance_structure_strings_to_check = _parse_multiline_conf_strings(
@@ -3676,9 +3709,13 @@ def settings_save():
         playbooks_conf = {}
         conf["playbooks"] = playbooks_conf
     compliance_conf = conf.setdefault("compliance_check", {})
+    remote_sync_conf = conf.setdefault("remote_sync", {})
     if not isinstance(compliance_conf, dict):
         compliance_conf = {}
         conf["compliance_check"] = compliance_conf
+    if not isinstance(remote_sync_conf, dict):
+        remote_sync_conf = {}
+        conf["remote_sync"] = remote_sync_conf
 
     ai_conf["model"] = openrouter_model
     ai_conf["provider"] = openrouter_provider
@@ -3701,6 +3738,15 @@ def settings_save():
     learning_conf["learning_ai_prompt_path"] = learning_learning_ai_prompt_path
     learning_conf["learning_template_path"] = learning_learning_template_path
     playbooks_conf["path"] = playbooks_path
+    remote_sync_conf["enabled"] = remote_sync_enabled
+    remote_sync_conf["protocol"] = remote_sync_protocol
+    remote_sync_conf["host"] = remote_sync_host
+    remote_sync_conf["port"] = remote_sync_port
+    remote_sync_conf["base_path"] = remote_sync_base_path
+    remote_sync_conf["username"] = remote_sync_username
+    remote_sync_conf["password"] = remote_sync_password
+    remote_sync_conf["api_key"] = remote_sync_api_key
+    remote_sync_conf["timeout"] = remote_sync_timeout
     compliance_conf["structure"] = {
         "enabled": compliance_structure_enabled,
         "strings_to_check": compliance_structure_strings_to_check,
@@ -3738,6 +3784,68 @@ def settings_save():
 
     flash("Settings saved successfully.", "success")
     flash("Changes apply only after rebuilding the Docker container.", "warning")
+    return redirect(url_for("settings_page"))
+
+
+@app.route("/settings/remote-sync-ping", methods=["POST"])
+def settings_remote_sync_ping():
+    try:
+        remote_sync_enabled = _parse_checkbox_bool(request.form.get("remote_sync_enabled"))
+        remote_sync_protocol = _sanitize_conf_text(
+            request.form.get("remote_sync_protocol"), "Remote Sync Protocol", max_length=10
+        ).lower()
+        if remote_sync_protocol not in {"http", "https"}:
+            raise ValueError("Remote Sync Protocol must be http or https.")
+        remote_sync_host = _sanitize_conf_text(request.form.get("remote_sync_host"), "Remote Sync Host", max_length=200)
+        remote_sync_port = _sanitize_non_negative_int(request.form.get("remote_sync_port"), "Remote Sync Port", minimum=1)
+        remote_sync_base_path = _sanitize_conf_text(
+            request.form.get("remote_sync_base_path"), "Remote Sync Base Path", max_length=200
+        )
+        remote_sync_username = _sanitize_conf_text(
+            request.form.get("remote_sync_username"), "Remote Sync Username", max_length=200
+        )
+        remote_sync_password = _sanitize_conf_text(
+            request.form.get("remote_sync_password"), "Remote Sync Password", max_length=500
+        )
+        remote_sync_api_key = _sanitize_conf_text(
+            request.form.get("remote_sync_api_key"), "Remote Sync API Key", max_length=500
+        )
+        remote_sync_timeout = _sanitize_non_negative_int(
+            request.form.get("remote_sync_timeout"), "Remote Sync Timeout", minimum=1
+        )
+    except ValueError as validation_error:
+        flash(str(validation_error), "danger")
+        return redirect(url_for("settings_page"))
+
+    sync = DocsDeadlineSync(
+        {
+            "remote_sync": {
+                "enabled": remote_sync_enabled,
+                "protocol": remote_sync_protocol,
+                "host": remote_sync_host,
+                "port": remote_sync_port,
+                "base_path": remote_sync_base_path,
+                "username": remote_sync_username,
+                "password": remote_sync_password,
+                "api_key": remote_sync_api_key,
+                "timeout": remote_sync_timeout,
+            }
+        }
+    )
+    if not sync.is_configured():
+        flash("Connection to Server failed", "danger")
+        return redirect(url_for("settings_page"))
+
+    try:
+        remote_hash = sync.fetch_remote_status_hash()
+        if remote_hash:
+            flash("Remote sync ping successful. Sync status endpoint is reachable.", "success")
+        else:
+            flash("Connection to Server failed", "danger")
+    except BaseException:
+        logger.error("Remote sync ping failed\n%s", traceback.format_exc())
+        flash("Connection to Server failed", "danger")
+
     return redirect(url_for("settings_page"))
 
 
@@ -4153,6 +4261,7 @@ def project_kanban(project_name: str):
         kanban_progress=_calculate_kanban_progress(kanban.get("items", [])),
         deadline_mapping=deadline_mapping,
         deadline_status_options=DEADLINE_STATUS_OPTIONS,
+        sync_status=_get_deadline_sync_status(deadlines),
     )
 
 
@@ -4613,16 +4722,47 @@ def sync_todos():
     return redirect(url_for("todo_overview"))
 
 
+def _get_deadline_sync_status(deadlines: list[dict]) -> dict:
+    conf = _load_conf()
+    sync = DocsDeadlineSync(conf)
+    if not sync.is_configured():
+        return {
+            "label": "Connection to Server failed",
+            "css_class": "text-danger",
+            "details": "Remote sync is disabled or incomplete.",
+        }
+    try:
+        deadlines_for_hash = DocsWriter.prepare_deadlines_with_counter_suffix(deadlines)
+        local_hash = sync.calculate_local_hash(_sort_deadlines_for_sync_hash(deadlines_for_hash))
+        remote_hash = sync.fetch_remote_status_hash()
+        logger.info("Deadline sync hashes: local=%s remote=%s", local_hash, remote_hash)
+        in_sync = bool(remote_hash) and remote_hash == local_hash
+        return {
+            "label": "In Sync" if in_sync else "Out of Sync",
+            "css_class": "text-success" if in_sync else "text-danger",
+            "details": "Local and remote hashes match." if in_sync else "Local and remote hashes differ.",
+        }
+    except BaseException:
+        logger.error("Failed to compute deadline sync status\n%s", traceback.format_exc())
+        return {
+            "label": "Connection to Server failed",
+            "css_class": "text-danger",
+            "details": "Failed to read remote sync status.",
+        }
+
+
 @app.route("/deadlines", methods=["GET"])
 def deadlines_overview():
     parser = DocsParser()
     try:
-        deadlines = _filter_open_deadlines(_load_deadlines(parser, include_description=False))
+        all_deadlines = _load_deadlines(parser, include_description=True)
+        deadlines = _filter_open_deadlines(all_deadlines)
     except BaseException as exc:
         if isinstance(exc, SystemExit):
             flash("Deadline parsing failed. Check conf.json deadlines path and parser logs.", "danger")
         else:
             flash("Automatic deadline parsing failed.", "warning")
+        all_deadlines = []
         deadlines = []
 
     return render_template(
@@ -4630,7 +4770,60 @@ def deadlines_overview():
         deadlines=deadlines,
         total_deadlines=len(deadlines),
         deadline_status_options=DEADLINE_STATUS_OPTIONS,
+        sync_status=_get_deadline_sync_status(all_deadlines),
     )
+
+
+@app.route("/deadlines/push", methods=["POST"])
+def push_deadlines_remote():
+    try:
+        conf = _load_conf()
+        parser = DocsParser()
+        deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        sync = DocsDeadlineSync(conf)
+        if not sync.is_configured():
+            flash("Remote sync is disabled or incomplete in settings.", "warning")
+            return redirect(url_for("deadlines_overview"))
+
+        deadlines_file_path = str(conf.get("deadlines", {}).get("full_path_to_deadlines_file", "")).strip()
+        writer = DocsWriter(deadlines_file_path=deadlines_file_path)
+        renamed_deadlines = writer.rename_and_write_deadlines_with_counter_suffix(deadlines)
+        response_payload = sync.push_deadlines(renamed_deadlines)
+        logger.info(
+            "Deadline push summary: parsed=%s renamed_for_push=%s response=%s",
+            len(deadlines),
+            len(renamed_deadlines),
+            response_payload,
+        )
+        local_hash = sync.calculate_local_hash(_sort_deadlines_for_sync_hash(renamed_deadlines))
+        remote_hash = sync.fetch_remote_status_hash()
+        logger.info("Deadline push verification hashes: local=%s remote=%s", local_hash, remote_hash)
+
+        remote_count = None
+        for candidate_key in ("inserted", "created", "count", "synced", "total"):
+            candidate_value = response_payload.get(candidate_key)
+            if isinstance(candidate_value, int):
+                remote_count = candidate_value
+                break
+            if isinstance(candidate_value, str) and candidate_value.strip().isdigit():
+                remote_count = int(candidate_value.strip())
+                break
+
+        if remote_count is not None:
+            flash(
+                f"Deadlines sync finished: local renamed sent={len(renamed_deadlines)}, remote reported={remote_count}.",
+                "success",
+            )
+        else:
+            flash(
+                f"Deadlines sync finished: local parsed={len(deadlines)}, renamed sent={len(renamed_deadlines)}.",
+                "success",
+            )
+
+    except BaseException:
+        logger.error("Failed to push deadlines to remote server\n%s", traceback.format_exc())
+        flash("Failed to push deadlines to remote server.", "danger")
+    return redirect(url_for("deadlines_overview"))
 
 
 @app.route("/deadlines/add", methods=["POST"])
