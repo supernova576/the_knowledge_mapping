@@ -84,5 +84,12 @@
         "path": "/the-knowledge/08_PLAYBOOKS",
         "max_depth": 30,
         "dry_run": false
+    },
+    "remote_sync": {
+        "enabled": false,
+        "host": "tnmt.example.org",
+        "port": 443,
+        "api_key": "-",
+        "timeout": 60
     }
 }
