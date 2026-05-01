@@ -816,8 +816,14 @@ def _is_external_link(href: str) -> bool:
     return bool(re.match(r"^(?:https?://|mailto:)", str(href or "").strip(), flags=re.IGNORECASE))
 
 
-def _build_deadline_mapping_for_kanban(project_name: str, kanban_items: list[dict], parser: DocsParser) -> dict[str, dict]:
-    deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+def _build_deadline_mapping_for_kanban(
+    project_name: str,
+    kanban_items: list[dict],
+    parser: DocsParser,
+    deadlines: list[dict] | None = None,
+) -> dict[str, dict]:
+    if deadlines is None:
+        deadlines = parser.parse_deadlines_from_markdown(include_description=True)
     by_name = {str(item.get("name", "")).strip(): item for item in deadlines}
 
     mapping: dict[str, dict] = {}
@@ -2930,8 +2936,10 @@ def index():
     processed_docs = _prepare_docs_for_index(database, docs, sort_by)
     last_sync_time = database.get_last_sync_time()
     open_todos_count = _count_open_todos(_load_todos(parser, query=""))
-    deadlines = _load_deadlines(parser, include_description=False)
+    deadlines = _load_deadlines(parser, include_description=True)
     upcoming_deadlines_count = _count_upcoming_deadlines(deadlines)
+    show_deadline_sync_status = _is_remote_deadline_sync_enabled()
+    deadline_sync_status = _get_deadline_sync_status(deadlines) if show_deadline_sync_status else None
 
     under_construction_count = len(under_construction_docs)
     standard_semester = database.get_hslu_standard_semester()
@@ -2963,6 +2971,8 @@ def index():
         selected_sort=sort_by,
         last_sync_time=_format_sync_time_relative_to_now(last_sync_time),
         last_sync_alert=_sync_banner_state(last_sync_time),
+        show_deadline_sync_status=show_deadline_sync_status,
+        deadline_sync_status=deadline_sync_status,
         under_construction_count=under_construction_count,
         open_todos_count=open_todos_count,
         upcoming_deadlines_count=upcoming_deadlines_count,
@@ -4251,7 +4261,8 @@ def project_kanban(project_name: str):
     try:
         project_path = parser.resolve_project_path(project_name)
         kanban = parser.parse_kanban(project_path)
-        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser)
+        deadlines = parser.parse_deadlines_from_markdown(include_description=True)
+        deadline_mapping = _build_deadline_mapping_for_kanban(project_path.name, kanban.get("items", []), parser, deadlines)
     except Exception:
         return render_template("404.html"), 404
     return render_template(
@@ -4722,6 +4733,12 @@ def sync_todos():
     return redirect(url_for("todo_overview"))
 
 
+def _is_remote_deadline_sync_enabled() -> bool:
+    conf = _load_conf()
+    remote_sync_conf = conf.get("remote_sync", {}) if isinstance(conf.get("remote_sync", {}), dict) else {}
+    return bool(remote_sync_conf.get("enabled", False))
+
+
 def _get_deadline_sync_status(deadlines: list[dict]) -> dict:
     conf = _load_conf()
     sync = DocsDeadlineSync(conf)
@@ -4754,6 +4771,7 @@ def _get_deadline_sync_status(deadlines: list[dict]) -> dict:
 @app.route("/deadlines", methods=["GET"])
 def deadlines_overview():
     parser = DocsParser()
+    show_sync_status = _is_remote_deadline_sync_enabled()
     try:
         all_deadlines = _load_deadlines(parser, include_description=True)
         deadlines = _filter_open_deadlines(all_deadlines)
@@ -4770,7 +4788,8 @@ def deadlines_overview():
         deadlines=deadlines,
         total_deadlines=len(deadlines),
         deadline_status_options=DEADLINE_STATUS_OPTIONS,
-        sync_status=_get_deadline_sync_status(all_deadlines),
+        show_sync_status=show_sync_status,
+        sync_status=_get_deadline_sync_status(all_deadlines) if show_sync_status else None,
     )
 
 

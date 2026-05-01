@@ -53,8 +53,17 @@
             Sync in progress. Please wait...
         </div>
 
-        <div class="alert alert-{{ last_sync_alert }}" role="status">
-            <strong>Last sync time:</strong> {{ last_sync_time }}
+        <div class="km-sync-status-panel" role="status">
+            <div class="km-sync-status-item">
+                <span class="km-sync-status-label">Last sync</span>
+                <span class="km-sync-status-value">{{ last_sync_time }}</span>
+            </div>
+            {% if show_deadline_sync_status and deadline_sync_status %}
+            <div class="km-sync-status-item">
+                <span class="km-sync-status-label">Remote deadlines</span>
+                <span class="km-sync-status-pill {{ deadline_sync_status.css_class }}">{{ deadline_sync_status.label }}</span>
+            </div>
+            {% endif %}
         </div>
 
         <div class="row g-3 mb-4">

@@ -21,7 +21,9 @@
             <h1 class="h3 mb-0">Deadlines</h1>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge km-total-badge">Total: {{ total_deadlines }}</span>
+                {% if show_sync_status and sync_status %}
                 <span class="badge bg-light border {{ sync_status.css_class }}">STATUS: {{ sync_status.label }}</span>
+                {% endif %}
                 <button
                     type="button"
                     class="btn btn-outline-danger btn-sm fw-semibold"
