@@ -56,7 +56,7 @@
         <div class="km-sync-status-panel" role="status">
             <div class="km-sync-status-item">
                 <span class="km-sync-status-label">Last sync</span>
-                <span class="km-sync-status-value">{{ last_sync_time }}</span>
+                <span class="km-sync-status-value text-{{ last_sync_alert }}">{{ last_sync_time }}</span>
             </div>
             {% if show_deadline_sync_status and deadline_sync_status %}
             <div class="km-sync-status-item">

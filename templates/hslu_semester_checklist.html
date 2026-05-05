@@ -90,6 +90,12 @@
                     <small class="text-muted">Current standard semester: <strong>{{ standard_semester if standard_semester else 'Not set' }}</strong></small>
                     <button class="btn btn-outline-secondary btn-sm" {% if not selected_semester %}disabled{% endif %}>Set selected semester as standard</button>
                 </form>
+                <form method="post" action="{{ url_for('hslu_semester_checklist_standard_sw') }}" class="mt-2 d-flex gap-2 align-items-center flex-wrap">
+                    <input type="hidden" name="semester" value="{{ selected_semester }}" />
+                    <small class="text-muted">Current standard SW: <strong>{{ standard_sw if standard_sw else 'Not set' }}</strong></small>
+                    <input type="number" min="1" max="99" step="1" name="sw" value="{{ selected_sw }}" class="form-control form-control-sm" style="max-width: 8rem;" placeholder="e.g. 1" required />
+                    <button class="btn btn-outline-secondary btn-sm">Set SW as standard</button>
+                </form>
             </div>
         </div>
 
